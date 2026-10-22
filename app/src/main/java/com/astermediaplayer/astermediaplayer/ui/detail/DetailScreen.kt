@@ -466,12 +466,10 @@ private fun DetailInfo(
     val secondary = Color.White.copy(alpha = 0.75f)
     var menu by remember { mutableStateOf(false) }
 
-    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(top = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        if (showTitle) {
-            DetailTitle(item, repo)
-        } else if (repo.imageUrl(item, ImageType.LOGO, 800) != null) {
-            Text(item.name.orEmpty(), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = Color.White)
-        }
+    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(top = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        // The clear-art logo carries the title; without one the title shows as text. (In landscape the title is
+        // already over the art above this block.)
+        if (showTitle) DetailTitle(item, repo)
         if (item.type == BaseItemKind.EPISODE) {
             Text(
                 listOfNotNull(item.name, item.seriesName, item.parentIndexNumber?.let { "S$it" }?.plus(item.indexNumber?.let { "E$it" } ?: "")).joinToString(" · "),

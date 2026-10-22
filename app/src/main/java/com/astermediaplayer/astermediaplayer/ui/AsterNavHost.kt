@@ -224,7 +224,7 @@ private fun MainTabs(onItem: (BaseItemDto) -> Unit, onPlay: (UUID) -> Unit, onSi
     val repo = app.repository
     var selected by rememberSaveable { mutableIntStateOf(0) }
     var more by rememberSaveable { mutableStateOf<MoreDestination?>(null) }
-    val wide = LocalConfiguration.current.screenWidthDp >= 600
+    val wide = LocalConfiguration.current.smallestScreenWidthDp >= 600
 
     val home: HomeViewModel = viewModel(factory = viewModelFactory { initializer { HomeViewModel(repo) } })
     val anime: AnimeViewModel = viewModel(factory = viewModelFactory { initializer { AnimeViewModel(repo) } })
