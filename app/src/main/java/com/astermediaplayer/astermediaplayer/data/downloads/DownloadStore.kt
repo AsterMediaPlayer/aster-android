@@ -97,6 +97,8 @@ data class DownloadRecord(
     val author: String? = null,
     /** True while paused for the network the settings allow. */
     val waiting: Boolean = false,
+    /** A book's place: which part, with [positionTicks] into it. */
+    val positionPart: Int = 0,
 ) {
     val isEpisode: Boolean get() = kind == DownloadKind.Video && subtitle != null && title != subtitle
 }
@@ -328,7 +330,12 @@ class DownloadStore(private val context: Context, private val repo: AsterReposit
         if (!canDownload) throw DownloadException.NotAllowed()
         val id = book.id.toString()
         record(id)?.let { if (it.state != DownloadState.Failed) return }
-        val sizes = book.parts.map { it.mediaSources?.firstOrNull()?.size ?: ((it.runTimeTicks ?: 0L) / 10_000_000.0 * 8_000).toLong() }
+        // The server's size is sometimes short of the file; the bitrate over the running time is the other estimate, and the larger is the safer to plan space by.
+        val sizes = book.parts.map { part ->
+            val source = part.mediaSources?.firstOrNull()
+            val seconds = (part.runTimeTicks ?: 0L) / 10_000_000.0
+            maxOf(source?.size ?: 0L, ((source?.bitrate ?: 0) * seconds / 8).toLong(), (seconds * 8_000).toLong())
+        }
         val expected = sizes.sum()
         checkRoom(expected)
         val ids = book.parts.map { "book:$id:${it.id}" }
@@ -341,6 +348,8 @@ class DownloadStore(private val context: Context, private val repo: AsterReposit
         book.parts.forEachIndexed { i, part ->
             DownloadService.sendAddDownload(context, AsterDownloadService::class.java, DownloadRequest.Builder(ids[i], Uri.parse(repo.audioStreamUrl(part.id))).build(), true)
         }
+        // The book itself, so its page and player open with no connection.
+        runCatching { withContext(Dispatchers.IO) { File(folder(id), "book.json").writeText(bookToJson(book)) } }
         scope.launch {
             repo.bookCoverUrl(book, 400)?.let { runCatching { withContext(Dispatchers.IO) { File(folder(id), "artwork.jpg").writeBytes(URL(it).readBytes()) } } }
             mutate { list -> list.map { it } }
@@ -383,6 +392,42 @@ class DownloadStore(private val context: Context, private val repo: AsterReposit
 
     fun remove(id: String) = remove(setOf(id))
     fun removeAll() = remove(_records.value.map { it.id }.toSet())
+
+    /** A downloaded book as it was saved, with where listening got to on this device. */
+    fun savedBook(id: UUID): Audiobook? {
+        val record = record(id.toString())?.takeIf { it.kind == DownloadKind.Book } ?: return null
+        return runCatching {
+            val o = JSONObject(File(folder(record.id), "book.json").readText())
+            val parts = o.getJSONArray("parts").let { a -> List(a.length()) { i -> bookJson.decodeFromString(BaseItemDto.serializer(), a.getString(i)) } }
+            // Listening done offline is newer than what the server last heard: parts before it are finished, the one it's in is partway.
+            fun State(part: BaseItemDto, played: Boolean, ticks: Long) = part.copy(
+                userData = part.userData?.copy(played = played, playbackPositionTicks = ticks)
+                    ?: org.jellyfin.sdk.model.api.UserItemDataDto(playbackPositionTicks = ticks, playCount = 0, isFavorite = false, played = played, key = part.id.toString(), itemId = part.id),
+            )
+            val placed = parts.mapIndexed { i, part ->
+                when {
+                    record.positionTicks <= 0L && record.positionPart == 0 -> part
+                    i < record.positionPart -> State(part, played = true, ticks = 0)
+                    i == record.positionPart -> State(part, played = false, ticks = record.positionTicks)
+                    else -> part
+                }
+            }
+            Audiobook(
+                id = UUID.fromString(record.id), title = o.getString("title"), author = o.string("author"), series = o.string("series"),
+                seriesIndex = if (o.isNull("seriesIndex")) null else o.getInt("seriesIndex"), parts = placed,
+            )
+        }.onFailure { android.util.Log.w("Aster", "Saved book unreadable", it) }.getOrNull()
+    }
+
+    /** What the book page and player show for a book: its downloaded copy when there is one and the library hasn't got it. */
+    fun cover(book: Audiobook, width: Int): Any? = artwork(book.id.toString()) ?: repo.bookCoverUrl(book, width)
+
+    /** Remembers where listening got to in a downloaded book, for resuming offline. */
+    fun noteBookProgress(bookId: UUID, part: Int, seconds: Double) {
+        val id = bookId.toString()
+        if (record(id)?.kind != DownloadKind.Book) return
+        mutate { list -> list.map { if (it.id == id) it.copy(positionPart = part, positionTicks = (seconds * 10_000_000).toLong()) else it } }
+    }
 
     /** Remembers where viewing got to, for resuming offline. */
     fun notePosition(itemId: String, ticks: Long) {
@@ -447,6 +492,15 @@ class DownloadStore(private val context: Context, private val repo: AsterReposit
     }
 
     companion object {
+        private val bookJson = kotlinx.serialization.json.Json { ignoreUnknownKeys = true; encodeDefaults = false }
+
+        private fun bookToJson(book: Audiobook): String = JSONObject().apply {
+            put("title", book.title); put("author", book.author); put("series", book.series); put("seriesIndex", book.seriesIndex)
+            put("parts", JSONArray().also { a -> book.parts.forEach { a.put(bookJson.encodeToString(BaseItemDto.serializer(), it)) } })
+        }.toString()
+
+        private fun JSONObject.string(key: String): String? = if (isNull(key)) null else getString(key)
+
         fun format(bytes: Long): String = when {
             bytes >= 1_000_000_000 -> "%.2f GB".format(bytes / 1e9)
             bytes >= 1_000_000 -> "%.1f MB".format(bytes / 1e6)
@@ -465,20 +519,18 @@ class DownloadStore(private val context: Context, private val repo: AsterReposit
             put("id", r.id); put("kind", r.kind.name); put("title", r.title); put("subtitle", r.subtitle); put("state", r.state.name)
             put("progress", r.progress); put("quality", r.quality); put("expectedBytes", r.expectedBytes); put("bytesOnDisk", r.bytesOnDisk)
             put("audioTitle", r.audioTitle); put("runTimeTicks", r.runTimeTicks); put("positionTicks", r.positionTicks); put("added", r.added)
-            put("errorMessage", r.errorMessage); put("uri", r.uri); put("author", r.author)
+            put("errorMessage", r.errorMessage); put("uri", r.uri); put("author", r.author); put("positionPart", r.positionPart)
             put("parts", JSONArray(r.parts)); put("partWeights", JSONArray(r.partWeights))
             put("segments", JSONArray().also { a -> r.segments.forEach { a.put(JSONArray(listOf(if (it.intro) 1 else 0, it.startTicks, it.endTicks))) } })
             put("subtitleFile", r.subtitleFile); put("subtitleMime", r.subtitleMime); put("subtitleLanguage", r.subtitleLanguage); put("subtitleLabel", r.subtitleLabel)
         }
-
-        private fun JSONObject.string(key: String): String? = if (isNull(key)) null else getString(key)
 
         private fun fromJson(o: JSONObject) = DownloadRecord(
             id = o.getString("id"), kind = DownloadKind.valueOf(o.getString("kind")), title = o.getString("title"), subtitle = o.string("subtitle"),
             state = DownloadState.valueOf(o.getString("state")), progress = o.optDouble("progress"), quality = o.string("quality"),
             expectedBytes = o.optLong("expectedBytes"), bytesOnDisk = o.optLong("bytesOnDisk"), audioTitle = o.string("audioTitle"),
             runTimeTicks = o.optLong("runTimeTicks"), positionTicks = o.optLong("positionTicks"), added = o.optLong("added"),
-            errorMessage = o.string("errorMessage"), uri = o.string("uri"), author = o.string("author"),
+            errorMessage = o.string("errorMessage"), uri = o.string("uri"), author = o.string("author"), positionPart = o.optInt("positionPart"),
             parts = o.getJSONArray("parts").let { a -> List(a.length()) { a.getString(it) } },
             partWeights = o.getJSONArray("partWeights").let { a -> List(a.length()) { a.getDouble(it) } },
             segments = o.getJSONArray("segments").let { a -> List(a.length()) { i -> a.getJSONArray(i).let { SavedSegment(it.getInt(0) == 1, it.getLong(1), it.getLong(2)) } } },

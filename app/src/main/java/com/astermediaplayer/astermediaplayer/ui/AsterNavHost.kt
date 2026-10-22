@@ -443,7 +443,7 @@ private fun MainTabs(
                     BackButton { more = null }
                 }
                 MoreDestination.Downloads -> Box(modifier) {
-                    DownloadsScreen(onPlay = onPlay, onBook = { id -> app.audiobookLibrary.state.value.book(id)?.let(onBook) }, modifier = Modifier.fillMaxSize(), topInset = 56.dp)
+                    DownloadsScreen(onPlay = onPlay, onBook = { id -> (app.audiobookLibrary.state.value.book(id) ?: app.downloads.savedBook(id))?.let(onBook) }, modifier = Modifier.fillMaxSize(), topInset = 56.dp)
                     BackButton { more = null }
                 }
                 MoreDestination.Search -> Box(modifier) {

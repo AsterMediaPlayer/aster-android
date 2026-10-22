@@ -74,6 +74,7 @@ data class AudiobookState(
  */
 @OptIn(UnstableApi::class)
 class AudiobookPlayer(private val context: Context, private val repo: AsterRepository) {
+    private val downloads get() = (context.applicationContext as com.astermediaplayer.astermediaplayer.AsterApp).downloads
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val _state = MutableStateFlow(AudiobookState())
     val state: StateFlow<AudiobookState> = _state.asStateFlow()
@@ -172,7 +173,7 @@ class AudiobookPlayer(private val context: Context, private val repo: AsterRepos
                 .setMediaMetadata(
                     MediaMetadata.Builder()
                         .setTitle(book.title).setArtist(book.author).setAlbumTitle(book.series)
-                        .setArtworkUri(repo.bookCoverUrl(book, 600)?.let(Uri::parse))
+                        .setArtworkUri(downloads.cover(book, 600)?.let { if (it is java.io.File) Uri.fromFile(it) else Uri.parse(it.toString()) })
                         .build(),
                 )
                 .build()
@@ -286,6 +287,8 @@ class AudiobookPlayer(private val context: Context, private val repo: AsterRepos
         val book = _state.value.book ?: return
         val exo = player ?: return
         val part = book.parts.getOrNull(exo.currentMediaItemIndex) ?: return
+        // A downloaded book keeps its place on the device too, for when there's no connection to tell the server.
+        downloads.noteBookProgress(book.id, exo.currentMediaItemIndex, exo.currentPosition / 1000.0)
         lastReport = System.currentTimeMillis()
         val ticks = exo.currentPosition * 10_000L
         val first = reportedPart != part.id
@@ -318,6 +321,7 @@ class AudiobookPlayer(private val context: Context, private val repo: AsterRepos
         val part = book.parts.firstOrNull { it.id == id } ?: return
         val exo = player ?: return
         val ticks = if (played) (part.runTimeTicks ?: 0L) else exo.currentPosition * 10_000L
+        if (!played) downloads.noteBookProgress(book.id, book.parts.indexOf(part), exo.currentPosition / 1000.0)
         reportedPart = null
         val info = PlaybackStopInfo(itemId = part.id, playSessionId = playSessionId, positionTicks = ticks, failed = false)
         // The caller's scope may be going away (the app is being put away), so this has its own.

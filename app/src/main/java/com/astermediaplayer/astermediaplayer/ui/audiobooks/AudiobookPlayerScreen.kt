@@ -152,7 +152,7 @@ fun AudiobookPlayerScreen(modifier: Modifier = Modifier) {
     LaunchedEffect(book == null) { if (book == null) player.setPresented(false) }
     Box(modifier.fillMaxSize().background(Color(0xFF0F0F0F))) {
         if (book != null) {
-            AsyncImage(model = app.repository.bookCoverUrl(book, 400), contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize().blur(100.dp))
+            AsyncImage(model = app.downloads.cover(book, 400), contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize().blur(100.dp))
             Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.7f)))
             BoxWithConstraints(Modifier.fillMaxSize()) {
                 val stacked = maxHeight >= 560.dp

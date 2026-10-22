@@ -83,7 +83,7 @@ private fun app() = LocalContext.current.applicationContext as AsterApp
 @Composable
 fun AudiobookCover(book: Audiobook, size: Dp, modifier: Modifier = Modifier, width: Int = 500) {
     AsyncImage(
-        model = app().repository.bookCoverUrl(book, width), contentDescription = book.title,
+        model = app().downloads.cover(book, width), contentDescription = book.title,
         contentScale = ContentScale.Crop, modifier = modifier.size(size).background(Color(0xFF1C1C1E)),
     )
 }
@@ -275,7 +275,7 @@ private fun HeroPage(book: Audiobook, onListen: (Audiobook) -> Unit) {
     Box(Modifier.fillMaxSize().clickable { onListen(book) }) {
         // The cover, blurred and darkened, as the backdrop.
         AsyncImage(
-            model = app().repository.bookCoverUrl(book, 600), contentDescription = null, contentScale = ContentScale.Crop,
+            model = app().downloads.cover(book, 600), contentDescription = null, contentScale = ContentScale.Crop,
             modifier = Modifier.fillMaxSize().blur(60.dp),
         )
         Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.35f)))
@@ -338,11 +338,16 @@ fun AudiobookPage(bookId: UUID, modifier: Modifier = Modifier) {
     val library = app.audiobookLibrary
     val state by library.state.collectAsStateWithLifecycle()
     val playing by app.audiobooks.state.collectAsStateWithLifecycle()
-    val listed = state.book(bookId) ?: return
+    // A downloaded book opens with no connection, from the copy saved with it.
+    val listed = remember(bookId, state.loaded) { state.book(bookId) ?: app.downloads.savedBook(bookId) } ?: return
     // The parts' listening state, fresh from the server, again once the player lets go of the book.
     val isLoaded = playing.book?.id == bookId
     var book by remember(bookId) { mutableStateOf(listed) }
-    LaunchedEffect(bookId, isLoaded) { book = library.refresh(book) }
+    // With no connection, the place listening got to is the one kept on the device with the download.
+    LaunchedEffect(bookId, isLoaded) {
+        val fresh = library.refresh(book)
+        book = if (fresh === book) kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { app.downloads.savedBook(bookId) } ?: book else fresh
+    }
     val player = app.audiobooks
 
     val elapsed = if (isLoaded) playing.bookElapsed else book.resumePoint?.let { book.offsetOfPart(it.first) + it.second } ?: if (book.isFinished) book.duration else 0.0
@@ -357,7 +362,7 @@ fun AudiobookPage(bookId: UUID, modifier: Modifier = Modifier) {
     }
 
     Box(modifier.fillMaxSize()) {
-        AsyncImage(model = app.repository.bookCoverUrl(book, 400), contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize().blur(80.dp))
+        AsyncImage(model = app.downloads.cover(book, 400), contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize().blur(80.dp))
         Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.72f)))
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).statusBarsPadding().padding(top = 64.dp, bottom = Lockup.pageBottomPadding), verticalArrangement = Arrangement.spacedBy(30.dp)) {
             Column(Modifier.padding(horizontal = Lockup.screenPadding), verticalArrangement = Arrangement.spacedBy(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
