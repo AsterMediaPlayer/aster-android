@@ -154,6 +154,44 @@ class AsterRepository(context: Context, private val store: SessionStore) {
         fields = listOf(ItemFields.OVERVIEW, ItemFields.GENRES),
     ).content
 
+    // MARK: Audiobooks
+
+    /** The book libraries on the server. */
+    suspend fun bookLibraries(): List<BaseItemDto> = views().filter { it.collectionType == CollectionType.BOOKS }
+
+    /** Every book in [libraries], files grouped into books and authors and series read from the folders. */
+    suspend fun audiobooks(libraries: List<BaseItemDto>): List<Audiobook> = coroutineScope {
+        libraries.map { library ->
+            async {
+                val folders = async {
+                    api.libraryApi.getItems(
+                        GetItemsRequest(
+                            userId = userId, parentId = library.id, includeItemTypes = listOf(BaseItemKind.FOLDER), recursive = true,
+                            fields = listOf(ItemFields.PARENT_ID), enableUserData = false,
+                        ),
+                    ).content.items
+                }
+                val files = api.libraryApi.getItems(
+                    GetItemsRequest(
+                        userId = userId, parentId = library.id, includeItemTypes = listOf(BaseItemKind.AUDIO_BOOK), recursive = true,
+                        fields = Audiobook.Fields, sortBy = listOf(ItemSortBy.SORT_NAME), sortOrder = listOf(SortOrder.ASCENDING),
+                    ),
+                ).content.items
+                Audiobook.group(files, folders.await())
+            }
+        }.awaitAll().flatten()
+    }
+
+    /** The parts' listening state, fresh from the server. */
+    suspend fun audiobookParts(ids: List<UUID>): List<BaseItemDto> =
+        api.libraryApi.getItems(GetItemsRequest(userId = userId, ids = ids, fields = Audiobook.Fields)).content.items
+
+    /** A book's cover: its first file's square picture. */
+    fun bookCoverUrl(book: Audiobook, maxWidth: Int): String? =
+        imageUrl(book.cover, ImageType.PRIMARY, maxWidth) ?: book.cover.albumId?.let { id ->
+            book.cover.albumPrimaryImageTag?.let { api.imageApi.getItemImageUrl(id, ImageType.PRIMARY, maxWidth = maxWidth, tag = it) }
+        }
+
     // MARK: Theme media
 
     /** A title's theme songs and videos, inherited from its series when it has none of its own. */

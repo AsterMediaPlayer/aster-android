@@ -12,6 +12,28 @@ import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Tv
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.LibraryBooks
+import androidx.compose.material3.IconButton
+import androidx.compose.runtime.LaunchedEffect
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.astermediaplayer.astermediaplayer.data.Audiobook
+import com.astermediaplayer.astermediaplayer.data.AudiobookShelf
+import com.astermediaplayer.astermediaplayer.ui.audiobooks.AudiobookBar
+import com.astermediaplayer.astermediaplayer.ui.audiobooks.AudiobookPage
+import com.astermediaplayer.astermediaplayer.ui.audiobooks.AudiobookPlayerScreen
+import com.astermediaplayer.astermediaplayer.ui.audiobooks.AudiobookShelfPage
+import com.astermediaplayer.astermediaplayer.ui.audiobooks.AudiobooksScreen
+import com.astermediaplayer.astermediaplayer.ui.theme.DetailMetrics
+import com.astermediaplayer.astermediaplayer.ui.theme.Lockup
+import com.astermediaplayer.astermediaplayer.ui.theme.SecondaryText
+import com.astermediaplayer.astermediaplayer.ui.theme.Type
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -80,6 +102,15 @@ import org.jellyfin.sdk.model.api.BaseItemKind
 import org.jellyfin.sdk.model.api.CollectionType
 import java.util.UUID
 
+/** A round back button over a page's art, like the title page's. */
+@Composable
+private fun BackButton(onClick: () -> Unit) {
+    IconButton(
+        onClick = onClick,
+        modifier = Modifier.statusBarsPadding().padding(start = Lockup.screenPadding, top = 4.dp).size(DetailMetrics.backButtonSize).clip(CircleShape).background(Color.Black.copy(alpha = 0.35f)),
+    ) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Color.White) }
+}
+
 /** Ids come either way: with dashes, or as 32 hex digits. */
 private fun parseId(id: String): UUID? = runCatching {
     UUID.fromString(if (id.length == 32) "${id.substring(0, 8)}-${id.substring(8, 12)}-${id.substring(12, 16)}-${id.substring(16, 20)}-${id.substring(20)}" else id)
@@ -91,9 +122,13 @@ private object Routes {
     const val LIBRARY = "library/{id}/{name}"
     const val DETAIL = "detail/{id}"
     const val PLAYER = "player/{id}?start={start}&end={end}&label={label}&begin={begin}"
+    const val AUDIOBOOK = "audiobook/{id}"
+    const val SHELF = "audiobookshelf/{id}"
     const val THEME = "theme?path={path}&title={title}&subtitle={subtitle}"
     fun library(id: UUID, name: String) = "library/$id/${android.net.Uri.encode(name)}"
     fun detail(id: UUID) = "detail/$id"
+    fun audiobook(id: UUID) = "audiobook/$id"
+    fun shelf(id: String) = "audiobookshelf/${android.net.Uri.encode(id)}"
     fun player(id: UUID, fromBeginning: Boolean = false) = if (fromBeginning) "player/$id?begin=true" else "player/$id"
     /** A stretch of an episode, in milliseconds. */
     fun clip(id: UUID, startMs: Long, endMs: Long, label: String) = "player/$id?start=$startMs&end=$endMs&label=${android.net.Uri.encode(label)}"
@@ -113,101 +148,132 @@ fun AsterNavHost(signedIn: Boolean) {
         else -> nav.navigate(Routes.detail(item.id))
     }
 
-    NavHost(nav, startDestination = if (signedIn) Routes.MAIN else Routes.AUTH, modifier = Modifier.fillMaxSize()) {
-        composable(Routes.AUTH) {
-            val vm: AuthViewModel = viewModel(factory = viewModelFactory { initializer { AuthViewModel(repo) } })
-            AuthScreen(vm, onSignedIn = { nav.navigate(Routes.MAIN) { popUpTo(Routes.AUTH) { inclusive = true } } })
-        }
-        composable(Routes.MAIN) {
-            MainTabs(
-                onItem = ::open,
-                onPlay = { nav.navigate(Routes.player(it)) },
-                onSignOut = {
-                    scope.launch {
-                        repo.signOut()
-                        nav.navigate(Routes.AUTH) { popUpTo(Routes.MAIN) { inclusive = true } }
-                    }
-                },
-            )
-        }
-        composable(
-            Routes.LIBRARY,
-            arguments = listOf(navArgument("id") { type = NavType.StringType }, navArgument("name") { type = NavType.StringType }),
-        ) { entry ->
-            val id = UUID.fromString(entry.arguments!!.getString("id"))
-            val name = entry.arguments!!.getString("name").orEmpty()
-            val vm: LibraryViewModel = viewModel(factory = viewModelFactory { initializer { LibraryViewModel(repo, id) } })
-            LibraryScreen(name, vm, onItem = ::open, onBack = { nav.popBackStack() })
-        }
-        composable(
-            Routes.DETAIL,
-            arguments = listOf(navArgument("id") { type = NavType.StringType }),
-            deepLinks = listOf(navDeepLink { uriPattern = "aster://item/{id}" }),
-        ) { entry ->
-            val id = UUID.fromString(entry.arguments!!.getString("id"))
-            val vm: DetailViewModel = viewModel(factory = viewModelFactory { initializer { DetailViewModel(repo, id) } })
-            DetailScreen(
-                vm, onBack = { nav.popBackStack() }, onPlay = { nav.navigate(Routes.player(it)) }, onItem = ::open,
-                onPlayFromBeginning = { nav.navigate(Routes.player(it, fromBeginning = true)) },
-                onGoToSeries = { nav.navigate(Routes.detail(it)) },
-                onPlayTheme = { oe ->
-                    scope.launch {
-                        when (oe) {
-                            // Chapters say where an opening is, so it plays that stretch of the episode.
-                            is OpeningEnding.Chapter -> nav.navigate(Routes.clip(oe.clip.episode.id, oe.clip.startMs, oe.clip.endMs, oe.clip.title))
-                            is OpeningEnding.Theme -> {
-                                val theme = oe.theme.preferring(app.settings.current().themeCut)
-                                val published = theme.libraryItemId?.let(::parseId)
-                                val path = theme.playablePath
-                                when {
-                                    published != null -> nav.navigate(Routes.player(published))
-                                    path != null -> nav.navigate(Routes.theme(path, theme.code, theme.songLine))
+    val presented by app.audiobooks.presented.collectAsStateWithLifecycle()
+    // Notifications carry the book's controls on the lock screen; asked once, with the first book.
+    val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}
+    LaunchedEffect(presented) {
+        if (presented && android.os.Build.VERSION.SDK_INT >= 33 &&
+            androidx.core.content.ContextCompat.checkSelfPermission(app, android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) notificationPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+    }
+
+    Box(Modifier.fillMaxSize()) {
+        NavHost(nav, startDestination = if (signedIn) Routes.MAIN else Routes.AUTH, modifier = Modifier.fillMaxSize()) {
+            composable(Routes.AUTH) {
+                val vm: AuthViewModel = viewModel(factory = viewModelFactory { initializer { AuthViewModel(repo) } })
+                AuthScreen(vm, onSignedIn = { nav.navigate(Routes.MAIN) { popUpTo(Routes.AUTH) { inclusive = true } } })
+            }
+            composable(Routes.MAIN) {
+                MainTabs(
+                    onItem = ::open,
+                    onBook = { nav.navigate(Routes.audiobook(it.id)) },
+                    onShelf = { nav.navigate(Routes.shelf(it.id)) },
+                    onPlay = { nav.navigate(Routes.player(it)) },
+                    onSignOut = {
+                        scope.launch {
+                            repo.signOut()
+                            nav.navigate(Routes.AUTH) { popUpTo(Routes.MAIN) { inclusive = true } }
+                        }
+                    },
+                )
+            }
+            composable(
+                Routes.LIBRARY,
+                arguments = listOf(navArgument("id") { type = NavType.StringType }, navArgument("name") { type = NavType.StringType }),
+            ) { entry ->
+                val id = UUID.fromString(entry.arguments!!.getString("id"))
+                val name = entry.arguments!!.getString("name").orEmpty()
+                val vm: LibraryViewModel = viewModel(factory = viewModelFactory { initializer { LibraryViewModel(repo, id) } })
+                LibraryScreen(name, vm, onItem = ::open, onBack = { nav.popBackStack() })
+            }
+            composable(
+                Routes.DETAIL,
+                arguments = listOf(navArgument("id") { type = NavType.StringType }),
+                deepLinks = listOf(navDeepLink { uriPattern = "aster://item/{id}" }),
+            ) { entry ->
+                val id = UUID.fromString(entry.arguments!!.getString("id"))
+                val vm: DetailViewModel = viewModel(factory = viewModelFactory { initializer { DetailViewModel(repo, id) } })
+                DetailScreen(
+                    vm, onBack = { nav.popBackStack() }, onPlay = { nav.navigate(Routes.player(it)) }, onItem = ::open,
+                    onPlayFromBeginning = { nav.navigate(Routes.player(it, fromBeginning = true)) },
+                    onGoToSeries = { nav.navigate(Routes.detail(it)) },
+                    onPlayTheme = { oe ->
+                        scope.launch {
+                            when (oe) {
+                                // Chapters say where an opening is, so it plays that stretch of the episode.
+                                is OpeningEnding.Chapter -> nav.navigate(Routes.clip(oe.clip.episode.id, oe.clip.startMs, oe.clip.endMs, oe.clip.title))
+                                is OpeningEnding.Theme -> {
+                                    val theme = oe.theme.preferring(app.settings.current().themeCut)
+                                    val published = theme.libraryItemId?.let(::parseId)
+                                    val path = theme.playablePath
+                                    when {
+                                        published != null -> nav.navigate(Routes.player(published))
+                                        path != null -> nav.navigate(Routes.theme(path, theme.code, theme.songLine))
+                                    }
                                 }
                             }
                         }
-                    }
-                },
-            )
+                    },
+                )
+            }
+            composable(Routes.AUDIOBOOK, arguments = listOf(navArgument("id") { type = NavType.StringType })) { entry ->
+                val id = UUID.fromString(entry.arguments!!.getString("id"))
+                Box(Modifier.fillMaxSize()) {
+                    AudiobookPage(id)
+                    BackButton { nav.popBackStack() }
+                }
+            }
+            composable(Routes.SHELF, arguments = listOf(navArgument("id") { type = NavType.StringType })) { entry ->
+                Box(Modifier.fillMaxSize()) {
+                    AudiobookShelfPage(entry.arguments!!.getString("id").orEmpty(), onBook = { nav.navigate(Routes.audiobook(it.id)) })
+                    BackButton { nav.popBackStack() }
+                }
+            }
+            composable(
+                Routes.THEME,
+                arguments = listOf(
+                    navArgument("path") { type = NavType.StringType },
+                    navArgument("title") { type = NavType.StringType; defaultValue = "" },
+                    navArgument("subtitle") { type = NavType.StringType; defaultValue = "" },
+                ),
+            ) { entry ->
+                val media = DirectMedia(
+                    entry.arguments!!.getString("path").orEmpty(),
+                    entry.arguments!!.getString("title").orEmpty(),
+                    entry.arguments!!.getString("subtitle")?.ifEmpty { null },
+                )
+                val vm: PlayerViewModel = viewModel(factory = viewModelFactory { initializer { PlayerViewModel(app, repo, app.settings, UUID(0, 0), direct = media) } })
+                PlayerScreen(vm, onBack = { nav.popBackStack() }, onPlayNext = {})
+            }
+            composable(
+                Routes.PLAYER,
+                arguments = listOf(
+                    navArgument("id") { type = NavType.StringType },
+                    navArgument("start") { type = NavType.LongType; defaultValue = -1L },
+                    navArgument("end") { type = NavType.LongType; defaultValue = -1L },
+                    navArgument("label") { type = NavType.StringType; defaultValue = "" },
+                    navArgument("begin") { type = NavType.BoolType; defaultValue = false },
+                ),
+                deepLinks = listOf(navDeepLink { uriPattern = "aster://play/{id}" }),
+            ) { entry ->
+                val id = UUID.fromString(entry.arguments!!.getString("id"))
+                val start = entry.arguments!!.getLong("start")
+                val end = entry.arguments!!.getLong("end")
+                val clip = if (start >= 0 && end > start) ClipRange(start, end, entry.arguments!!.getString("label")?.ifEmpty { null }) else null
+                val vm: PlayerViewModel = viewModel(factory = viewModelFactory { initializer { PlayerViewModel(app, repo, app.settings, id, clip, fromBeginning = entry.arguments!!.getBoolean("begin")) } })
+                PlayerScreen(
+                    vm,
+                    onBack = { nav.popBackStack() },
+                    onPlayNext = { next -> nav.navigate(Routes.player(next)) { popUpTo(Routes.PLAYER) { inclusive = true } } },
+                )
+            }
         }
-        composable(
-            Routes.THEME,
-            arguments = listOf(
-                navArgument("path") { type = NavType.StringType },
-                navArgument("title") { type = NavType.StringType; defaultValue = "" },
-                navArgument("subtitle") { type = NavType.StringType; defaultValue = "" },
-            ),
-        ) { entry ->
-            val media = DirectMedia(
-                entry.arguments!!.getString("path").orEmpty(),
-                entry.arguments!!.getString("title").orEmpty(),
-                entry.arguments!!.getString("subtitle")?.ifEmpty { null },
-            )
-            val vm: PlayerViewModel = viewModel(factory = viewModelFactory { initializer { PlayerViewModel(app, repo, app.settings, UUID(0, 0), direct = media) } })
-            PlayerScreen(vm, onBack = { nav.popBackStack() }, onPlayNext = {})
-        }
-        composable(
-            Routes.PLAYER,
-            arguments = listOf(
-                navArgument("id") { type = NavType.StringType },
-                navArgument("start") { type = NavType.LongType; defaultValue = -1L },
-                navArgument("end") { type = NavType.LongType; defaultValue = -1L },
-                navArgument("label") { type = NavType.StringType; defaultValue = "" },
-                navArgument("begin") { type = NavType.BoolType; defaultValue = false },
-            ),
-            deepLinks = listOf(navDeepLink { uriPattern = "aster://play/{id}" }),
-        ) { entry ->
-            val id = UUID.fromString(entry.arguments!!.getString("id"))
-            val start = entry.arguments!!.getLong("start")
-            val end = entry.arguments!!.getLong("end")
-            val clip = if (start >= 0 && end > start) ClipRange(start, end, entry.arguments!!.getString("label")?.ifEmpty { null }) else null
-            val vm: PlayerViewModel = viewModel(factory = viewModelFactory { initializer { PlayerViewModel(app, repo, app.settings, id, clip, fromBeginning = entry.arguments!!.getBoolean("begin")) } })
-            PlayerScreen(
-                vm,
-                onBack = { nav.popBackStack() },
-                onPlayNext = { next -> nav.navigate(Routes.player(next)) { popUpTo(Routes.PLAYER) { inclusive = true } } },
-            )
+        if (presented) {
+            androidx.activity.compose.BackHandler { app.audiobooks.setPresented(false) }
+            AudiobookPlayerScreen()
         }
     }
+
 }
 
 private enum class Tab(val label: String, val icon: ImageVector) {
@@ -218,13 +284,21 @@ private enum class Tab(val label: String, val icon: ImageVector) {
     More("More", Icons.Default.MoreHoriz),
 }
 
+/** The More list, in the Apple apps' order; the ones built so far. */
 private enum class MoreDestination(val label: String, val icon: ImageVector) {
-    Search("Search", Icons.Default.Search),
+    Audiobooks("Audiobooks", Icons.Default.LibraryBooks),
     Settings("Settings", Icons.Default.Settings),
+    Search("Search", Icons.Default.Search),
 }
 
 @Composable
-private fun MainTabs(onItem: (BaseItemDto) -> Unit, onPlay: (UUID) -> Unit, onSignOut: () -> Unit) {
+private fun MainTabs(
+    onItem: (BaseItemDto) -> Unit,
+    onPlay: (UUID) -> Unit,
+    onBook: (Audiobook) -> Unit,
+    onShelf: (AudiobookShelf) -> Unit,
+    onSignOut: () -> Unit,
+) {
     val app = LocalContext.current.applicationContext as AsterApp
     val repo = app.repository
     var selected by rememberSaveable { mutableIntStateOf(0) }
@@ -274,6 +348,8 @@ private fun MainTabs(onItem: (BaseItemDto) -> Unit, onPlay: (UUID) -> Unit, onSi
         }
     }
 
+    // Back from a page under More goes to the list.
+    androidx.activity.compose.BackHandler(enabled = current == Tab.More && more != null) { more = null }
     val content: @Composable (Modifier) -> Unit = { modifier ->
         when (current) {
             Tab.Home -> HomeScreen(home, onItem = onItem, onPlay = onPlay, modifier = modifier)
@@ -281,6 +357,7 @@ private fun MainTabs(onItem: (BaseItemDto) -> Unit, onPlay: (UUID) -> Unit, onSi
             Tab.Shows -> if (detectedAnime != null) TypeTab(BaseItemKind.SERIES, animeLibraries, onItem, onPlay, modifier)
             Tab.Anime -> AnimeScreen(anime, onItem = onItem, onPlay = onPlay, modifier = modifier)
             Tab.More -> when (more) {
+                MoreDestination.Audiobooks -> AudiobooksScreen(onBook = onBook, onShelf = onShelf, onListen = { app.audiobooks.play(it) }, modifier = modifier)
                 MoreDestination.Search -> SearchScreen(search, onItem = onItem, modifier = modifier.statusBarsPadding())
                 MoreDestination.Settings -> SettingsScreen(repo.session, app.settings, onSignOut, modifier.statusBarsPadding())
                 null -> MoreMenu(onPick = { more = it }, modifier = modifier.statusBarsPadding())
@@ -303,27 +380,35 @@ private fun MainTabs(onItem: (BaseItemDto) -> Unit, onPlay: (UUID) -> Unit, onSi
     } else {
         Box(Modifier.fillMaxSize()) {
             content(Modifier.fillMaxSize())
-            FloatingTabBar(
-                tabs = tabs, current = current, onSelect = ::select,
-                modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(horizontal = 16.dp),
-            )
+            Column(
+                Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(horizontal = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                AudiobookBar()
+                FloatingTabBar(tabs = tabs, current = current, onSelect = ::select, modifier = Modifier)
+            }
         }
     }
 }
 
 @Composable
 private fun MoreMenu(onPick: (MoreDestination) -> Unit, modifier: Modifier = Modifier) {
-    Column(modifier.fillMaxSize().padding(16.dp)) {
-        Text("More", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold, modifier = Modifier.padding(vertical = 8.dp))
+    Column(modifier.fillMaxSize()) {
+        // The Apple apps' navigation title: small and centered.
+        Text("More", style = Type.headline, modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
         MoreDestination.entries.forEach { dest ->
-            Row(
-                Modifier.fillMaxWidth().clickable { onPick(dest) }.padding(vertical = 16.dp),
-                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp),
-            ) {
-                Icon(dest.icon, null, tint = MaterialTheme.colorScheme.primary)
-                Text(dest.label, style = MaterialTheme.typography.titleMedium)
+            Row(Modifier.fillMaxWidth().clickable { onPick(dest) }, verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.width(56.dp), contentAlignment = Alignment.Center) { Icon(dest.icon, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(24.dp)) }
+                Column(Modifier.weight(1f)) {
+                    androidx.compose.material3.HorizontalDivider(color = Color.White.copy(alpha = 0.15f))
+                    Row(Modifier.fillMaxWidth().height(51.dp).padding(end = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text(dest.label, style = Type.title3.copy(fontWeight = FontWeight.Normal), modifier = Modifier.weight(1f))
+                        Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = SecondaryText)
+                    }
+                }
             }
         }
+        androidx.compose.material3.HorizontalDivider(Modifier.padding(start = 56.dp), color = Color.White.copy(alpha = 0.15f))
     }
 }
 
