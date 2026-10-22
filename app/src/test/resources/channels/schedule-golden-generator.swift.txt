@@ -1,0 +1,129 @@
+import Foundation
+
+func movie(_ id: String, _ minutes: Double?) -> BaseItem {
+    var item = BaseItem(id: id, name: "Movie \(id)", type: "Movie")
+    item.runTimeTicks = minutes.map { Int64($0 * 60 * 10_000_000) }
+    let n = Int(id.dropFirst())!; item.premiereDate = "\(1980 + n)-0\(1 + n % 9)-15T00:00:00.0000000Z"
+    return item
+}
+func episode(_ series: String, _ season: Int, _ number: Int, _ minutes: Double = 22) -> BaseItem {
+    var item = BaseItem(id: "\(series)-s\(season)e\(number)", name: "\(series) \(season)x\(number)", type: "Episode")
+    item.seriesId = series
+    item.seriesName = series.capitalized
+    item.parentIndexNumber = season
+    item.indexNumber = number
+    item.runTimeTicks = Int64(minutes * 60 * 10_000_000)
+    item.premiereDate = "\(2000 + number + season)-0\(1 + (number + season) % 9)-10T00:00:00.0000000Z"
+    return item
+}
+func clip(_ id: String, _ seconds: Double, tags: [String]? = nil) -> BaseItem {
+    var item = BaseItem(id: id, name: id, type: "Movie")
+    item.runTimeTicks = Int64(seconds * 10_000_000)
+    item.tags = tags
+    return item
+}
+
+let movies = (0..<8).map { movie("m\($0)", 85 + Double($0) * 10) }
+var shows: [BaseItem] = []
+for (n, series) in ["alpha", "bravo", "charlie"].enumerated() {
+    for season in 1...2 { for number in 1...6 { shows.append(episode(series, season, number, 22 + Double(n) * 8)) } }
+    shows.append(episode(series, 0, 1))
+}
+let mixed = shows + Array(movies.prefix(3))
+
+let clips = ChannelBreakClips(
+    bumpers: [clip("b1", 5), clip("b2", 7, tags: ["aster:bumper=in"]), clip("b3", 6, tags: ["aster:bumper=out"]), clip("b4", 4, tags: ["aster:bumper"])],
+    promos: [clip("p1", 20), clip("p2", 30), clip("p3", 25)],
+    commercials: [clip("c1", 15), clip("c2", 30), clip("c3", 45), clip("c4", 60), clip("c5", 20), clip("c6", 90)],
+    trailers: [clip("t1", 100), clip("t2", 130)],
+    interstitials: [clip("i1", 30), clip("i2", 120), clip("i3", 300), clip("i4", 45)]
+)
+let longOnly = ChannelBreakClips(commercials: [clip("L1", 600), clip("L2", 900)])
+let noInter = ChannelBreakClips(bumpers: [clip("b1", 5)], promos: [clip("p1", 20)], commercials: [clip("c1", 15), clip("c2", 30)])
+
+func zone(_ id: String) -> Calendar {
+    var c = Calendar(identifier: .gregorian); c.timeZone = TimeZone(identifier: id)!; return c
+}
+func date(_ cal: Calendar, _ y: Int, _ m: Int, _ d: Int, _ h: Int = 0, _ mi: Int = 0) -> Date {
+    cal.date(from: DateComponents(year: y, month: m, day: d, hour: h, minute: mi))!
+}
+
+struct Scenario {
+    var name: String
+    var channel = "channel-a"
+    var tz = "America/Chicago"
+    var items: [BaseItem] = movies
+    var lineup = ChannelLineup()
+    var clips: ChannelBreakClips = .none
+    var window: (Int, Int, Int, Int, Int, Int, Int, Int, Int, Int) // y m d h mi  y m d h mi
+}
+func w(_ a: (Int, Int, Int, Int), _ b: (Int, Int, Int, Int)) -> (Int, Int, Int, Int, Int, Int, Int, Int, Int, Int) { (a.0, a.1, a.2, a.3, 0, b.0, b.1, b.2, b.3, 0) }
+
+nonisolated(unsafe) var scenarios: [Scenario] = []
+let day = w((2026, 10, 15, 18), (2026, 10, 17, 6))
+func add(_ name: String, _ items: [BaseItem], _ configure: (inout ChannelLineup) -> Void = { _ in }, clips: ChannelBreakClips = .none, channel: String = "channel-a", tz: String = "America/Chicago", window: (Int, Int, Int, Int, Int, Int, Int, Int, Int, Int)? = nil) {
+    var lineup = ChannelLineup(); configure(&lineup)
+    scenarios.append(Scenario(name: name, channel: channel, tz: tz, items: items, lineup: lineup, clips: clips, window: window ?? day))
+}
+
+add("movies-rotation", movies)
+add("movies-other-channel", movies, channel: "channel-b")
+add("movies-reversed", movies.reversed())
+add("shows-rotation", shows)
+add("shows-blocks", shows) { $0.mode = .blocks }
+add("shows-blocks-long", shows) { $0.mode = .blocks; $0.blocks = 3...6 }
+add("mixed-rotation", mixed)
+add("mixed-shuffle", mixed) { $0.mode = .shuffle }
+add("mixed-sequential", mixed) { $0.mode = .sequential }
+add("mixed-airdate", mixed) { $0.mode = .airdate }
+add("week", shows) { $0.reshuffle = .week }
+add("week-boundary", shows, { $0.reshuffle = .week }, window: w((2026, 10, 18, 12), (2026, 10, 20, 12)))
+add("month", mixed) { $0.reshuffle = .month }
+add("month-boundary", mixed, { $0.reshuffle = .month }, window: w((2026, 10, 31, 12), (2026, 11, 2, 12)))
+add("seed2", movies) { $0.seed = 2 }
+add("seed7-blocks", shows) { $0.seed = 7; $0.mode = .blocks }
+add("weights", shows) { $0.weights = ["alpha": 3, "bravo": 2] }
+add("weights-blocks", shows) { $0.weights = ["charlie": 4]; $0.mode = .blocks }
+add("length-limits", mixed) { $0.minLength = 30 * 60; $0.maxLength = 110 * 60 }
+add("epoch-start", movies, window: w((2025, 12, 31, 12), (2026, 1, 2, 12)))
+add("dst-spring", shows, window: w((2027, 3, 13, 12), (2027, 3, 15, 12)))
+add("dst-fall", movies, window: w((2026, 11, 1, 0), (2026, 11, 2, 12)))
+add("far-future", movies, window: w((2030, 6, 1, 0), (2030, 6, 2, 12)))
+add("kolkata", movies, tz: "Asia/Kolkata")
+add("auckland-week", shows, { $0.reshuffle = .week }, tz: "Pacific/Auckland", window: w((2026, 10, 18, 12), (2026, 10, 20, 12)))
+// Breaks
+add("breaks-default", shows, clips: clips)
+add("breaks-every2", shows, { $0.breaks.every = 2 }, clips: clips)
+add("breaks-minutes5-promos3", shows, { $0.breaks.minutes = 5; $0.breaks.promoCount = 3; $0.breaks.trailerCount = 2; $0.breaks.interstitialCount = 3 }, clips: clips)
+add("breaks-bumpers-out", shows, { $0.breaks.bumpersAt = .out }, clips: clips)
+add("breaks-bumpers-in", shows, { $0.breaks.bumpersAt = .in }, clips: clips)
+for align in [5, 10, 15, 20, 30, 60] {
+    add("align-best-\(align)", shows, { $0.breaks.align = align }, clips: clips)
+    add("align-exact-\(align)", shows, { $0.breaks.align = align; $0.breaks.exactAlign = true }, clips: clips)
+}
+add("align-nointer-best", shows, { $0.breaks.align = 30 }, clips: noInter)
+add("align-nointer-exact", shows, { $0.breaks.align = 30; $0.breaks.exactAlign = true }, clips: noInter)
+add("align-long-only", shows, { $0.breaks.align = 30 }, clips: longOnly)
+add("align-long-exact", shows, { $0.breaks.align = 30; $0.breaks.exactAlign = true }, clips: longOnly)
+add("breaks-movies", movies, clips: clips)
+add("align-movies-30", movies, { $0.breaks.align = 30 }, clips: clips)
+add("breaks-mixed-shuffle", mixed, { $0.mode = .shuffle; $0.breaks.align = 15 }, clips: clips)
+add("breaks-kolkata", shows, { $0.breaks.align = 30 }, clips: clips, tz: "Asia/Kolkata")
+
+func f(_ d: Date) -> String { String(format: "%.3f", d.timeIntervalSince1970) }
+func roleName(_ r: ProgramRole) -> String { "\(r)" }
+
+var out = "["
+for (index, s) in scenarios.enumerated() {
+    let cal = zone(s.tz)
+    let from = date(cal, s.window.0, s.window.1, s.window.2, s.window.3, s.window.4)
+    let to = date(cal, s.window.5, s.window.6, s.window.7, s.window.8, s.window.9)
+    let segs = ChannelSchedule.segments(channelId: s.channel, items: s.items, lineup: s.lineup, breaks: s.clips, from: from, to: to, calendar: cal)
+    let progs = ChannelSchedule.programs(channelId: s.channel, items: s.items, lineup: s.lineup, breaks: s.clips, from: from, to: to, calendar: cal)
+    func list(_ ps: [ScheduledProgram]) -> String {
+        "[" + ps.map { "[\(f($0.start)),\(f($0.end)),\"\($0.item.id)\",\"\(roleName($0.role))\"]" }.joined(separator: ",") + "]"
+    }
+    out += (index > 0 ? "," : "") + "\n{\"name\":\"\(s.name)\",\"tz\":\"\(s.tz)\",\"from\":\(f(from)),\"to\":\(f(to)),\"segments\":\(list(segs)),\"programs\":\(list(progs))}"
+}
+out += "\n]"
+print(out)
