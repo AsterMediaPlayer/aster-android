@@ -24,6 +24,9 @@ import io.github.peerless2012.ass.media.kt.withAssMkvSupport
 import io.github.peerless2012.ass.media.parser.AssSubtitleParserFactory
 import io.github.peerless2012.ass.media.type.AssRenderType
 import com.astermediaplayer.astermediaplayer.data.AsterRepository
+import com.astermediaplayer.astermediaplayer.data.channels.ChannelTuner
+import com.astermediaplayer.astermediaplayer.data.channels.TunedSegment
+import com.astermediaplayer.astermediaplayer.data.channels.plain
 import com.astermediaplayer.astermediaplayer.data.SettingsStore
 import com.astermediaplayer.astermediaplayer.ui.components.userMessage
 import kotlinx.coroutines.Job
@@ -82,6 +85,10 @@ data class PlayerUiState(
     val chapters: List<Chapter> = emptyList(),
     /** A TV channel: no resume point and no next episode, and the dial can change channel. */
     val live: Boolean = false,
+    /** A Channels-tab channel: the dial changes channel here too. */
+    val channel: Boolean = false,
+    /** A break's clip is playing, not a programme. */
+    val breakClip: Boolean = false,
     val chapterIndex: Int = -1,
 )
 
@@ -97,7 +104,19 @@ class PlayerViewModel(
     private val direct: DirectMedia? = null,
     /** Start over even when there's a resume point. */
     private val fromBeginning: Boolean = false,
+    /** A Channels-tab channel (by playlist id): what plays is whatever its schedule says is on, then what follows. */
+    val playlistChannelId: String? = null,
+    /** Where in the item the schedule has it, and where a clip cut short stops, in milliseconds. */
+    startAtMs: Long? = null,
+    cutAtMs: Long? = null,
 ) : ViewModel() {
+    private var scheduledStartMs: Long? = startAtMs
+    private var currentPlaylistChannel: String? = playlistChannelId
+    private val _playlistChannelId = MutableStateFlow(playlistChannelId)
+    /** The Channels-tab channel playing now (it changes with the dial). */
+    val playingPlaylistChannel: StateFlow<String?> = _playlistChannelId.asStateFlow()
+
+    private var cutMs: Long? = cutAtMs
     /** The item playing; changes when a live channel is switched. */
     private var itemId = initialItemId
     private var liveStreamId: String? = null
@@ -109,7 +128,7 @@ class PlayerViewModel(
     val channelId: StateFlow<UUID> = _channelId.asStateFlow()
 
     /** A clip or a plugin file isn't the viewer watching the item, so nothing is reported to the server. */
-    private val readOnly = clip != null || direct != null
+    private val readOnly = clip != null || direct != null || playlistChannelId != null
 
     private val _state = MutableStateFlow(PlayerUiState())
     val state: StateFlow<PlayerUiState> = _state.asStateFlow()
@@ -210,7 +229,7 @@ class PlayerViewModel(
                 }
                 val dto = item ?: repo.item(itemId).also { item = it }
                 val isLive = dto.type == BaseItemKind.TV_CHANNEL
-                val resumeMs = positionMs ?: clip?.startMs ?: if (fromBeginning || isLive) 0L else ((dto.userData?.playbackPositionTicks ?: 0L) / TICKS_PER_MS)
+                val resumeMs = positionMs ?: clip?.startMs ?: scheduledStartMs ?: if (fromBeginning || isLive) 0L else ((dto.userData?.playbackPositionTicks ?: 0L) / TICKS_PER_MS)
                 if (!readOnly && !isLive && item != null && segments.isEmpty()) segments = repo.segments(itemId)
                 if (!readOnly && !isLive && nextEpisodeId == null) nextEpisodeId = findNextEpisode(dto)
 
@@ -222,6 +241,7 @@ class PlayerViewModel(
                     mediaSourceId = mediaSourceId,
                     forceTranscode = forceTranscode,
                 )
+                scheduledStartMs = null
                 val source = info.mediaSources.firstOrNull() ?: error("This item has no playable media")
                 mediaSourceId = source.id
                 playSessionId = info.playSessionId
@@ -258,9 +278,15 @@ class PlayerViewModel(
                 _state.update {
                     it.copy(
                         title = clip?.label ?: dto.name.orEmpty(),
-                        subtitle = if (dto.type == BaseItemKind.EPISODE) dto.seriesName else null,
+                        subtitle = when {
+                            currentPlaylistChannel != null -> ChannelTuner.channel(currentPlaylistChannel!!)?.let { c -> "${c.number} ${c.name}" }
+                            dto.type == BaseItemKind.EPISODE -> dto.seriesName
+                            else -> null
+                        },
                         transcoding = !direct,
                         live = isLive,
+                        channel = playlistChannelId != null,
+                        breakClip = playlistChannelId != null && dto.type != BaseItemKind.MOVIE && dto.type != BaseItemKind.EPISODE,
                         chapters = (if (readOnly) emptyList() else dto.chapters.orEmpty()).mapIndexed { i, c ->
                             Chapter(c.name?.takeIf { n -> n.isNotBlank() } ?: "Chapter ${i + 1}", c.startPositionTicks / TICKS_PER_MS)
                         },
@@ -308,6 +334,38 @@ class PlayerViewModel(
         return episodes.getOrNull(index + 1)?.id
     }
 
+    /** What a channel's schedule has on after this: the next programme or break clip. */
+    private fun tuneNext() {
+        val channel = currentPlaylistChannel ?: return
+        val finished = item?.id?.plain()
+        val next = ChannelTuner.live(channel, after = finished) ?: run { _state.update { it.copy(error = "Nothing is on this channel right now.") }; return }
+        playSegment(next)
+    }
+
+    private fun playSegment(segment: TunedSegment) {
+        val dto = segment.item.source as? BaseItemDto ?: return
+        reportStopped()
+        player.stop()
+        item = null
+        mediaSourceId = null
+        reported = false
+        stopped = false
+        forcedTranscode = false
+        itemId = dto.id
+        scheduledStartMs = segment.startTicks / TICKS_PER_MS
+        cutMs = segment.cutTicks?.let { it / TICKS_PER_MS }
+        start(null)
+    }
+
+    /** Tunes to another Channels-tab channel (by playlist id) from the dial: what's on it now, from as far in as it's got. */
+    fun switchPlaylistChannel(channelId: String) {
+        if (channelId == currentPlaylistChannel) return
+        val segment = ChannelTuner.live(channelId) ?: return
+        currentPlaylistChannel = channelId
+        _playlistChannelId.value = channelId
+        playSegment(segment)
+    }
+
     /** Tunes to another channel without leaving the player: the one on is let go, the new one opens in its place. */
     fun switchChannel(channelId: UUID) {
         if (channelId == itemId) return
@@ -349,6 +407,8 @@ class PlayerViewModel(
                     _finished.tryEmit(Unit)
                     break
                 }
+                // A break clip cut short to land on the half hour stops where the schedule says.
+                cutMs?.let { cut -> if (currentPlaylistChannel != null && player.currentPosition >= cut) { tuneNext(); return@let } }
                 sinceReport += 500
                 if (sinceReport >= PROGRESS_INTERVAL_MS) {
                     sinceReport = 0
@@ -385,6 +445,7 @@ class PlayerViewModel(
     }
 
     private fun onEnded() {
+        if (currentPlaylistChannel != null) { tuneNext(); return }
         if (readOnly) _finished.tryEmit(Unit)
         reportStopped()
         if (appSettings.autoPlayNext) nextEpisodeId?.let { _playNext.tryEmit(it) }

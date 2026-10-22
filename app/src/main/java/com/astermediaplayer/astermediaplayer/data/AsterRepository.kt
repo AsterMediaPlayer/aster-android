@@ -9,7 +9,9 @@ import org.jellyfin.sdk.api.client.extensions.instantMixApi
 import org.jellyfin.sdk.api.client.extensions.lyricApi
 import org.jellyfin.sdk.api.client.extensions.playlistApi
 import org.jellyfin.sdk.api.client.extensions.authenticationApi
+import org.jellyfin.sdk.api.client.extensions.genreApi
 import org.jellyfin.sdk.api.client.extensions.imageApi
+import org.jellyfin.sdk.api.client.extensions.studioApi
 import org.jellyfin.sdk.api.client.extensions.libraryApi
 import org.jellyfin.sdk.api.client.extensions.liveTvApi
 import org.jellyfin.sdk.api.client.extensions.mediaInfoApi
@@ -158,6 +160,79 @@ class AsterRepository(context: Context, private val store: SessionStore) {
         userId = userId, parentId = parentId, limit = limit, includeItemTypes = kinds,
         fields = listOf(ItemFields.OVERVIEW, ItemFields.GENRES),
     ).content
+
+    // MARK: Channel sources
+
+    /** The user's video playlists, with their tags: the channels among them are tagged `aster:channel`. */
+    suspend fun videoPlaylists(): List<BaseItemDto> = api.libraryApi.getItems(
+        GetItemsRequest(
+            userId = userId, recursive = true, includeItemTypes = listOf(BaseItemKind.PLAYLIST),
+            mediaTypes = listOf(org.jellyfin.sdk.model.api.MediaType.VIDEO), sortBy = listOf(ItemSortBy.SORT_NAME), sortOrder = listOf(SortOrder.ASCENDING),
+            fields = listOf(ItemFields.TAGS, ItemFields.CHILD_COUNT, ItemFields.OVERVIEW),
+        ),
+    ).content.items
+
+    /** What a channel's schedule and menus use of each title, and no more, so thousands of episodes stay a small download. */
+    private val channelFields = listOf(ItemFields.OVERVIEW, ItemFields.TAGS)
+    private val channelImages = listOf(ImageType.PRIMARY, ImageType.BACKDROP, ImageType.THUMB, ImageType.LOGO)
+
+    /** A playlist's movies, episodes and clips, tagged and ready for the schedule. */
+    suspend fun channelPlaylistItems(playlistId: UUID): List<BaseItemDto> = api.playlistApi.getPlaylistItems(
+        playlistId = playlistId, userId = userId, fields = channelFields, enableImages = true, enableUserData = false,
+        imageTypeLimit = 1, enableImageTypes = channelImages,
+    ).content.items
+
+    /** Every item the request finds, 500 at a time. */
+    private suspend fun allItems(base: GetItemsRequest): List<BaseItemDto> {
+        val found = mutableListOf<BaseItemDto>()
+        while (true) {
+            val result = api.libraryApi.getItems(base.copy(startIndex = found.size, limit = 500)).content
+            found += result.items
+            if (result.items.size < 500 || found.size >= result.totalRecordCount) break
+        }
+        return found
+    }
+
+    private fun channelRequest(parentId: UUID? = null) = GetItemsRequest(
+        userId = userId, parentId = parentId, fields = channelFields, enableImageTypes = channelImages, imageTypeLimit = 1, enableUserData = false,
+    )
+
+    /** The genres, studios and collections of the server's movies and shows, by name, for channels filled from them. */
+    suspend fun videoGenres(): List<BaseItemDto> = api.genreApi.getGenres(
+        userId = userId, includeItemTypes = listOf(BaseItemKind.MOVIE, BaseItemKind.SERIES), sortBy = listOf(ItemSortBy.SORT_NAME),
+    ).content.items
+
+    suspend fun videoStudios(): List<BaseItemDto> = api.studioApi.getStudios(
+        userId = userId, includeItemTypes = listOf(BaseItemKind.MOVIE, BaseItemKind.SERIES),
+    ).content.items
+
+    suspend fun collections(): List<BaseItemDto> = api.libraryApi.getItems(
+        GetItemsRequest(userId = userId, recursive = true, includeItemTypes = listOf(BaseItemKind.BOX_SET), sortBy = listOf(ItemSortBy.SORT_NAME)),
+    ).content.items
+
+    /**
+     * The movies and series in any of [genreIds], or from any of [studioIds] (ids, not names, so a name with "&" in it
+     * can't break the request), of [types], under [parentId] (a library) or everywhere, from [years] and with
+     * [ratings] when given.
+     */
+    suspend fun sourceTitles(
+        genreIds: List<UUID> = emptyList(), studioIds: List<UUID> = emptyList(), types: List<BaseItemKind>, parentId: UUID?,
+        years: IntRange?, ratings: List<String>,
+    ): List<BaseItemDto> = allItems(
+        channelRequest(parentId).copy(
+            recursive = true, includeItemTypes = types, isMissing = false, sortBy = listOf(ItemSortBy.SORT_NAME),
+            genreIds = genreIds.takeIf { it.isNotEmpty() }, studioIds = studioIds.takeIf { it.isNotEmpty() },
+            years = years?.toList(), officialRatings = ratings.takeIf { it.isNotEmpty() },
+        ),
+    )
+
+    /** What a collection holds: its movies and series. */
+    suspend fun collectionTitles(collectionId: UUID): List<BaseItemDto> = allItems(channelRequest(collectionId))
+
+    /** A series' episodes, as a channel plays them (missing ones left out). */
+    suspend fun seriesEpisodes(seriesId: UUID): List<BaseItemDto> = allItems(
+        channelRequest(seriesId).copy(recursive = true, includeItemTypes = listOf(BaseItemKind.EPISODE), isMissing = false),
+    )
 
     // MARK: Live TV
 
@@ -561,8 +636,8 @@ class AsterRepository(context: Context, private val store: SessionStore) {
     }
 
     /** An item's primary picture by its id and tag, for art that belongs to another item (a song's album). */
-    fun imageUrlFor(id: UUID, tag: String, maxWidth: Int): String =
-        api.imageApi.getItemImageUrl(id, ImageType.PRIMARY, maxWidth = maxWidth, tag = tag)
+    fun imageUrlFor(id: UUID, tag: String, maxWidth: Int, type: ImageType = ImageType.PRIMARY): String =
+        api.imageApi.getItemImageUrl(id, type, maxWidth = maxWidth, tag = tag)
 
     fun personImageUrl(person: BaseItemPerson, maxWidth: Int): String? =
         person.primaryImageTag?.let { api.imageApi.getItemImageUrl(person.id, ImageType.PRIMARY, maxWidth = maxWidth, tag = it) }

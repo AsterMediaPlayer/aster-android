@@ -24,10 +24,13 @@ import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Sensors
 import androidx.compose.material3.IconButton
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.astermediaplayer.astermediaplayer.data.Audiobook
 import com.astermediaplayer.astermediaplayer.data.AudiobookShelf
 import com.astermediaplayer.astermediaplayer.ui.audiobooks.AudiobookBar
+import com.astermediaplayer.astermediaplayer.data.channels.ChannelTuner
+import com.astermediaplayer.astermediaplayer.ui.channels.ChannelsScreen
 import com.astermediaplayer.astermediaplayer.ui.livetv.LiveTvScreen
 import com.astermediaplayer.astermediaplayer.ui.music.AlbumPage
 import com.astermediaplayer.astermediaplayer.ui.music.ArtistPage
@@ -130,6 +133,7 @@ private object Routes {
     const val DETAIL = "detail/{id}"
     const val PLAYER = "player/{id}?start={start}&end={end}&label={label}&begin={begin}"
     const val AUDIOBOOK = "audiobook/{id}"
+    const val CHANNEL = "channel/{id}"
     const val ALBUM = "album/{id}"
     const val ARTIST = "artist/{id}"
     const val SHELF = "audiobookshelf/{id}"
@@ -137,6 +141,7 @@ private object Routes {
     fun library(id: UUID, name: String) = "library/$id/${android.net.Uri.encode(name)}"
     fun detail(id: UUID) = "detail/$id"
     fun audiobook(id: UUID) = "audiobook/$id"
+    fun channel(id: String) = "channel/$id"
     fun album(id: UUID) = "album/$id"
     fun artist(id: UUID) = "artist/$id"
     fun shelf(id: String) = "audiobookshelf/${android.net.Uri.encode(id)}"
@@ -182,6 +187,7 @@ fun AsterNavHost(signedIn: Boolean) {
                     onShelf = { nav.navigate(Routes.shelf(it.id)) },
                 onAlbum = { nav.navigate(Routes.album(it.id)) },
                 onArtist = { nav.navigate(Routes.artist(it.id)) },
+                onTuneChannel = { nav.navigate(Routes.channel(it)) },
                     onPlay = { nav.navigate(Routes.player(it)) },
                     onSignOut = {
                         scope.launch {
@@ -237,7 +243,29 @@ fun AsterNavHost(signedIn: Boolean) {
                     BackButton { nav.popBackStack() }
                 }
             }
-            composable(Routes.ALBUM, arguments = listOf(navArgument("id") { type = NavType.StringType })) { entry ->
+            composable(Routes.CHANNEL, arguments = listOf(navArgument("id") { type = NavType.StringType })) { entry ->
+            val channelId = entry.arguments!!.getString("id").orEmpty()
+            // What's on the channel now, from as far in as it's got; nothing on it leaves the screen.
+            val live = remember(channelId) { ChannelTuner.live(channelId) }
+            val dto = live?.item?.source as? BaseItemDto
+            if (live == null || dto == null) {
+                LaunchedEffect(Unit) { nav.popBackStack() }
+            } else {
+                val vm: PlayerViewModel = viewModel(
+                    key = "channel-$channelId",
+                    factory = viewModelFactory {
+                        initializer {
+                            PlayerViewModel(
+                                app, repo, app.settings, dto.id, playlistChannelId = channelId,
+                                startAtMs = live.startTicks / 10_000L, cutAtMs = live.cutTicks?.let { it / 10_000L },
+                            )
+                        }
+                    },
+                )
+                PlayerScreen(vm, onBack = { nav.popBackStack() }, onPlayNext = {})
+            }
+        }
+        composable(Routes.ALBUM, arguments = listOf(navArgument("id") { type = NavType.StringType })) { entry ->
             Box(Modifier.fillMaxSize()) {
                 AlbumPage(UUID.fromString(entry.arguments!!.getString("id")))
                 BackButton { nav.popBackStack() }
@@ -320,6 +348,7 @@ private enum class Tab(val label: String, val icon: ImageVector) {
 private enum class MoreDestination(val label: String, val icon: ImageVector) {
     Music("Music", Icons.Default.MusicNote),
     LiveTv("Live TV", Icons.Default.Sensors),
+    Channels("Channels", Icons.Default.Tv),
     Audiobooks("Audiobooks", Icons.Default.LibraryBooks),
     Settings("Settings", Icons.Default.Settings),
     Search("Search", Icons.Default.Search),
@@ -333,6 +362,7 @@ private fun MainTabs(
     onShelf: (AudiobookShelf) -> Unit,
     onAlbum: (BaseItemDto) -> Unit,
     onArtist: (BaseItemDto) -> Unit,
+    onTuneChannel: (String) -> Unit,
     onSignOut: () -> Unit,
 ) {
     val app = LocalContext.current.applicationContext as AsterApp
@@ -395,6 +425,10 @@ private fun MainTabs(
             Tab.More -> when (more) {
                 MoreDestination.Music -> Box(modifier) {
                     MusicScreen(onAlbum = onAlbum, onArtist = onArtist, modifier = Modifier.fillMaxSize(), topInset = 56.dp)
+                    BackButton { more = null }
+                }
+                MoreDestination.Channels -> Box(modifier) {
+                    ChannelsScreen(onTune = onTuneChannel, onOpen = onItem, modifier = Modifier.fillMaxSize(), topInset = 56.dp)
                     BackButton { more = null }
                 }
                 MoreDestination.LiveTv -> Box(modifier) {

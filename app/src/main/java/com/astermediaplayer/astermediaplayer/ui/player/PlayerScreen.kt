@@ -47,6 +47,7 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.PlayerView
 import io.github.peerless2012.ass.media.widget.AssSubtitleView
 import java.util.UUID
+import com.astermediaplayer.astermediaplayer.data.channels.ChannelTuner
 
 @OptIn(UnstableApi::class)
 @Composable
@@ -150,13 +151,27 @@ fun PlayerScreen(
         if (state.live) {
             val channels by viewModel.channels.collectAsStateWithLifecycle()
             val channelId by viewModel.channelId.collectAsStateWithLifecycle()
+            val repo = (LocalContext.current.applicationContext as com.astermediaplayer.astermediaplayer.AsterApp).repository
+            val dial = remember(channels) { channels.map { it.toDial(repo) } }
             ChannelDialOverlay(
-                channels = channels, playingId = channelId, controlsShown = controlsVisible,
+                channels = dial, playingId = channelId.toString(), controlsShown = controlsVisible,
                 // The controls stay up while the dial turns, and go once a channel's tuned, the dial with them.
                 onActivity = { playerView?.showController() },
-                onTune = { viewModel.switchChannel(it) },
+                onTune = { id -> viewModel.switchChannel(java.util.UUID.fromString(id)) },
                 onTuned = { playerView?.hideController() },
             )
+        } else if (state.channel) {
+            val playing by viewModel.playingPlaylistChannel.collectAsStateWithLifecycle()
+            val repo = (LocalContext.current.applicationContext as com.astermediaplayer.astermediaplayer.AsterApp).repository
+            // What's on each channel is worked out fresh as the dial opens, so it's what's on now.
+            val dial = remember(playing) { ChannelTuner.orderedChannels.map { it.toDial(repo) } }
+            ChannelDialOverlay(
+                channels = dial, playingId = playing.orEmpty(), controlsShown = controlsVisible,
+                onActivity = { playerView?.showController() },
+                onTune = { id -> viewModel.switchPlaylistChannel(id) },
+                onTuned = { playerView?.hideController() },
+            )
+            ChannelBug(playing, state.breakClip, state.title)
         }
 
         state.skip?.let { prompt ->

@@ -42,7 +42,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
 import com.astermediaplayer.astermediaplayer.AsterApp
-import com.astermediaplayer.astermediaplayer.ui.livetv.programProgress
 import com.astermediaplayer.astermediaplayer.ui.theme.SecondaryText
 import com.astermediaplayer.astermediaplayer.ui.theme.Type
 import kotlinx.coroutines.Job
@@ -84,11 +83,23 @@ object ChannelDialMath {
     }
 }
 
+/** A channel as the dial shows it, from Live TV or the Channels tab: its number, name, logo and what's on now. */
+data class DialChannel(
+    val id: String,
+    val number: String?,
+    val name: String,
+    val logoUrl: String? = null,
+    val programTitle: String? = null,
+    val programSubtitle: String? = null,
+    /** How far through what's on, 0..1. */
+    val progress: Float? = null,
+)
+
 /** The row of channels the dial goes through, and which one it's on (the Kotlin counterpart of `ChannelFlickModel`). */
-private class FlickModel(val channels: List<BaseItemDto>, currentId: UUID) {
+private class FlickModel(val channels: List<DialChannel>, currentId: String) {
     var selected by mutableIntStateOf(channels.indexOfFirst { it.id == currentId }.coerceAtLeast(0))
 
-    val selectedChannel: BaseItemDto? get() = channels.getOrNull(selected)
+    val selectedChannel: DialChannel? get() = channels.getOrNull(selected)
 
     /** Moves along the row, going round from the last to the first. */
     fun move(step: Int) {
@@ -97,7 +108,7 @@ private class FlickModel(val channels: List<BaseItemDto>, currentId: UUID) {
     }
 
     /** The channel [offset] places from the selected one, going round; null when the row is too short for it. */
-    fun neighbour(offset: Int): BaseItemDto? {
+    fun neighbour(offset: Int): DialChannel? {
         if (channels.isEmpty()) return null
         val reach = if (offset > 0) channels.size / 2 else (channels.size - 1) / 2
         if (abs(offset) > reach) return null
@@ -114,11 +125,11 @@ private class FlickModel(val channels: List<BaseItemDto>, currentId: UUID) {
  */
 @Composable
 fun ChannelDialOverlay(
-    channels: List<BaseItemDto>,
-    playingId: UUID,
+    channels: List<DialChannel>,
+    playingId: String,
     controlsShown: Boolean,
     onActivity: () -> Unit,
-    onTune: (UUID) -> Unit,
+    onTune: (String) -> Unit,
     onTuned: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -261,8 +272,7 @@ private fun DialWheel(turned: Float, held: Boolean, modifier: Modifier = Modifie
 
 /** The channel the dial's on: a big number, the channel, and what's on, with the ones either side faded above and below. */
 @Composable
-private fun ChannelCard(model: FlickModel, channel: BaseItemDto, isPlaying: Boolean) {
-    val app = LocalContext.current.applicationContext as AsterApp
+private fun ChannelCard(model: FlickModel, channel: DialChannel, isPlaying: Boolean) {
     Column(Modifier.width(320.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Neighbour(model.neighbour(1), channel)
         Column(
@@ -270,19 +280,19 @@ private fun ChannelCard(model: FlickModel, channel: BaseItemDto, isPlaying: Bool
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                channel.channelNumber?.let { Text(it, style = Type.pageTitle.copy(fontSize = 44.sp, lineHeight = 48.sp, fontWeight = FontWeight.Bold), color = Color.White) }
+                channel.number?.let { Text(it, style = Type.pageTitle.copy(fontSize = 44.sp, lineHeight = 48.sp, fontWeight = FontWeight.Bold), color = Color.White) }
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text(channel.name.orEmpty(), style = Type.headline, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(channel.name, style = Type.headline, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     if (isPlaying) Text("Watching", style = Type.caption.copy(fontWeight = FontWeight.SemiBold), color = MaterialTheme.colorScheme.primary)
                 }
-                app.repository.channelLogoUrl(channel, 300)?.let {
+                channel.logoUrl?.let {
                     AsyncImage(model = it, contentDescription = null, contentScale = ContentScale.Fit, modifier = Modifier.size(56.dp, 32.dp))
                 }
             }
-            channel.currentProgram?.let { program ->
-                Text(program.name.orEmpty(), style = Type.calloutSemibold.copy(fontSize = 15.sp), color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                program.episodeTitle?.takeIf { it != program.name }?.let { Text(it, style = Type.caption, color = SecondaryText, maxLines = 1, overflow = TextOverflow.Ellipsis) }
-                programProgress(program)?.let { p ->
+            channel.programTitle?.let { title ->
+                Text(title, style = Type.calloutSemibold.copy(fontSize = 15.sp), color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                channel.programSubtitle?.let { Text(it, style = Type.caption, color = SecondaryText, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                channel.progress?.let { p ->
                     Box(Modifier.fillMaxWidth().height(4.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.3f))) {
                         Box(Modifier.fillMaxWidth(p.coerceIn(0.03f, 1f)).height(4.dp).clip(CircleShape).background(Color.White))
                     }
@@ -294,10 +304,35 @@ private fun ChannelCard(model: FlickModel, channel: BaseItemDto, isPlaying: Bool
 }
 
 @Composable
-private fun Neighbour(channel: BaseItemDto?, current: BaseItemDto) {
+private fun Neighbour(channel: DialChannel?, current: DialChannel) {
     if (channel == null || channel.id == current.id) return
     Row(Modifier.padding(horizontal = 16.dp).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        channel.channelNumber?.let { Text(it, style = Type.calloutSemibold, color = Color.White.copy(alpha = 0.55f)) }
-        Text(channel.name.orEmpty(), style = Type.callout, color = Color.White.copy(alpha = 0.55f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+        channel.number?.let { Text(it, style = Type.calloutSemibold, color = Color.White.copy(alpha = 0.55f)) }
+        Text(channel.name, style = Type.callout, color = Color.White.copy(alpha = 0.55f), maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
+}
+
+/** A Live TV channel as the dial shows it. */
+fun BaseItemDto.toDial(repo: com.astermediaplayer.astermediaplayer.data.AsterRepository) = DialChannel(
+    id = id.toString(), number = channelNumber, name = name.orEmpty(), logoUrl = repo.channelLogoUrl(this, 300),
+    programTitle = currentProgram?.name, programSubtitle = currentProgram?.episodeTitle?.takeIf { it != currentProgram?.name },
+    progress = currentProgram?.let { com.astermediaplayer.astermediaplayer.ui.livetv.programProgress(it) },
+)
+
+/** A Channels-tab channel as the dial shows it, with what its schedule has on now. */
+fun com.astermediaplayer.astermediaplayer.data.channels.PlaylistChannel.toDial(repo: com.astermediaplayer.astermediaplayer.data.AsterRepository): DialChannel {
+    val now = com.astermediaplayer.astermediaplayer.data.channels.PlaylistChannel.now()
+    val program = airing(now)
+    val break_ = segment(now)?.role?.isBreak == true
+    val item = program?.item
+    val episodeTitle = if (item?.isEpisode == true) listOfNotNull(
+        item.parentIndexNumber?.let { s -> item.indexNumber?.let { e -> "S$s, E$e" } }, item.name,
+    ).joinToString(" · ").ifEmpty { null } else null
+    return DialChannel(
+        id = id, number = "$number", name = name, logoUrl = logoUrl(repo, 300),
+        // In a break: what's coming up, as the Apple apps' row shows it.
+        programTitle = when { break_ -> "Break"; item?.isEpisode == true -> item.seriesName ?: item.name; else -> item?.name },
+        programSubtitle = if (break_) programmeAfterBreak(now)?.item?.let { "Up next: ${it.seriesName ?: it.name}" } else episodeTitle,
+        progress = program?.let { p -> if (p.end > p.start) ((now - p.start) / (p.end - p.start)).toFloat() else null },
+    )
 }
