@@ -24,6 +24,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilledTonalIconToggleButton
@@ -32,6 +33,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -51,6 +53,10 @@ import androidx.lifecycle.viewModelScope
 import coil3.compose.AsyncImage
 import com.astermediaplayer.astermediaplayer.AsterApp
 import com.astermediaplayer.astermediaplayer.data.AsterRepository
+import com.astermediaplayer.astermediaplayer.data.OpEdTheme
+import com.astermediaplayer.astermediaplayer.data.OpeningEnding
+import com.astermediaplayer.astermediaplayer.data.OpeningsEndings
+import com.astermediaplayer.astermediaplayer.data.isAnime
 import com.astermediaplayer.astermediaplayer.ui.components.ErrorBox
 import com.astermediaplayer.astermediaplayer.ui.components.Load
 import com.astermediaplayer.astermediaplayer.ui.components.LoadingBox
@@ -79,6 +85,11 @@ data class DetailContent(
     /** What the main button plays: the item itself, or a series' next unwatched episode. */
     val playTarget: BaseItemDto? = null,
     val similar: List<BaseItemDto> = emptyList(),
+    /** An anime series' openings and endings: the OP/ED plugin's, else ones found in the episodes' chapters. */
+    val openingsEndings: List<OpeningEnding> = emptyList(),
+    /** What the Watch OP and Watch ED buttons play: on a series page the selected season's, on an episode page the ones that play in it. */
+    val watchOpening: OpeningEnding? = null,
+    val watchEnding: OpeningEnding? = null,
 )
 
 class DetailViewModel(private val repo: AsterRepository, private val itemId: UUID) : ViewModel() {
@@ -92,6 +103,21 @@ class DetailViewModel(private val repo: AsterRepository, private val itemId: UUI
             _state.value = Load.Loading
             _state.value = try {
                 coroutineScope {
+                    val ready = loadContent()
+                    val content = ready.value
+                    val anime = isAnime(content.item)
+                    val list = if (content.item.type == BaseItemKind.SERIES && anime) seriesThemes(content.item) else emptyList()
+                    val withList = content.copy(openingsEndings = list)
+                    val (opening, ending) = watchThemes(withList, anime)
+                    Load.Ready(withList.copy(watchOpening = opening, watchEnding = ending))
+                }
+            } catch (e: Exception) {
+                Load.Failed(e.userMessage())
+            }
+        }
+    }
+
+    private suspend fun loadContent(): Load.Ready<DetailContent> = coroutineScope {
                     val item = repo.item(itemId)
                     val similar = async { runCatching { repo.similar(itemId) }.getOrDefault(emptyList()) }
                     when (item.type) {
@@ -109,10 +135,68 @@ class DetailViewModel(private val repo: AsterRepository, private val itemId: UUI
                         }
                         else -> Load.Ready(DetailContent(item, playTarget = item, similar = similar.await()))
                     }
+    }
+
+    private var episodeThemes: List<OpEdTheme>? = null
+    private val seasonThemes = mutableMapOf<UUID, List<OpEdTheme>>()
+
+    private suspend fun isAnime(item: BaseItemDto): Boolean = when (item.type) {
+        BaseItemKind.SERIES -> item.isAnime()
+        BaseItemKind.EPISODE -> item.seriesId?.let { runCatching { repo.item(it).isAnime() }.getOrDefault(false) } == true
+        else -> false
+    }
+
+    /** The plugin's themes when it has any that play (or soon will) for the show, otherwise clips from chapters. */
+    private suspend fun seriesThemes(series: BaseItemDto): List<OpeningEnding> {
+        val themes = repo.opEdThemes(series.id).orEmpty().filter { it.playablePath != null || it.isPreparing }
+        if (themes.isNotEmpty()) return themes.map { OpeningEnding.Theme(it) }
+        return repo.chapterThemes(series.id).map { OpeningEnding.Chapter(it) }
+    }
+
+    /** The first opening (or ending) that plays, video before audio. */
+    private fun preferredTheme(themes: List<OpEdTheme>, opening: Boolean): OpEdTheme? {
+        val matching = themes.filter { it.isOpening == opening && it.playablePath != null }
+        return matching.firstOrNull { it.videoMp4Url != null } ?: matching.firstOrNull()
+    }
+
+    private suspend fun watchThemes(content: DetailContent, anime: Boolean): Pair<OpeningEnding?, OpeningEnding?> =
+        watchTheme(content, opening = true, anime) to watchTheme(content, opening = false, anime)
+
+    /**
+     * Series: the plugin's theme for the selected season, else that season's chapter clip, else the show's first.
+     * Episode: the plugin's theme that plays in it (then its season's, then a show-wide one), else the episode's own
+     * chapter when the show is anime.
+     */
+    private suspend fun watchTheme(content: DetailContent, opening: Boolean, anime: Boolean): OpeningEnding? {
+        val item = content.item
+        when (item.type) {
+            BaseItemKind.SERIES -> {
+                val themes = content.openingsEndings.filterIsInstance<OpeningEnding.Theme>().map { it.theme }
+                val clips = content.openingsEndings.filterIsInstance<OpeningEnding.Chapter>().map { it.clip }.filter { it.opening == opening }
+                val seasonId = content.selectedSeason
+                if (seasonId != null) {
+                    if (themes.isNotEmpty()) {
+                        val forSeason = seasonThemes.getOrPut(seasonId) { repo.opEdThemes(seasonId).orEmpty() }
+                            .filter { it.seasonId != null && repo.plainId(it.seasonId) == repo.plainId(seasonId.toString()) }
+                        preferredTheme(forSeason, opening)?.let { return OpeningEnding.Theme(it) }
+                    }
+                    val number = content.seasons.firstOrNull { it.id == seasonId }?.indexNumber
+                    clips.firstOrNull { it.season == number }?.let { return OpeningEnding.Chapter(it) }
                 }
-            } catch (e: Exception) {
-                Load.Failed(e.userMessage())
+                preferredTheme(themes, opening)?.let { return OpeningEnding.Theme(it) }
+                return clips.firstOrNull()?.let { OpeningEnding.Chapter(it) }
             }
+            BaseItemKind.EPISODE -> {
+                val all = episodeThemes ?: repo.opEdThemes(item.id).orEmpty().also { episodeThemes = it }
+                val candidates = all.filter { it.isOpening == opening && it.playablePath != null }
+                val pick = candidates.firstOrNull { it.playsInEpisode == true }
+                    ?: candidates.firstOrNull { it.seasonId != null && item.seasonId != null && repo.plainId(it.seasonId) == repo.plainId(item.seasonId.toString()) }
+                    ?: candidates.filter { it.seasonId == null }.minByOrNull { it.sequence }
+                if (pick != null) return OpeningEnding.Theme(pick)
+                if (anime) OpeningsEndings.find(listOf(item)).firstOrNull { it.opening == opening }?.let { return OpeningEnding.Chapter(it) }
+                return null
+            }
+            else -> return null
         }
     }
 
@@ -122,6 +206,11 @@ class DetailViewModel(private val repo: AsterRepository, private val itemId: UUI
         viewModelScope.launch {
             val episodes = runCatching { repo.episodes(itemId, seasonId) }.getOrDefault(emptyList())
             _state.update { s -> (s as? Load.Ready)?.let { Load.Ready(it.value.copy(episodes = episodes)) } ?: s }
+            val updated = (_state.value as? Load.Ready)?.value ?: return@launch
+            if (updated.openingsEndings.isNotEmpty()) {
+                val (opening, ending) = watchThemes(updated, anime = true)
+                _state.update { s -> (s as? Load.Ready)?.let { Load.Ready(it.value.copy(watchOpening = opening, watchEnding = ending)) } ?: s }
+            }
         }
     }
 
@@ -153,13 +242,14 @@ fun DetailScreen(
     onBack: () -> Unit,
     onPlay: (UUID) -> Unit,
     onItem: (BaseItemDto) -> Unit,
+    onPlayTheme: (OpeningEnding) -> Unit,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     Box(Modifier.fillMaxSize()) {
         when (val s = state) {
             Load.Loading -> LoadingBox()
             is Load.Failed -> ErrorBox(s.message, viewModel::load)
-            is Load.Ready -> DetailBody(s.value, viewModel, onPlay, onItem)
+            is Load.Ready -> DetailBody(s.value, viewModel, onPlay, onItem, onPlayTheme)
         }
         IconButton(onClick = onBack, modifier = Modifier.padding(8.dp).padding(top = 24.dp)) {
             Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
@@ -173,6 +263,7 @@ private fun DetailBody(
     viewModel: DetailViewModel,
     onPlay: (UUID) -> Unit,
     onItem: (BaseItemDto) -> Unit,
+    onPlayTheme: (OpeningEnding) -> Unit,
 ) {
     val repo = (LocalContext.current.applicationContext as AsterApp).repository
     val item = content.item
@@ -219,6 +310,12 @@ private fun DetailBody(
                     Icon(if (item.userData?.isFavorite == true) Icons.Default.Favorite else Icons.Default.FavoriteBorder, "Favorite")
                 }
             }
+            if (content.watchOpening != null || content.watchEnding != null) {
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    content.watchOpening?.let { OutlinedButton(onClick = { onPlayTheme(it) }) { Icon(Icons.Default.MusicNote, null); Text("Watch OP", Modifier.padding(start = 6.dp)) } }
+                    content.watchEnding?.let { OutlinedButton(onClick = { onPlayTheme(it) }) { Icon(Icons.Default.MusicNote, null); Text("Watch ED", Modifier.padding(start = 6.dp)) } }
+                }
+            }
             item.overview?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
             if (!item.genres.isNullOrEmpty()) {
                 Text(item.genres!!.joinToString(" · "), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
@@ -245,8 +342,36 @@ private fun DetailBody(
                 content.episodes.forEach { episode -> EpisodeRow(episode, repo, onPlay) }
             }
         }
+        if (content.openingsEndings.isNotEmpty()) {
+            Column(Modifier.padding(top = 20.dp)) {
+                Text("Openings & Endings", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
+                LazyRow(contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    items(content.openingsEndings) { oe -> ThemeCard(oe, onClick = { onPlayTheme(oe) }) }
+                }
+            }
+        }
         CastRow(item.people.orEmpty(), repo)
         Shelf("More like this", content.similar, onItem = onItem)
+    }
+}
+
+@Composable
+private fun ThemeCard(oe: OpeningEnding, onClick: () -> Unit) {
+    val playable = when (oe) { is OpeningEnding.Theme -> oe.theme.playablePath != null; is OpeningEnding.Chapter -> true }
+    val (title, detail) = when (oe) {
+        is OpeningEnding.Theme -> (oe.theme.code) to (oe.theme.songLine ?: if (oe.theme.isPreparing) "Preparing…" else null)
+        is OpeningEnding.Chapter -> oe.clip.title to "%d:%02d".format(oe.clip.seconds / 60, oe.clip.seconds % 60)
+    }
+    Row(
+        Modifier.width(240.dp).clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceVariant)
+            .clickable(enabled = playable, onClick = onClick).padding(14.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(Icons.Default.MusicNote, null, tint = if (playable) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+        Column {
+            Text(title, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            detail?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis) }
+        }
     }
 }
 

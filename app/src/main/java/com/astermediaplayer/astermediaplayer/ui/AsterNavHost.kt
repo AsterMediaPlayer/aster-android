@@ -54,6 +54,7 @@ import androidx.navigation.navDeepLink
 import androidx.navigation.compose.rememberNavController
 import androidx.compose.runtime.rememberCoroutineScope
 import com.astermediaplayer.astermediaplayer.AsterApp
+import com.astermediaplayer.astermediaplayer.data.OpeningEnding
 import com.astermediaplayer.astermediaplayer.ui.anime.AnimeScreen
 import com.astermediaplayer.astermediaplayer.ui.anime.AnimeViewModel
 import com.astermediaplayer.astermediaplayer.ui.auth.AuthScreen
@@ -64,6 +65,8 @@ import com.astermediaplayer.astermediaplayer.ui.home.HomeScreen
 import com.astermediaplayer.astermediaplayer.ui.home.HomeViewModel
 import com.astermediaplayer.astermediaplayer.ui.library.LibraryScreen
 import com.astermediaplayer.astermediaplayer.ui.library.LibraryViewModel
+import com.astermediaplayer.astermediaplayer.ui.player.ClipRange
+import com.astermediaplayer.astermediaplayer.ui.player.DirectMedia
 import com.astermediaplayer.astermediaplayer.ui.player.PlayerScreen
 import com.astermediaplayer.astermediaplayer.ui.player.PlayerViewModel
 import com.astermediaplayer.astermediaplayer.ui.search.SearchScreen
@@ -75,15 +78,25 @@ import org.jellyfin.sdk.model.api.BaseItemKind
 import org.jellyfin.sdk.model.api.CollectionType
 import java.util.UUID
 
+/** Ids come either way: with dashes, or as 32 hex digits. */
+private fun parseId(id: String): UUID? = runCatching {
+    UUID.fromString(if (id.length == 32) "${id.substring(0, 8)}-${id.substring(8, 12)}-${id.substring(12, 16)}-${id.substring(16, 20)}-${id.substring(20)}" else id)
+}.getOrNull()
+
 private object Routes {
     const val AUTH = "auth"
     const val MAIN = "main"
     const val LIBRARY = "library/{id}/{name}"
     const val DETAIL = "detail/{id}"
-    const val PLAYER = "player/{id}"
+    const val PLAYER = "player/{id}?start={start}&end={end}"
+    const val THEME = "theme?path={path}&title={title}&subtitle={subtitle}"
     fun library(id: UUID, name: String) = "library/$id/${android.net.Uri.encode(name)}"
     fun detail(id: UUID) = "detail/$id"
     fun player(id: UUID) = "player/$id"
+    /** A stretch of an episode, in milliseconds. */
+    fun clip(id: UUID, startMs: Long, endMs: Long) = "player/$id?start=$startMs&end=$endMs"
+    fun theme(path: String, title: String, subtitle: String?) =
+        "theme?path=${android.net.Uri.encode(path)}&title=${android.net.Uri.encode(title)}&subtitle=${android.net.Uri.encode(subtitle.orEmpty())}"
 }
 
 @Composable
@@ -131,15 +144,57 @@ fun AsterNavHost(signedIn: Boolean) {
         ) { entry ->
             val id = UUID.fromString(entry.arguments!!.getString("id"))
             val vm: DetailViewModel = viewModel(factory = viewModelFactory { initializer { DetailViewModel(repo, id) } })
-            DetailScreen(vm, onBack = { nav.popBackStack() }, onPlay = { nav.navigate(Routes.player(it)) }, onItem = ::open)
+            DetailScreen(
+                vm, onBack = { nav.popBackStack() }, onPlay = { nav.navigate(Routes.player(it)) }, onItem = ::open,
+                onPlayTheme = { oe ->
+                    scope.launch {
+                        when (oe) {
+                            // Chapters say where an opening is, so it plays that stretch of the episode.
+                            is OpeningEnding.Chapter -> nav.navigate(Routes.clip(oe.clip.episode.id, oe.clip.startMs, oe.clip.endMs))
+                            is OpeningEnding.Theme -> {
+                                val theme = oe.theme.preferring(app.settings.current().themeCut)
+                                val published = theme.libraryItemId?.let(::parseId)
+                                val path = theme.playablePath
+                                when {
+                                    published != null -> nav.navigate(Routes.player(published))
+                                    path != null -> nav.navigate(Routes.theme(path, theme.code, theme.songLine))
+                                }
+                            }
+                        }
+                    }
+                },
+            )
+        }
+        composable(
+            Routes.THEME,
+            arguments = listOf(
+                navArgument("path") { type = NavType.StringType },
+                navArgument("title") { type = NavType.StringType; defaultValue = "" },
+                navArgument("subtitle") { type = NavType.StringType; defaultValue = "" },
+            ),
+        ) { entry ->
+            val media = DirectMedia(
+                entry.arguments!!.getString("path").orEmpty(),
+                entry.arguments!!.getString("title").orEmpty(),
+                entry.arguments!!.getString("subtitle")?.ifEmpty { null },
+            )
+            val vm: PlayerViewModel = viewModel(factory = viewModelFactory { initializer { PlayerViewModel(app, repo, app.settings, UUID(0, 0), direct = media) } })
+            PlayerScreen(vm, onBack = { nav.popBackStack() }, onPlayNext = {})
         }
         composable(
             Routes.PLAYER,
-            arguments = listOf(navArgument("id") { type = NavType.StringType }),
+            arguments = listOf(
+                navArgument("id") { type = NavType.StringType },
+                navArgument("start") { type = NavType.LongType; defaultValue = -1L },
+                navArgument("end") { type = NavType.LongType; defaultValue = -1L },
+            ),
             deepLinks = listOf(navDeepLink { uriPattern = "aster://play/{id}" }),
         ) { entry ->
             val id = UUID.fromString(entry.arguments!!.getString("id"))
-            val vm: PlayerViewModel = viewModel(factory = viewModelFactory { initializer { PlayerViewModel(app, repo, app.settings, id) } })
+            val start = entry.arguments!!.getLong("start")
+            val end = entry.arguments!!.getLong("end")
+            val clip = if (start >= 0 && end > start) ClipRange(start, end) else null
+            val vm: PlayerViewModel = viewModel(factory = viewModelFactory { initializer { PlayerViewModel(app, repo, app.settings, id, clip) } })
             PlayerScreen(
                 vm,
                 onBack = { nav.popBackStack() },

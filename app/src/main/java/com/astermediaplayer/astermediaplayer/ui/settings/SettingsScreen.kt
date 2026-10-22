@@ -26,6 +26,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.astermediaplayer.astermediaplayer.data.AppSettings
 import com.astermediaplayer.astermediaplayer.data.Session
 import com.astermediaplayer.astermediaplayer.data.SettingsStore
+import com.astermediaplayer.astermediaplayer.data.ThemeCut
 import com.astermediaplayer.astermediaplayer.ui.player.Qualities
 import kotlinx.coroutines.launch
 
@@ -49,6 +50,16 @@ fun SettingsScreen(session: Session?, store: SettingsStore, onSignOut: () -> Uni
                     selected = settings.qualityIndex == index,
                     onClick = { scope.launch { store.setQualityIndex(index) } },
                     label = { Text(quality.label) },
+                )
+            }
+        }
+        Text("Opening and ending version", style = MaterialTheme.typography.bodyLarge)
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            itemsIndexed(ThemeCut.entries) { _, cut ->
+                FilterChip(
+                    selected = settings.themeCut == cut,
+                    onClick = { scope.launch { store.setThemeCut(cut) } },
+                    label = { Text(cut.settingTitle) },
                 )
             }
         }

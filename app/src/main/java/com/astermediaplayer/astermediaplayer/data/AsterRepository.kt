@@ -21,6 +21,9 @@ import org.jellyfin.sdk.createJellyfin
 import org.jellyfin.sdk.model.ClientInfo
 import org.jellyfin.sdk.model.api.AuthenticateUserByName
 import org.jellyfin.sdk.model.api.AuthenticationResult
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import org.json.JSONObject
 import org.jellyfin.sdk.model.api.BaseItemDto
 import org.jellyfin.sdk.model.api.BaseItemKind
 import org.jellyfin.sdk.model.api.BaseItemPerson
@@ -42,9 +45,11 @@ import org.jellyfin.sdk.model.api.UserDto
 import org.jellyfin.sdk.model.api.request.GetItemsRequest
 import org.jellyfin.sdk.model.api.request.GetNextUpRequest
 import org.jellyfin.sdk.model.api.request.GetResumeItemsRequest
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.withContext
 import java.util.UUID
 
 /** Thin wrapper over the Jellyfin SDK; the Kotlin counterpart of the app's `JellyfinClient`. */
@@ -148,6 +153,57 @@ class AsterRepository(context: Context, private val store: SessionStore) {
         fields = listOf(ItemFields.OVERVIEW, ItemFields.GENRES),
     ).content
 
+    // MARK: OP/ED plugin
+
+    private val http = OkHttpClient()
+
+    /** A GET against the OP/ED plugin; null when the plugin isn't installed, the item is unknown, or the request fails. */
+    private suspend fun opEdGet(path: String): JSONObject? = withContext(Dispatchers.IO) {
+        runCatching {
+            val request = Request.Builder().url(serverUrl.trimEnd('/') + path)
+                .header("X-Emby-Token", checkNotNull(session).accessToken).build()
+            http.newCall(request).execute().use { response ->
+                if (response.isSuccessful) JSONObject(response.body.string()) else null
+            }
+        }.getOrNull()
+    }
+
+    /** Openings and endings from the plugin for a series, season or episode. */
+    suspend fun opEdThemes(itemId: UUID): List<OpEdTheme>? = opEdGet("/OpEd/Items/$itemId/Themes")?.let { json ->
+        val themes = json.optJSONArray("Themes") ?: return@let emptyList()
+        List(themes.length()) { OpEdTheme.fromJson(themes.getJSONObject(it)) }
+    }
+
+    /** The plugin's published libraries; null without the plugin. */
+    suspend fun opEdLibraries(): OpEdLibraries? = opEdGet("/OpEd/Library")?.let {
+        OpEdLibraries(
+            videosLibraryId = it.optString("VideosLibraryId").ifEmpty { null },
+            songsLibraryId = it.optString("SongsLibraryId").ifEmpty { null },
+        )
+    }
+
+    /** A plugin media path (e.g. `VideoMp4Url`) as a URL the player can open. */
+    fun opEdMediaUrl(path: String): String = absoluteUrl(path)
+
+    /** A library's newest music videos, for a shelf. */
+    suspend fun latestMusicVideos(libraryId: UUID, limit: Int = 20): List<BaseItemDto> = runCatching {
+        api.libraryApi.getItems(
+            GetItemsRequest(
+                userId = userId, parentId = libraryId, recursive = true,
+                includeItemTypes = listOf(BaseItemKind.MUSIC_VIDEO),
+                sortBy = listOf(ItemSortBy.DATE_CREATED, ItemSortBy.SORT_NAME), sortOrder = listOf(SortOrder.DESCENDING),
+                limit = limit,
+            ),
+        ).content.items
+    }.getOrDefault(emptyList())
+
+    /** The openings and endings in a series' episodes' chapter markers: what the plugin falls back to. */
+    suspend fun chapterThemes(seriesId: UUID): List<ThemeClip> =
+        runCatching { OpeningsEndings.find(episodes(seriesId, null, listOf(ItemFields.CHAPTERS))) }.getOrDefault(emptyList())
+
+    /** An id as Jellyfin writes it either way: lowercase, without dashes. */
+    fun plainId(id: String): String = id.lowercase().replace("-", "")
+
     // MARK: Anime
 
     private var animeLibraryCache: List<BaseItemDto>? = null
@@ -199,13 +255,20 @@ class AsterRepository(context: Context, private val store: SessionStore) {
         shown.take(limit)
     }
 
+    private val libraryKinds = mutableMapOf<UUID, List<BaseItemKind>>()
+
     suspend fun libraryPage(parentId: UUID, startIndex: Int, limit: Int, kinds: List<BaseItemKind>? = null): ItemPage {
         val result = api.libraryApi.getItems(
             GetItemsRequest(
                 userId = userId,
                 parentId = parentId,
                 recursive = true,
-                includeItemTypes = kinds ?: listOf(BaseItemKind.MOVIE, BaseItemKind.SERIES, BaseItemKind.BOX_SET),
+                includeItemTypes = kinds ?: libraryKinds.getOrPut(parentId) {
+                    when (runCatching { item(parentId).collectionType }.getOrNull()) {
+                        CollectionType.MUSICVIDEOS -> listOf(BaseItemKind.MUSIC_VIDEO)
+                        else -> listOf(BaseItemKind.MOVIE, BaseItemKind.SERIES, BaseItemKind.BOX_SET)
+                    }
+                },
                 sortBy = listOf(ItemSortBy.SORT_NAME),
                 sortOrder = listOf(SortOrder.ASCENDING),
                 startIndex = startIndex,
@@ -221,9 +284,8 @@ class AsterRepository(context: Context, private val store: SessionStore) {
     suspend fun seasons(seriesId: UUID): List<BaseItemDto> =
         api.showApi.getSeasons(seriesId = seriesId, userId = userId).content.items
 
-    suspend fun episodes(seriesId: UUID, seasonId: UUID?): List<BaseItemDto> = api.showApi.getEpisodes(
-        seriesId = seriesId, userId = userId, seasonId = seasonId,
-        fields = listOf(ItemFields.OVERVIEW),
+    suspend fun episodes(seriesId: UUID, seasonId: UUID?, fields: List<ItemFields> = listOf(ItemFields.OVERVIEW)): List<BaseItemDto> = api.showApi.getEpisodes(
+        seriesId = seriesId, userId = userId, seasonId = seasonId, fields = fields,
     ).content.items
 
     suspend fun similar(id: UUID, limit: Int = 12): List<BaseItemDto> =

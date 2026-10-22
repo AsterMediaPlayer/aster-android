@@ -42,6 +42,8 @@ data class AnimeContent(
     val resume: List<BaseItemDto>,
     val nextUp: List<BaseItemDto>,
     val recentlyAdded: List<BaseItemDto>,
+    /** The OP/ED plugin's music video library (openings and endings) with its newest videos. */
+    val musicVideoShelves: List<Pair<BaseItemDto, List<BaseItemDto>>> = emptyList(),
 ) {
     /** The banner's titles: anime only, picked the way Home picks its own. */
     val featured: List<BaseItemDto> = (resume.take(3) + nextUp.take(3) + recentlyAdded.take(5)).distinctBy { it.id }.take(8)
@@ -58,7 +60,11 @@ class AnimeViewModel(private val repo: AsterRepository) : ViewModel() {
             _state.value = Load.Loading
             _state.value = try {
                 coroutineScope {
-                    val libraries = repo.animeLibraries(repo.views())
+                    val views = repo.views()
+                    val libraries = repo.animeLibraries(views)
+                    val opEdVideosId = repo.opEdLibraries()?.videosLibraryId
+                    val musicLibraries = views.filter { it.collectionType == CollectionType.MUSICVIDEOS && opEdVideosId != null && repo.plainId(it.id.toString()) == repo.plainId(opEdVideosId) }
+                    val musicShelves = musicLibraries.map { library -> async { library to repo.latestMusicVideos(library.id) } }
                     val showLibraries = libraries.filter { it.collectionType == CollectionType.TVSHOWS }
                     val resume = libraries.map { async { runCatching { repo.resume(parentId = it.id) }.getOrDefault(emptyList()) } }
                     val next = showLibraries.map { async { runCatching { repo.nextUp(parentId = it.id) }.getOrDefault(emptyList()) } }
@@ -67,10 +73,11 @@ class AnimeViewModel(private val repo: AsterRepository) : ViewModel() {
                     val resumed = resume.awaitAll().flatten().sortedByDescending { it.userData?.lastPlayedDate }.take(20)
                     Load.Ready(
                         AnimeContent(
-                            libraries = libraries,
+                            libraries = libraries + musicLibraries,
                             resume = resumed,
                             nextUp = next.awaitAll().flatten().filter { n -> resumed.none { it.id == n.id } }.take(20),
                             recentlyAdded = latest.await(),
+                            musicVideoShelves = musicShelves.awaitAll(),
                         ),
                     )
                 }
@@ -106,6 +113,8 @@ fun AnimeScreen(
             Shelf("Continue Watching", s.value.resume, landscape = true, onItem = onItem)
             Shelf("Next Up", s.value.nextUp, landscape = true, onItem = onItem)
             Shelf("Recently Added", s.value.recentlyAdded, landscape = true, onItem = onItem)
+            // Openings & endings (the OP/ED plugin's library).
+            s.value.musicVideoShelves.forEach { (library, items) -> Shelf(library.name.orEmpty(), items, landscape = true, onItem = onItem) }
         }
     }
 }

@@ -16,6 +16,8 @@ data class AppSettings(
     val autoPlayNext: Boolean = true,
     /** ASS/SSA drawn by libass; off falls back to plain text. */
     val styledSubtitles: Boolean = true,
+    /** Which version of an opening or ending plays, when there's a choice. */
+    val themeCut: ThemeCut = ThemeCut.TvSize,
 )
 
 private val Context.settingsDataStore by preferencesDataStore("aster_settings")
@@ -25,6 +27,7 @@ class SettingsStore(private val context: Context) {
     private val autoSkipKey = booleanPreferencesKey("auto_skip")
     private val autoPlayNextKey = booleanPreferencesKey("auto_play_next")
     private val styledSubtitlesKey = booleanPreferencesKey("styled_subtitles")
+    private val themeCutKey = intPreferencesKey("theme_cut")
 
     val settings: Flow<AppSettings> = context.settingsDataStore.data.map {
         AppSettings(
@@ -32,6 +35,7 @@ class SettingsStore(private val context: Context) {
             autoSkipSegments = it[autoSkipKey] ?: false,
             autoPlayNext = it[autoPlayNextKey] ?: true,
             styledSubtitles = it[styledSubtitlesKey] ?: true,
+            themeCut = ThemeCut.entries.getOrElse(it[themeCutKey] ?: 0) { ThemeCut.TvSize },
         )
     }
 
@@ -41,4 +45,5 @@ class SettingsStore(private val context: Context) {
     suspend fun setAutoSkipSegments(on: Boolean) = context.settingsDataStore.edit { it[autoSkipKey] = on }
     suspend fun setAutoPlayNext(on: Boolean) = context.settingsDataStore.edit { it[autoPlayNextKey] = on }
     suspend fun setStyledSubtitles(on: Boolean) = context.settingsDataStore.edit { it[styledSubtitlesKey] = on }
+    suspend fun setThemeCut(cut: ThemeCut) = context.settingsDataStore.edit { it[themeCutKey] = cut.ordinal }
 }

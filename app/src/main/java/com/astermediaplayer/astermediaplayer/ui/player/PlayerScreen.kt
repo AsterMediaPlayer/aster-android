@@ -63,6 +63,7 @@ fun PlayerScreen(
     var chapterMenu by remember { mutableStateOf(false) }
 
     LaunchedEffect(viewModel) { viewModel.playNext.collect(onPlayNext) }
+    LaunchedEffect(viewModel) { viewModel.finished.collect { onBack() } }
 
     // Landscape, full-screen, screen-on while playing; everything is restored when leaving.
     DisposableEffect(activity) {

@@ -64,6 +64,10 @@ val Qualities = listOf(
 
 data class Chapter(val name: String, val startMs: Long)
 
+data class ClipRange(val startMs: Long, val endMs: Long)
+
+data class DirectMedia(val path: String, val title: String, val subtitle: String?)
+
 data class SkipPrompt(val label: String, val targetMs: Long)
 
 data class PlayerUiState(
@@ -84,13 +88,24 @@ class PlayerViewModel(
     private val repo: AsterRepository,
     private val settings: SettingsStore,
     private val itemId: UUID,
+    /** Plays just this stretch of the item (an opening or ending found in the chapters). */
+    private val clip: ClipRange? = null,
+    /** Plays this file from the OP/ED plugin instead of a library item. */
+    private val direct: DirectMedia? = null,
 ) : ViewModel() {
+    /** A clip or a plugin file isn't the viewer watching the item, so nothing is reported to the server. */
+    private val readOnly = clip != null || direct != null
+
     private val _state = MutableStateFlow(PlayerUiState())
     val state: StateFlow<PlayerUiState> = _state.asStateFlow()
 
     private val _playNext = MutableSharedFlow<UUID>(extraBufferCapacity = 1)
     /** Emits the next episode's id when the current one finishes. */
     val playNext: SharedFlow<UUID> = _playNext.asSharedFlow()
+
+    private val _finished = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    /** Emits when a clip or plugin file has played to its end. */
+    val finished: SharedFlow<Unit> = _finished.asSharedFlow()
 
     private var appSettings = runBlocking { settings.current() }
 
@@ -170,10 +185,18 @@ class PlayerViewModel(
         viewModelScope.launch {
             _state.update { it.copy(loading = true, error = null) }
             try {
+                if (direct != null) {
+                    player.setMediaItem(MediaItem.fromUri(repo.opEdMediaUrl(direct.path)))
+                    player.prepare()
+                    player.playWhenReady = true
+                    _state.update { it.copy(title = direct.title, subtitle = direct.subtitle) }
+                    startTicking()
+                    return@launch
+                }
                 val dto = item ?: repo.item(itemId).also { item = it }
-                val resumeMs = positionMs ?: ((dto.userData?.playbackPositionTicks ?: 0L) / TICKS_PER_MS)
-                if (item != null && segments.isEmpty()) segments = repo.segments(itemId)
-                if (nextEpisodeId == null) nextEpisodeId = findNextEpisode(dto)
+                val resumeMs = positionMs ?: clip?.startMs ?: ((dto.userData?.playbackPositionTicks ?: 0L) / TICKS_PER_MS)
+                if (!readOnly && item != null && segments.isEmpty()) segments = repo.segments(itemId)
+                if (!readOnly && nextEpisodeId == null) nextEpisodeId = findNextEpisode(dto)
 
                 // A failed direct play usually means the device can't decode the source (4K, Dolby Vision, ...),
                 // so the fallback transcode is capped to something every phone can handle.
@@ -219,12 +242,12 @@ class PlayerViewModel(
                         title = dto.name.orEmpty(),
                         subtitle = if (dto.type == BaseItemKind.EPISODE) dto.seriesName else null,
                         transcoding = !direct,
-                        chapters = dto.chapters.orEmpty().mapIndexed { i, c ->
+                        chapters = (if (readOnly) emptyList() else dto.chapters.orEmpty()).mapIndexed { i, c ->
                             Chapter(c.name?.takeIf { n -> n.isNotBlank() } ?: "Chapter ${i + 1}", c.startPositionTicks / TICKS_PER_MS)
                         },
                     )
                 }
-                if (!reported) {
+                if (!reported && !readOnly) {
                     reported = true
                     repo.reportStart(
                         PlaybackStartInfo(
@@ -287,6 +310,11 @@ class PlayerViewModel(
                 delay(500)
                 updateSkipPrompt()
                 updateChapter()
+                if (clip != null && player.currentPosition >= clip.endMs) {
+                    player.pause()
+                    _finished.tryEmit(Unit)
+                    break
+                }
                 sinceReport += 500
                 if (sinceReport >= PROGRESS_INTERVAL_MS) {
                     sinceReport = 0
@@ -323,6 +351,7 @@ class PlayerViewModel(
     }
 
     private fun onEnded() {
+        if (readOnly) _finished.tryEmit(Unit)
         reportStopped()
         if (appSettings.autoPlayNext) nextEpisodeId?.let { _playNext.tryEmit(it) }
     }
