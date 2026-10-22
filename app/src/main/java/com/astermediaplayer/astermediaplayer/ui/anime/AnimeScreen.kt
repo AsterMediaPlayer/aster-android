@@ -1,6 +1,7 @@
 package com.astermediaplayer.astermediaplayer.ui.anime
 
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -99,7 +100,7 @@ fun AnimeScreen(
     when (val s = state) {
         Load.Loading -> LoadingBox(modifier)
         is Load.Failed -> ErrorBox(s.message, viewModel::load, modifier)
-        is Load.Ready -> Column(modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(bottom = TabBarClearance)) {
+        is Load.Ready -> Column(modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(bottom = TabBarClearance), verticalArrangement = Arrangement.spacedBy(20.dp)) {
             if (s.value.featured.isNotEmpty()) {
                 FeaturedBanner(s.value.featured, onItem, onPlay)
             } else {

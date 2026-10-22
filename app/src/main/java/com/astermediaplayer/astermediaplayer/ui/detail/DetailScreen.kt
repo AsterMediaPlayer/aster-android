@@ -14,6 +14,16 @@ import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import org.jellyfin.sdk.model.api.MediaStreamType
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.ui.graphics.vector.ImageVector
+import com.astermediaplayer.astermediaplayer.ui.components.episodeCode
+import com.astermediaplayer.astermediaplayer.ui.theme.ButtonGrey
+import com.astermediaplayer.astermediaplayer.ui.theme.DetailMetrics
+import com.astermediaplayer.astermediaplayer.ui.theme.Lockup
+import com.astermediaplayer.astermediaplayer.ui.theme.SecondaryText
+import com.astermediaplayer.astermediaplayer.ui.theme.Type
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -353,7 +363,8 @@ fun DetailScreen(
         // Over the art, so a dark round button like the Apple apps' back button.
         IconButton(
             onClick = onBack,
-            modifier = Modifier.statusBarsPadding().padding(12.dp).size(48.dp).clip(CircleShape).background(Color.Black.copy(alpha = 0.45f)),
+            modifier = Modifier.statusBarsPadding().padding(start = Lockup.screenPadding, top = 4.dp)
+                .size(DetailMetrics.backButtonSize).clip(CircleShape).background(Color.Black.copy(alpha = 0.35f)),
         ) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Color.White) }
     }
 }
@@ -441,31 +452,19 @@ private fun DetailBody(
                 }
                 DetailInfo(content, viewModel, onPlay, onPlayFromBeginning, onGoToSeries, onPlayTheme, showTitle = false) { playCenterPx = it }
             } else {
-                Column(Modifier.fillMaxWidth().heightIn(min = screenHeight), verticalArrangement = Arrangement.Bottom) {
+                Column(Modifier.fillMaxWidth().heightIn(min = DetailMetrics.headerMinHeight), verticalArrangement = Arrangement.Bottom) {
                     DetailInfo(content, viewModel, onPlay, onPlayFromBeginning, onGoToSeries, onPlayTheme, showTitle = true) { playCenterPx = it }
                 }
             }
-            Column(Modifier.fillMaxWidth().background(Color.Black.copy(alpha = 0.88f)).navigationBarsPadding().padding(bottom = 32.dp)) {
+            Column(
+                Modifier.fillMaxWidth().background(Color.Black.copy(alpha = 0.88f)).navigationBarsPadding()
+                    .padding(top = DetailMetrics.sectionSpacing, bottom = DetailMetrics.pageBottomPadding),
+                verticalArrangement = Arrangement.spacedBy(DetailMetrics.sectionSpacing),
+            ) {
                 if (usesTabs) {
-                    // A segmented control, as on the Apple apps' title pages.
-                    Row(
-                        Modifier.padding(horizontal = 16.dp, vertical = 20.dp).fillMaxWidth().clip(RoundedCornerShape(50))
-                            .background(Color.White.copy(alpha = 0.1f)).padding(4.dp),
-                    ) {
-                        tabs.forEach { t ->
-                            val active = t == tab
-                            Box(
-                                Modifier.weight(1f).clip(RoundedCornerShape(50))
-                                    .background(if (active) Color.White.copy(alpha = 0.22f) else Color.Transparent)
-                                    .clickable { selectedTab = t.name }.padding(vertical = 10.dp),
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                Text(t.label, color = Color.White, fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal, style = MaterialTheme.typography.titleSmall, maxLines = 1)
-                            }
-                        }
-                    }
+                    SegmentedControl(tabs.map { it.label }, tabs.indexOf(tab)) { selectedTab = tabs[it].name }
                     when (tab) {
-                        DetailTab.Episodes -> EpisodesSection(content, viewModel, repo, onPlay)
+                        DetailTab.Episodes -> EpisodesSection(content, viewModel, onPlay)
                         DetailTab.Music -> MusicSection(content, onPlayTheme)
                         DetailTab.Extras -> Shelf("Extras", content.extras, landscape = true, onItem = { onPlay(it.id) })
                         DetailTab.Related -> Shelf("Related", content.similar, landscape = true, onItem = onItem)
@@ -473,8 +472,7 @@ private fun DetailBody(
                     }
                 } else {
                     // A movie's or an episode's page: one shelf after another.
-                    Spacer(Modifier.height(16.dp))
-                    if (item.type == BaseItemKind.EPISODE) EpisodeStrip(content.seasonEpisodes, item.id, playCenterPx, repo, onPlay)
+                    if (item.type == BaseItemKind.EPISODE) EpisodeStrip(content.seasonEpisodes, item.id, playCenterPx, onPlay)
                     if (content.openingsEndings.isNotEmpty()) MusicSection(content, onPlayTheme)
                     Shelf("Extras", content.extras, landscape = true, onItem = { onPlay(it.id) })
                     Shelf("Related", content.similar, landscape = true, onItem = onItem)
@@ -488,20 +486,26 @@ private fun DetailBody(
 /** An episode or season page names its show above its own title. */
 private fun BaseItemDto.isEpisodic() = type == BaseItemKind.EPISODE || type == BaseItemKind.SEASON
 
-/** The logo (a show's, on an episode or season page), or the name as text when there isn't one. */
+/** The logo in its box (a show's, on an episode or season page), or the name as text when there isn't one. */
 @Composable
 private fun DetailTitle(item: BaseItemDto, repo: AsterRepository, modifier: Modifier = Modifier, small: Boolean = false) {
     val logo = repo.imageUrl(item, ImageType.LOGO, 800)
     val name = if (item.isEpisodic()) item.seriesName ?: item.name else item.name
     if (logo != null) {
-        AsyncImage(
-            model = logo, contentDescription = name, contentScale = ContentScale.Fit,
-            alignment = Alignment.CenterStart, modifier = modifier.fillMaxWidth(if (small) 0.45f else 0.6f).heightIn(max = if (small) 70.dp else 120.dp),
-        )
+        // The box is its full size whatever the logo's shape, with the logo fit inside and centered vertically.
+        Box(
+            modifier.widthIn(max = if (small) DetailMetrics.seriesLogoMaxWidth else DetailMetrics.logoMaxWidth)
+                .height(if (small) DetailMetrics.seriesLogoMaxHeight else DetailMetrics.logoMaxHeight),
+        ) {
+            AsyncImage(
+                model = logo, contentDescription = name, contentScale = ContentScale.Fit,
+                alignment = Alignment.CenterStart, modifier = Modifier.fillMaxSize(),
+            )
+        }
     } else if (small) {
-        Text(name.orEmpty(), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold, color = Color.White.copy(alpha = 0.7f), modifier = modifier)
+        Text(name.orEmpty(), style = Type.title3, color = SecondaryText, modifier = modifier)
     } else {
-        Text(name.orEmpty(), style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold, color = Color.White, maxLines = 2, modifier = modifier)
+        Text(name.orEmpty(), style = Type.pageTitle, color = Color.White, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = modifier)
     }
 }
 
@@ -522,209 +526,196 @@ private fun DetailInfo(
     val target = content.playTarget
     val isSeries = item.type == BaseItemKind.SERIES
     val resumable = (if (isSeries) content.nextEpisode else target)?.let { (it.userData?.playbackPositionTicks ?: 0L) > 0 } == true
-    val secondary = Color.White.copy(alpha = 0.75f)
     var menu by remember { mutableStateOf(false) }
     val seriesId = item.seriesId
 
-    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(top = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Column(
+        Modifier.fillMaxWidth().padding(horizontal = Lockup.screenPadding).padding(bottom = DetailMetrics.headerBottomPadding),
+        verticalArrangement = Arrangement.spacedBy(DetailMetrics.headerSpacing),
+    ) {
         if (item.isEpisodic()) {
             // The show's logo (else its name), then this page's own title.
             if (showTitle) DetailTitle(item, repo, small = true)
-            Text(item.name.orEmpty(), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, color = Color.White, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            if (item.type == BaseItemKind.EPISODE) episodeCode(item)?.let { Text(it, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, color = secondary) }
+            Text(item.name.orEmpty(), style = Type.pageTitle, color = Color.White, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            if (item.type == BaseItemKind.EPISODE) item.episodeCode()?.let { Text(it, style = Type.headline, color = SecondaryText) }
         } else if (showTitle) {
             DetailTitle(item, repo)
         }
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text(metaLine(item), color = secondary, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f, fill = false))
-            videoBadge(item)?.let { Badge(it, secondary) }
-            item.communityRating?.let { Text("★ %.1f".format(it), color = secondary, style = MaterialTheme.typography.titleMedium) }
-        }
+        MetaLine(item)
         item.overview?.let {
-            Text(it, color = Color.White.copy(alpha = 0.85f), style = MaterialTheme.typography.bodyLarge, maxLines = 5, overflow = TextOverflow.Ellipsis)
+            Text(it, style = Type.callout, color = Color.White, maxLines = 5, overflow = TextOverflow.Ellipsis)
         }
         if (isSeries && content.nextEpisode != null) {
             val next = content.nextEpisode
-            Text("Up next: " + listOfNotNull(episodeCode(next), next.name).joinToString(" · "), color = secondary, style = MaterialTheme.typography.bodyLarge)
+            Text("Up next: " + listOfNotNull(next.episodeCode(), next.name).joinToString(" · "), style = Type.callout, color = SecondaryText)
         }
-        // A phone can't fit every action across, so the row scrolls sideways.
-        Row(
-            Modifier.horizontalScroll(rememberScrollState()).padding(top = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically,
-        ) {
-            if (target != null) {
-                Button(
-                    onClick = { onPlay(target.id) },
-                    shape = RoundedCornerShape(50),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color.White.copy(alpha = 0.92f), contentColor = Color.Black),
-                    modifier = Modifier.height(56.dp).onGloballyPositioned { onPlayCenter(it.boundsInRoot().center.x) },
-                    contentPadding = PaddingValues(horizontal = 28.dp),
-                ) {
-                    Icon(Icons.Default.PlayArrow, null)
-                    Spacer(Modifier.width(8.dp))
-                    Text(
+        Column(Modifier.padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(DetailMetrics.actionRowSpacing)) {
+            // A phone can't fit every action across, so the row scrolls sideways.
+            Row(
+                Modifier.horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(DetailMetrics.actionSpacing), verticalAlignment = Alignment.CenterVertically,
+            ) {
+                if (target != null) {
+                    ActionButton(
                         when {
                             isSeries -> if (content.nextEpisode == null) "Play" else if (resumable) "Resume" else "Play Next"
                             else -> if (resumable) "Resume" else "Play"
                         },
-                        fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleMedium,
-                    )
+                        Icons.Default.PlayArrow, prominent = true,
+                        modifier = Modifier.onGloballyPositioned { onPlayCenter(it.boundsInRoot().center.x) },
+                    ) { onPlay(target.id) }
+                    if (resumable) ActionButton("From Beginning", Icons.Default.Replay) { onPlayFromBeginning(target.id) }
                 }
-                if (resumable) {
-                    PillButton("From Beginning", Icons.Default.Replay, height = 56.dp) { onPlayFromBeginning(target.id) }
+                IconActionButton(if (item.userData?.isFavorite == true) Icons.Default.Favorite else Icons.Default.FavoriteBorder, "Favorite") { viewModel.toggleFavorite() }
+                if (!isSeries && item.type != BaseItemKind.SEASON) {
+                    IconActionButton(if (item.userData?.played == true) Icons.Default.CheckCircle else Icons.Outlined.CheckCircle, "Watched") { viewModel.togglePlayed() }
                 }
-            }
-            RoundButton(onClick = { viewModel.toggleFavorite() }) {
-                Icon(if (item.userData?.isFavorite == true) Icons.Default.Favorite else Icons.Default.FavoriteBorder, "Favorite", tint = Color.White)
-            }
-            if (!isSeries && item.type != BaseItemKind.SEASON) {
-                val watched = item.userData?.played == true
-                RoundButton(onClick = { viewModel.togglePlayed() }) {
-                    Icon(if (watched) Icons.Default.CheckCircle else Icons.Outlined.CheckCircle, "Watched", tint = Color.White)
-                }
-            }
-            if (item.type == BaseItemKind.EPISODE && seriesId != null) {
-                Box {
-                    RoundButton(onClick = { menu = true }) { Icon(Icons.Default.MoreHoriz, "More", tint = Color.White) }
-                    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                        DropdownMenuItem(
-                            text = { Text("Go to Series") },
-                            leadingIcon = { Icon(Icons.Default.Tv, null) },
-                            onClick = { menu = false; onGoToSeries(seriesId) },
-                        )
+                if (item.type == BaseItemKind.EPISODE && seriesId != null) {
+                    Box {
+                        IconActionButton(Icons.Default.MoreHoriz, "More") { menu = true }
+                        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                            DropdownMenuItem(
+                                text = { Text("Go to Series") },
+                                leadingIcon = { Icon(Icons.Default.Tv, null) },
+                                onClick = { menu = false; onGoToSeries(seriesId) },
+                            )
+                        }
                     }
                 }
+                if (!isSeries) remainingText(item)?.let { Text(it, style = Type.callout, color = SecondaryText, maxLines = 1) }
             }
-            if (!isSeries) remainingText(item)?.let { Text(it, color = secondary, style = MaterialTheme.typography.bodyLarge, maxLines = 1) }
-        }
-        if (content.watchOpening != null || content.watchEnding != null) {
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                content.watchOpening?.let { PillButton("Watch OP", Icons.Default.MusicVideo) { onPlayTheme(it) } }
-                content.watchEnding?.let { PillButton("Watch ED", Icons.AutoMirrored.Filled.QueueMusic) { onPlayTheme(it) } }
+            if (content.watchOpening != null || content.watchEnding != null) {
+                Row(horizontalArrangement = Arrangement.spacedBy(DetailMetrics.themeButtonSpacing)) {
+                    content.watchOpening?.let { ActionButton("Watch OP", Icons.Default.MusicVideo) { onPlayTheme(it) } }
+                    content.watchEnding?.let { ActionButton("Watch ED", Icons.AutoMirrored.Filled.QueueMusic) { onPlayTheme(it) } }
+                }
             }
         }
     }
 }
 
+/** Years, what's unwatched, rating, runtime and genres, then the 4K or HD badge and the star rating. */
 @Composable
-private fun RoundButton(onClick: () -> Unit, content: @Composable () -> Unit) {
-    IconButton(onClick = onClick, modifier = Modifier.size(56.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.2f))) { content() }
+private fun MetaLine(item: BaseItemDto) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+        Text(metaLine(item), style = Type.callout, color = SecondaryText, modifier = Modifier.weight(1f, fill = false))
+        videoBadge(item)?.let { Badge(it) }
+        item.communityRating?.let {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                Icon(Icons.Default.Star, null, tint = SecondaryText, modifier = Modifier.size(12.dp))
+                Text("%.1f".format(it), style = Type.callout, color = SecondaryText)
+            }
+        }
+    }
 }
 
+/** The Apple apps' capsule action button: white with black text for the main action, grey for the rest. */
 @Composable
-private fun PillButton(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, height: androidx.compose.ui.unit.Dp = 52.dp, onClick: () -> Unit) {
+private fun ActionButton(title: String, icon: ImageVector, modifier: Modifier = Modifier, prominent: Boolean = false, onClick: () -> Unit) {
     Row(
-        Modifier.height(height).clip(RoundedCornerShape(50)).background(Color.White.copy(alpha = 0.2f)).clickable(onClick = onClick).padding(horizontal = 22.dp),
-        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
+        modifier.height(DetailMetrics.buttonHeight).clip(CircleShape).background(if (prominent) Color.White else ButtonGrey)
+            .clickable(onClick = onClick).padding(horizontal = DetailMetrics.buttonHorizontalPadding),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        Icon(icon, null, tint = Color.White)
-        Text(label, color = Color.White, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleMedium, maxLines = 1)
+        val color = if (prominent) Color.Black else Color.White
+        Icon(icon, null, tint = color, modifier = Modifier.size(17.dp))
+        Text(title, style = Type.headline, color = color, maxLines = 1, softWrap = false)
     }
+}
+
+/** Heart, watched and more: a capsule as tall as the text buttons. */
+@Composable
+private fun IconActionButton(icon: ImageVector, description: String, onClick: () -> Unit) {
+    Box(
+        Modifier.size(DetailMetrics.iconButtonWidth, DetailMetrics.buttonHeight).clip(CircleShape).background(ButtonGrey).clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) { Icon(icon, description, tint = Color.White, modifier = Modifier.size(20.dp)) }
 }
 
 /** "4K" or "HD", outlined like the Apple apps' badge. */
 @Composable
-private fun Badge(text: String, color: Color) {
+private fun Badge(text: String) {
     Text(
-        text, color = color, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleSmall,
-        modifier = Modifier.border(2.dp, color, RoundedCornerShape(8.dp)).padding(horizontal = 10.dp, vertical = 2.dp),
+        text, style = Type.caption2Bold, color = Color.White,
+        modifier = Modifier.border(2.dp, Color.White.copy(alpha = 0.6f), RoundedCornerShape(5.dp)).padding(horizontal = 8.dp, vertical = 3.dp),
     )
 }
 
+/** The system segmented control: a rounded track with the picked segment raised in it. */
 @Composable
-private fun EpisodesSection(content: DetailContent, viewModel: DetailViewModel, repo: AsterRepository, onPlay: (UUID) -> Unit) {
-    if (content.seasons.size > 1) {
-        LazyRow(
-            contentPadding = PaddingValues(horizontal = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            modifier = Modifier.padding(bottom = 16.dp),
-        ) {
-            items(content.seasons, key = { it.id }) { season ->
-                val active = season.id == content.selectedSeason
-                Text(
-                    season.name.orEmpty(), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold,
-                    color = if (active) Color.White else Color.White.copy(alpha = 0.8f),
-                    modifier = Modifier.clip(RoundedCornerShape(50))
-                        .background(if (active) Color.White.copy(alpha = 0.22f) else Color.White.copy(alpha = 0.1f))
-                        .clickable { viewModel.selectSeason(season.id) }.padding(horizontal = 24.dp, vertical = 14.dp),
-                )
-            }
+private fun SegmentedControl(labels: List<String>, selected: Int, onSelect: (Int) -> Unit) {
+    Row(
+        Modifier.padding(horizontal = Lockup.screenPadding).widthIn(max = DetailMetrics.segmentedMaxWidth).fillMaxWidth()
+            .height(DetailMetrics.segmentedHeight).clip(CircleShape).background(Color.White.copy(alpha = 0.19f)).padding(2.dp),
+    ) {
+        labels.forEachIndexed { index, label ->
+            Box(
+                Modifier.weight(1f).fillMaxHeight().clip(CircleShape)
+                    .background(if (index == selected) Color.White.copy(alpha = 0.21f) else Color.Transparent)
+                    .clickable { onSelect(index) },
+                contentAlignment = Alignment.Center,
+            ) { Text(label, style = Type.segmented, color = Color.White, maxLines = 1) }
         }
-    }
-    Text("Episodes", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
-    LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        items(content.episodes, key = { it.id }) { episode -> EpisodeCard(episode, repo, onPlay, Modifier.width(episodeCardWidth())) }
     }
 }
 
 @Composable
-private fun episodeCardWidth() = (LocalConfiguration.current.screenWidthDp * 0.43f).coerceIn(170f, 300f).dp
+private fun EpisodesSection(content: DetailContent, viewModel: DetailViewModel, onPlay: (UUID) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(DetailMetrics.seasonShelfSpacing)) {
+        if (content.seasons.size > 1) {
+            LazyRow(
+                contentPadding = PaddingValues(horizontal = Lockup.screenPadding, vertical = DetailMetrics.seasonVerticalPadding),
+                horizontalArrangement = Arrangement.spacedBy(DetailMetrics.seasonSpacing),
+            ) {
+                items(content.seasons, key = { it.id }) { season ->
+                    val active = season.id == content.selectedSeason
+                    // The Apple apps' bordered buttons: white tint (black text) when picked, grey tint otherwise.
+                    Box(
+                        Modifier.height(DetailMetrics.seasonPillHeight).clip(CircleShape)
+                            .background((if (active) Color.White else ButtonGrey).copy(alpha = 0.25f))
+                            .clickable { viewModel.selectSeason(season.id) }.padding(horizontal = DetailMetrics.seasonPillHorizontalPadding),
+                        contentAlignment = Alignment.Center,
+                    ) { Text(season.name.orEmpty(), style = Type.calloutSemibold, color = if (active) Color.Black else Color.White, maxLines = 1) }
+                }
+            }
+        }
+        Shelf("Episodes", content.episodes, landscape = true, onItem = { onPlay(it.id) }, showSeriesTitle = false)
+    }
+}
 
 /**
  * An episode page's strip: the other episodes of its season, scrolled so the next one sits centered under the Play
  * button (the one before it, on a season's last), as near as the row can scroll.
  */
 @Composable
-private fun EpisodeStrip(season: List<BaseItemDto>, currentId: UUID, playCenterPx: Float?, repo: AsterRepository, onPlay: (UUID) -> Unit) {
+private fun EpisodeStrip(season: List<BaseItemDto>, currentId: UUID, playCenterPx: Float?, onPlay: (UUID) -> Unit) {
     val episodes = season.filter { it.id != currentId }
     if (episodes.isEmpty()) return
     val index = season.indexOfFirst { it.id == currentId }
     val targetId = season.getOrNull(index + 1)?.id ?: season.getOrNull(index - 1)?.id
     val state = rememberLazyListState()
     val density = LocalDensity.current
-    val cardWidth = episodeCardWidth()
     LaunchedEffect(currentId, playCenterPx, episodes.size) {
         val center = playCenterPx ?: return@LaunchedEffect
         val target = episodes.indexOfFirst { it.id == targetId }.takeIf { it >= 0 } ?: return@LaunchedEffect
         with(density) {
-            val card = cardWidth.toPx()
-            val cardStart = 16.dp.toPx() + target * (card + 12.dp.toPx())
-            val offset = (cardStart - (center - card / 2)).coerceAtLeast(0f)
+            val card = Lockup.landscapeWidth.toPx()
+            val cardStart = Lockup.screenPadding.toPx() + target * (card + Lockup.shelfSpacing.toPx())
             state.scrollToItem(0)
-            state.scrollBy(offset)
+            state.scrollBy((cardStart - (center - card / 2)).coerceAtLeast(0f))
         }
     }
-    Text("Episodes", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
-    LazyRow(state = state, contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        items(episodes, key = { it.id }) { episode -> EpisodeCard(episode, repo, onPlay, Modifier.width(cardWidth)) }
-    }
-}
-
-@Composable
-private fun EpisodeCard(episode: BaseItemDto, repo: AsterRepository, onPlay: (UUID) -> Unit, modifier: Modifier = Modifier) {
-    Column(modifier.clickable { onPlay(episode.id) }) {
-        Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(12.dp))) {
-            AsyncImage(
-                model = repo.imageUrl(episode, ImageType.PRIMARY, 600), contentDescription = null,
-                contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize(),
-            )
-            episode.progress()?.let {
-                LinearProgressIndicator(
-                    progress = { it }, color = Color.White, trackColor = Color.White.copy(alpha = 0.3f),
-                    modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(4.dp),
-                )
-            }
-            if (episode.userData?.played == false && episode.progress() == null) {
-                Box(Modifier.align(Alignment.TopEnd).padding(10.dp).size(14.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary))
-            }
-        }
-        Text(
-            episode.name.orEmpty(), style = MaterialTheme.typography.titleMedium, maxLines = 1,
-            overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 6.dp),
-        )
-        Text(
-            listOfNotNull(episode.parentIndexNumber?.let { "S$it" }, episode.indexNumber?.let { "E$it" }).joinToString(", "),
-            style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-    }
+    Shelf("Episodes", episodes, landscape = true, onItem = { onPlay(it.id) }, listState = state, showSeriesTitle = false)
 }
 
 /** An anime title's openings and endings, as a list of cards. */
 @Composable
 private fun MusicSection(content: DetailContent, onPlayTheme: (OpeningEnding) -> Unit) {
-    Text("Openings & Endings", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
-    Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        content.openingsEndings.forEach { oe -> ThemeCard(oe, onClick = { onPlayTheme(oe) }) }
+    Column(verticalArrangement = Arrangement.spacedBy(Lockup.shelfTitleSpacing)) {
+        Text("Openings & Endings", style = Type.title3, modifier = Modifier.padding(horizontal = Lockup.screenPadding))
+        Column(Modifier.padding(horizontal = Lockup.screenPadding), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            content.openingsEndings.forEach { oe -> ThemeCard(oe, onClick = { onPlayTheme(oe) }) }
+        }
     }
 }
 
@@ -740,19 +731,24 @@ private fun DetailsSection(item: BaseItemDto, repo: AsterRepository) {
 private fun CastRow(people: List<BaseItemPerson>, repo: AsterRepository) {
     val cast = people.take(40)
     if (cast.isEmpty()) return
-    Text("Cast & Crew", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 8.dp))
-    LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-        items(cast, key = { "${it.id}-${it.role}-${it.type}" }) { person ->
-            Column(Modifier.width(96.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                Box(Modifier.size(96.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceVariant)) {
-                    AsyncImage(
-                        model = repo.personImageUrl(person, 240), contentDescription = null,
-                        contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize(),
-                    )
-                }
-                Text(person.name.orEmpty(), style = MaterialTheme.typography.labelLarge, maxLines = 2, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 6.dp))
-                (person.role?.takeIf { it.isNotBlank() } ?: person.type.name.takeIf { person.type != PersonKind.ACTOR })?.let {
-                    Text(it, style = MaterialTheme.typography.labelSmall, maxLines = 2, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Column(verticalArrangement = Arrangement.spacedBy(Lockup.shelfTitleSpacing)) {
+        Text("Cast & Crew", style = Type.title3, modifier = Modifier.padding(horizontal = Lockup.screenPadding))
+        LazyRow(
+            contentPadding = PaddingValues(horizontal = Lockup.screenPadding, vertical = Lockup.shelfVerticalPadding),
+            horizontalArrangement = Arrangement.spacedBy(Lockup.personSpacing),
+        ) {
+            items(cast, key = { "${it.id}-${it.role}-${it.type}" }) { person ->
+                Column(Modifier.width(Lockup.personWidth), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(Lockup.personLabelSpacing)) {
+                    Box(Modifier.size(Lockup.personPhotoSize).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceVariant)) {
+                        AsyncImage(
+                            model = repo.personImageUrl(person, 240), contentDescription = null,
+                            contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize(),
+                        )
+                    }
+                    Text(person.name.orEmpty(), style = Type.calloutMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    person.role?.takeIf { it.isNotBlank() }?.let {
+                        Text(it, style = Type.caption, color = SecondaryText, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
                 }
             }
         }
@@ -772,17 +768,19 @@ private fun InformationSection(item: BaseItemDto) {
         item.premiereDate?.let { add("Released" to it.toString().take(10)) }
     }
     if (rows.isEmpty()) return
-    Column(Modifier.padding(horizontal = 16.dp).padding(top = 20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        Text("Information", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-        rows.chunked(3).forEach { row ->
-            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                row.forEach { (label, value) ->
-                    Column(Modifier.weight(1f)) {
-                        Text(label, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text(value, style = MaterialTheme.typography.bodyMedium)
+    Column(Modifier.padding(horizontal = Lockup.screenPadding), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        Text("Information", style = Type.title3)
+        Column(verticalArrangement = Arrangement.spacedBy(24.dp)) {
+            rows.chunked(3).forEach { row ->
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    row.forEach { (label, value) ->
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text(label, style = Type.caption.copy(fontWeight = FontWeight.SemiBold), color = SecondaryText)
+                            Text(value, style = Type.callout)
+                        }
                     }
+                    repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
                 }
-                repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
             }
         }
     }
@@ -853,12 +851,6 @@ private fun yearText(item: BaseItemDto): String? {
     if (item.status == "Continuing") return "$year–"
     val end = item.endDate?.year
     return if (end != null && end != year) "$year–$end" else year.toString()
-}
-
-/** "S2, E1", or "Episode 3" when there's no season. */
-private fun episodeCode(item: BaseItemDto): String? {
-    val episode = item.indexNumber ?: return null
-    return item.parentIndexNumber?.let { "S$it, E$episode" } ?: "Episode $episode"
 }
 
 /** "1 hr 45 min left" for something partly watched. */

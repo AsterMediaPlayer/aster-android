@@ -148,7 +148,7 @@ fun HomeScreen(
         Load.Loading -> LoadingBox(modifier)
         is Load.Failed -> ErrorBox(s.message, { viewModel.load() }, modifier)
         is Load.Ready -> PullToRefreshBox(isRefreshing = refreshing, onRefresh = { viewModel.load(refresh = true) }, modifier = modifier.fillMaxSize()) {
-            Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(bottom = TabBarClearance)) {
+            Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(bottom = TabBarClearance), verticalArrangement = Arrangement.spacedBy(20.dp)) {
                 if (s.value.featured.isNotEmpty()) FeaturedBanner(s.value.featured, onItem, onPlay)
                 Shelf("Continue Watching", s.value.resume, landscape = true, onItem = onItem)
                 Shelf("Up Next", s.value.nextUp, landscape = true, onItem = onItem)
