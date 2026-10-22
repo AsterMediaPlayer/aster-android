@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">Aster Media Player</string>
+    <string name="downloads_channel">Downloads</string>
 </resources>

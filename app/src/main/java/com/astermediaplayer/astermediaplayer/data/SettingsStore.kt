@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -23,6 +24,17 @@ data class AppSettings(
     val themeVideos: Boolean = false,
     /** Anime with no theme video loops its opening behind the series page; with sound it plays quietly, like theme music. */
     val openingSound: Boolean = false,
+    /** Downloads (Settings > Downloads), as on the Apple apps. */
+    val downloadsEnabled: Boolean = true,
+    /** Whether the first-download setup has been through. */
+    val downloadsSetUp: Boolean = false,
+    /** The most downloads may take, in gigabytes; 0 for no limit. */
+    val downloadLimitGb: Int = 0,
+    val downloadQuality: com.astermediaplayer.astermediaplayer.data.downloads.DownloadQuality = com.astermediaplayer.astermediaplayer.data.downloads.DownloadQuality.High,
+    /** HEVC makes smaller files but takes a server longer to prepare without hardware encoding. */
+    val downloadHevc: Boolean = false,
+    val downloadSubtitles: Boolean = true,
+    val downloadCellular: Boolean = false,
 )
 
 private val Context.settingsDataStore by preferencesDataStore("aster_settings")
@@ -36,6 +48,13 @@ class SettingsStore(private val context: Context) {
     private val themeMusicKey = booleanPreferencesKey("theme_music")
     private val themeVideosKey = booleanPreferencesKey("theme_videos")
     private val openingSoundKey = booleanPreferencesKey("opening_sound")
+    private val downloadsEnabledKey = booleanPreferencesKey("downloads_enabled")
+    private val downloadsSetUpKey = booleanPreferencesKey("downloads_set_up")
+    private val downloadLimitKey = intPreferencesKey("download_limit_gb")
+    private val downloadQualityKey = stringPreferencesKey("download_quality")
+    private val downloadHevcKey = booleanPreferencesKey("download_hevc")
+    private val downloadSubtitlesKey = booleanPreferencesKey("download_subtitles")
+    private val downloadCellularKey = booleanPreferencesKey("download_cellular")
 
     val settings: Flow<AppSettings> = context.settingsDataStore.data.map {
         AppSettings(
@@ -47,6 +66,14 @@ class SettingsStore(private val context: Context) {
             themeMusic = it[themeMusicKey] ?: false,
             themeVideos = it[themeVideosKey] ?: false,
             openingSound = it[openingSoundKey] ?: false,
+            downloadsEnabled = it[downloadsEnabledKey] ?: true,
+            downloadsSetUp = it[downloadsSetUpKey] ?: false,
+            downloadLimitGb = it[downloadLimitKey] ?: 0,
+            downloadQuality = com.astermediaplayer.astermediaplayer.data.downloads.DownloadQuality.entries.firstOrNull { q -> q.name == it[downloadQualityKey] }
+                ?: com.astermediaplayer.astermediaplayer.data.downloads.DownloadQuality.High,
+            downloadHevc = it[downloadHevcKey] ?: false,
+            downloadSubtitles = it[downloadSubtitlesKey] ?: true,
+            downloadCellular = it[downloadCellularKey] ?: false,
         )
     }
 
@@ -60,4 +87,11 @@ class SettingsStore(private val context: Context) {
     suspend fun setThemeMusic(on: Boolean) = context.settingsDataStore.edit { it[themeMusicKey] = on }
     suspend fun setThemeVideos(on: Boolean) = context.settingsDataStore.edit { it[themeVideosKey] = on }
     suspend fun setOpeningSound(on: Boolean) = context.settingsDataStore.edit { it[openingSoundKey] = on }
+    suspend fun setDownloadsEnabled(on: Boolean) = context.settingsDataStore.edit { it[downloadsEnabledKey] = on }
+    suspend fun setDownloadsSetUp(on: Boolean) = context.settingsDataStore.edit { it[downloadsSetUpKey] = on }
+    suspend fun setDownloadLimitGb(gb: Int) = context.settingsDataStore.edit { it[downloadLimitKey] = gb }
+    suspend fun setDownloadQuality(q: com.astermediaplayer.astermediaplayer.data.downloads.DownloadQuality) = context.settingsDataStore.edit { it[downloadQualityKey] = q.name }
+    suspend fun setDownloadHevc(on: Boolean) = context.settingsDataStore.edit { it[downloadHevcKey] = on }
+    suspend fun setDownloadSubtitles(on: Boolean) = context.settingsDataStore.edit { it[downloadSubtitlesKey] = on }
+    suspend fun setDownloadCellular(on: Boolean) = context.settingsDataStore.edit { it[downloadCellularKey] = on }
 }

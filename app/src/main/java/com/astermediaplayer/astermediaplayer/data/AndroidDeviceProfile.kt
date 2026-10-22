@@ -1,6 +1,11 @@
 package com.astermediaplayer.astermediaplayer.data
 
+import org.jellyfin.sdk.model.api.CodecProfile
+import org.jellyfin.sdk.model.api.CodecType
 import org.jellyfin.sdk.model.api.DeviceProfile
+import org.jellyfin.sdk.model.api.ProfileCondition
+import org.jellyfin.sdk.model.api.ProfileConditionType
+import org.jellyfin.sdk.model.api.ProfileConditionValue
 import org.jellyfin.sdk.model.api.DlnaProfileType
 import org.jellyfin.sdk.model.api.DirectPlayProfile
 import org.jellyfin.sdk.model.api.EncodingContext
@@ -76,4 +81,33 @@ object AndroidDeviceProfile {
         containerProfiles = emptyList(),
         codecProfiles = emptyList(),
     )
+
+    /**
+     * A file for offline viewing: always an HLS stream (so it downloads in segments and resumes), with stereo AAC, at most
+     * [maxWidth] pixels wide. The video is copied when it already fits. The counterpart of `DeviceProfile.download`, but
+     * in MPEG-TS segments: the server's fragmented MP4 starts its audio at a negative time, which ExoPlayer won't read.
+     */
+    fun download(maxBitrate: Int, maxWidth: Int?, allowHevc: Boolean): DeviceProfile {
+        val size = maxWidth?.let {
+            listOf(ProfileCondition(ProfileConditionType.LESS_THAN_EQUAL, ProfileConditionValue.WIDTH, it.toString(), true))
+        }.orEmpty()
+        val notAnamorphic = ProfileCondition(ProfileConditionType.NOT_EQUALS, ProfileConditionValue.IS_ANAMORPHIC, "true", true)
+        return build(maxBitrate).copy(
+            name = "Aster Download",
+            directPlayProfiles = emptyList(),
+            transcodingProfiles = listOf(
+                TranscodingProfile(
+                    container = "ts", type = DlnaProfileType.VIDEO, videoCodec = if (allowHevc) "hevc,h264" else "h264", audioCodec = "aac",
+                    protocol = MediaStreamProtocol.HLS, context = EncodingContext.STREAMING, maxAudioChannels = "2", minSegments = 1, breakOnNonKeyFrames = true, conditions = emptyList(),
+                ),
+            ),
+            codecProfiles = listOf(
+                CodecProfile(
+                    CodecType.VIDEO,
+                    listOf(ProfileCondition(ProfileConditionType.LESS_THAN_EQUAL, ProfileConditionValue.VIDEO_LEVEL, "52", true), notAnamorphic) + size,
+                    emptyList(), "h264", null, null,
+                ),
+            ) + if (allowHevc) listOf(CodecProfile(CodecType.VIDEO, listOf(notAnamorphic) + size, emptyList(), "hevc", null, null)) else emptyList(),
+        )
+    }
 }

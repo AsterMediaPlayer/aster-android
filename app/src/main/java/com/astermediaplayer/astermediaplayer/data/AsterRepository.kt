@@ -669,6 +669,25 @@ class AsterRepository(context: Context, private val store: SessionStore) {
         ),
     ).content
 
+    /** Whether the server lets this user download media ("Allow media downloading" in the user's settings). */
+    suspend fun canDownload(): Boolean = runCatching { api.userApi.getCurrentUser().content.policy?.enableContentDownloading }.getOrNull() ?: false
+
+    /** The server's HLS stream for saving a title, at [quality], with the chosen tracks; [subtitleIndex] is burned in, -1 for none. */
+    suspend fun downloadInfo(
+        itemId: UUID, maxBitrate: Int, maxWidth: Int?, allowHevc: Boolean, mediaSourceId: String?, audioIndex: Int?, subtitleIndex: Int,
+    ): PlaybackInfoResponse = api.mediaInfoApi.getPostedPlaybackInfo(
+        itemId,
+        PlaybackInfoDto(
+            userId = userId, maxStreamingBitrate = maxBitrate, startTimeTicks = 0L, mediaSourceId = mediaSourceId,
+            audioStreamIndex = audioIndex, subtitleStreamIndex = subtitleIndex,
+            deviceProfile = AndroidDeviceProfile.download(maxBitrate, maxWidth, allowHevc),
+            enableDirectPlay = false, enableDirectStream = false, enableTranscoding = true, autoOpenLiveStream = false,
+        ),
+    ).content
+
+    /** What the sign-in token is, for the download manager's requests. */
+    val accessToken: String? get() = session?.accessToken
+
     fun directStreamUrl(itemId: UUID, mediaSourceId: String, playSessionId: String?, container: String?): String =
         api.videoApi.getVideoStreamUrl(
             itemId = itemId,

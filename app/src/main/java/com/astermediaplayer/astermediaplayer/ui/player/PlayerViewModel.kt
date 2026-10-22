@@ -89,6 +89,8 @@ data class PlayerUiState(
     val channel: Boolean = false,
     /** A break's clip is playing, not a programme. */
     val breakClip: Boolean = false,
+    /** Playing from a download on the device. */
+    val offline: Boolean = false,
     val chapterIndex: Int = -1,
 )
 
@@ -148,10 +150,15 @@ class PlayerViewModel(
         if (appSettings.styledSubtitles) AssHandler(AssRenderType.OVERLAY_OPEN_GL, AssHandlerConfig(maxRenderPixels = 1920 * 1080)) else null
     private val assParserFactory = assHandler?.let { AssSubtitleParserFactory(it) }
 
+    private val downloads = (context.applicationContext as com.astermediaplayer.astermediaplayer.AsterApp).downloads
+
     private val mediaSourceFactory = DefaultMediaSourceFactory(
         DefaultHttpDataSource.Factory().setDefaultRequestProperties(mapOf("X-Emby-Token" to repo.session!!.accessToken)),
         DefaultExtractorsFactory().let { if (assHandler != null) it.withAssMkvSupport(assParserFactory!!, assHandler) else it },
     ).also { if (assParserFactory != null) it.setSubtitleParserFactory(assParserFactory) }
+
+    /** Plays a download from the device alone. */
+    private val offlineSourceFactory = downloads.offlineMediaSourceFactory().also { if (assParserFactory != null) it.setSubtitleParserFactory(assParserFactory) }
 
     val player: ExoPlayer = ExoPlayer.Builder(
         context.applicationContext,
@@ -168,6 +175,8 @@ class PlayerViewModel(
         .build()
 
     private var item: BaseItemDto? = null
+    /** Playing a download from the device: nothing here asks the server. */
+    private var offline: com.astermediaplayer.astermediaplayer.data.downloads.DownloadRecord? = null
     private var mediaSourceId: String? = null
     private var playSessionId: String? = null
     private var playMethod = PlayMethod.DIRECT_PLAY
@@ -227,6 +236,21 @@ class PlayerViewModel(
                     startTicking()
                     return@launch
                 }
+                // A downloaded title plays from the device, from where viewing stopped, unless it had all but finished.
+                val saved = if (clip == null && playlistChannelId == null && !forceTranscode) downloads.playable(itemId) else null
+                if (saved != null) {
+                    val runtime = saved.runTimeTicks
+                    val resume = positionMs ?: if (fromBeginning || (runtime > 0 && saved.positionTicks > runtime * 95 / 100)) 0L else saved.positionTicks / TICKS_PER_MS
+                    offline = saved
+                    segments = saved.segments.map { org.jellyfin.sdk.model.api.MediaSegmentDto(id = java.util.UUID.randomUUID(), itemId = itemId, type = if (it.intro) MediaSegmentType.INTRO else MediaSegmentType.OUTRO, startTicks = it.startTicks, endTicks = it.endTicks) }
+                    player.setMediaSource(offlineSourceFactory.createMediaSource(downloads.mediaItem(saved)), resume.coerceAtLeast(0))
+                    player.prepare()
+                    player.playWhenReady = true
+                    _state.update { it.copy(title = saved.title, subtitle = saved.subtitle?.takeIf { _ -> saved.isEpisode }, offline = true) }
+                    startTicking()
+                    return@launch
+                }
+                offline = null
                 val dto = item ?: repo.item(itemId).also { item = it }
                 val isLive = dto.type == BaseItemKind.TV_CHANNEL
                 val resumeMs = positionMs ?: clip?.startMs ?: scheduledStartMs ?: if (fromBeginning || isLive) 0L else ((dto.userData?.playbackPositionTicks ?: 0L) / TICKS_PER_MS)
@@ -452,6 +476,7 @@ class PlayerViewModel(
     }
 
     private fun reportProgress() {
+        offline?.let { downloads.notePosition(it.id, player.currentPosition * TICKS_PER_MS) }
         if (!reported || stopped) return
         val info = PlaybackProgressInfo(
             canSeek = true, itemId = itemId, mediaSourceId = mediaSourceId, playSessionId = playSessionId, liveStreamId = liveStreamId,
@@ -463,6 +488,7 @@ class PlayerViewModel(
     }
 
     private fun reportStopped() {
+        offline?.let { downloads.notePosition(it.id, player.currentPosition * TICKS_PER_MS) }
         if (!reported || stopped) return
         stopped = true
         val info = PlaybackStopInfo(

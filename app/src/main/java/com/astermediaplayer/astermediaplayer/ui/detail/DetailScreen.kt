@@ -1,5 +1,8 @@
 package com.astermediaplayer.astermediaplayer.ui.detail
 
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -39,6 +42,9 @@ import androidx.compose.material.icons.filled.MusicVideo
 import androidx.compose.material.icons.automirrored.filled.QueueMusic
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DropdownMenu
+import com.astermediaplayer.astermediaplayer.data.downloads.DownloadState
+import com.astermediaplayer.astermediaplayer.ui.downloads.rememberDownloadFlow
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -573,16 +579,40 @@ private fun DetailInfo(
                 if (!isSeries && item.type != BaseItemKind.SEASON) {
                     IconActionButton(if (item.userData?.played == true) Icons.Default.CheckCircle else Icons.Outlined.CheckCircle, "Watched") { viewModel.togglePlayed() }
                 }
-                if (item.type == BaseItemKind.EPISODE && seriesId != null) {
+                if (item.type == BaseItemKind.EPISODE || item.type == BaseItemKind.MOVIE) {
+                    val app = LocalContext.current.applicationContext as AsterApp
+                    val downloads = remember { app.downloads }
+                    val records by downloads.records.collectAsStateWithLifecycle()
+                    val saved = records.firstOrNull { it.id == item.id.toString() }
+                    val flow = rememberDownloadFlow()
                     Box {
                         IconActionButton(Icons.Default.MoreHoriz, "More") { menu = true }
                         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                            DropdownMenuItem(
+                            if (item.type == BaseItemKind.EPISODE && seriesId != null) DropdownMenuItem(
                                 text = { Text("Go to Series") },
                                 leadingIcon = { Icon(Icons.Default.Tv, null) },
                                 onClick = { menu = false; onGoToSeries(seriesId) },
                             )
+                            when (saved?.state) {
+                                null -> DropdownMenuItem(
+                                    text = { Text("Download") }, leadingIcon = { Icon(Icons.Default.Download, null) },
+                                    onClick = { menu = false; flow.download(item) },
+                                )
+                                DownloadState.Failed -> {
+                                    DropdownMenuItem(text = { Text("Resume Download") }, leadingIcon = { Icon(Icons.Default.Refresh, null) }, onClick = { menu = false; flow.retry(saved.id) })
+                                    DropdownMenuItem(text = { Text("Remove Download") }, leadingIcon = { Icon(Icons.Default.Delete, null) }, onClick = { menu = false; downloads.remove(saved.id) })
+                                }
+                                DownloadState.Downloading -> DropdownMenuItem(
+                                    text = { Text("Cancel Download (${(saved.progress * 100).toInt()}%)") }, leadingIcon = { Icon(Icons.Default.Delete, null) },
+                                    onClick = { menu = false; downloads.remove(saved.id) },
+                                )
+                                DownloadState.Finished -> DropdownMenuItem(
+                                    text = { Text("Remove Download") }, leadingIcon = { Icon(Icons.Default.Delete, null) },
+                                    onClick = { menu = false; downloads.remove(saved.id) },
+                                )
+                            }
                         }
+                        flow.Dialogs()
                     }
                 }
                 if (!isSeries) remainingText(item)?.let { Text(it, style = Type.callout, color = SecondaryText, maxLines = 1) }

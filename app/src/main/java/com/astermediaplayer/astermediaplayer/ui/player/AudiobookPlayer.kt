@@ -101,7 +101,7 @@ class AudiobookPlayer(private val context: Context, private val repo: AsterRepos
     private fun ensurePlayer(): ExoPlayer = player ?: ExoPlayer.Builder(context)
         .setMediaSourceFactory(
             DefaultMediaSourceFactory(
-                DefaultHttpDataSource.Factory().setDefaultRequestProperties(mapOf("X-Emby-Token" to checkNotNull(repo.session).accessToken)),
+                (context.applicationContext as com.astermediaplayer.astermediaplayer.AsterApp).downloads.cacheDataSourceFactory,
             ),
         )
         .setSeekBackIncrementMs(SKIP_BACK_SECONDS * 1000)

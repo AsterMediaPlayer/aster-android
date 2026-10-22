@@ -27,6 +27,7 @@ import com.astermediaplayer.astermediaplayer.data.AppSettings
 import com.astermediaplayer.astermediaplayer.data.Session
 import com.astermediaplayer.astermediaplayer.data.SettingsStore
 import com.astermediaplayer.astermediaplayer.data.ThemeCut
+import com.astermediaplayer.astermediaplayer.ui.downloads.DownloadOptions
 import com.astermediaplayer.astermediaplayer.ui.home.TabBarClearance
 import com.astermediaplayer.astermediaplayer.ui.player.Qualities
 import kotlinx.coroutines.launch
@@ -68,6 +69,10 @@ fun SettingsScreen(session: Session?, store: SettingsStore, onSignOut: () -> Uni
         SwitchRow("Draw styled ASS/SSA subtitles (libass)", settings.styledSubtitles) { scope.launch { store.setStyledSubtitles(it) } }
         SwitchRow("Play the next episode automatically", settings.autoPlayNext) { scope.launch { store.setAutoPlayNext(it) } }
 
+        HorizontalDivider(Modifier.padding(vertical = 8.dp))
+        Section("Downloads")
+        SwitchRow("Allow downloads", settings.downloadsEnabled) { scope.launch { store.setDownloadsEnabled(it) } }
+        if (settings.downloadsEnabled) DownloadOptions()
         HorizontalDivider(Modifier.padding(vertical = 8.dp))
         Section("Title pages")
         SwitchRow("Theme music", settings.themeMusic) { scope.launch { store.setThemeMusic(it) } }

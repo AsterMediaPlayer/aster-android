@@ -379,6 +379,7 @@ fun AudiobookPage(bookId: UUID, modifier: Modifier = Modifier) {
                     ) {
                         if (isLoaded) { player.togglePlayPause(); player.setPresented(true) } else player.play(book)
                     }
+                    DownloadPill(book)
                     if (book.resumePoint != null || isLoaded) PillButton("From the Beginning") { player.play(book, book.chapters.firstOrNull() ?: com.astermediaplayer.astermediaplayer.data.AudiobookChapter(0, 0, 0.0, "")) }
                 }
             }
@@ -394,6 +395,39 @@ fun AudiobookPage(bookId: UUID, modifier: Modifier = Modifier) {
             }
         }
     }
+}
+
+/** Download, its progress, or Remove Download, for a book. */
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+@Composable
+private fun DownloadPill(book: Audiobook) {
+    val app = app()
+    val records by app.downloads.records.collectAsStateWithLifecycle()
+    val saved = records.firstOrNull { it.id == book.id.toString() }
+    val flow = com.astermediaplayer.astermediaplayer.ui.downloads.rememberDownloadFlow()
+    var confirm by remember { mutableStateOf(false) }
+    val label = when (saved?.state) {
+        null -> "Download"
+        com.astermediaplayer.astermediaplayer.data.downloads.DownloadState.Downloading -> "${(saved.progress * 100).toInt()}%"
+        com.astermediaplayer.astermediaplayer.data.downloads.DownloadState.Failed -> "Resume"
+        com.astermediaplayer.astermediaplayer.data.downloads.DownloadState.Finished -> "Downloaded"
+    }
+    PillButton(label) {
+        when (saved?.state) {
+            null -> flow.downloadBook(book)
+            com.astermediaplayer.astermediaplayer.data.downloads.DownloadState.Failed -> flow.retry(saved.id)
+            else -> confirm = true
+        }
+    }
+    if (confirm) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { confirm = false },
+            title = { Text(if (saved?.state == com.astermediaplayer.astermediaplayer.data.downloads.DownloadState.Downloading) "Cancel the download?" else "Remove the download?") },
+            confirmButton = { androidx.compose.material3.TextButton(onClick = { app.downloads.remove(book.id.toString()); confirm = false }) { Text("Remove") } },
+            dismissButton = { androidx.compose.material3.TextButton(onClick = { confirm = false }) { Text("Keep") } },
+        )
+    }
+    flow.Dialogs()
 }
 
 @Composable

@@ -1,5 +1,6 @@
 package com.astermediaplayer.astermediaplayer.ui
 
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -31,6 +32,7 @@ import com.astermediaplayer.astermediaplayer.data.AudiobookShelf
 import com.astermediaplayer.astermediaplayer.ui.audiobooks.AudiobookBar
 import com.astermediaplayer.astermediaplayer.data.channels.ChannelTuner
 import com.astermediaplayer.astermediaplayer.ui.channels.ChannelsScreen
+import com.astermediaplayer.astermediaplayer.ui.downloads.DownloadsScreen
 import com.astermediaplayer.astermediaplayer.ui.livetv.LiveTvScreen
 import com.astermediaplayer.astermediaplayer.ui.music.AlbumPage
 import com.astermediaplayer.astermediaplayer.ui.music.ArtistPage
@@ -350,6 +352,7 @@ private enum class MoreDestination(val label: String, val icon: ImageVector) {
     LiveTv("Live TV", Icons.Default.Sensors),
     Channels("Channels", Icons.Default.Tv),
     Audiobooks("Audiobooks", Icons.Default.LibraryBooks),
+    Downloads("Downloads", Icons.Default.Download),
     Settings("Settings", Icons.Default.Settings),
     Search("Search", Icons.Default.Search),
 }
@@ -437,6 +440,10 @@ private fun MainTabs(
                 }
                 MoreDestination.Audiobooks -> Box(modifier) {
                     AudiobooksScreen(onBook = onBook, onShelf = onShelf, onListen = { app.audiobooks.play(it) }, modifier = Modifier.fillMaxSize(), topInset = 64.dp)
+                    BackButton { more = null }
+                }
+                MoreDestination.Downloads -> Box(modifier) {
+                    DownloadsScreen(onPlay = onPlay, onBook = { id -> app.audiobookLibrary.state.value.book(id)?.let(onBook) }, modifier = Modifier.fillMaxSize(), topInset = 56.dp)
                     BackButton { more = null }
                 }
                 MoreDestination.Search -> Box(modifier) {
