@@ -16,7 +16,9 @@ import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import com.astermediaplayer.astermediaplayer.data.AppSettings
 import com.astermediaplayer.astermediaplayer.data.AsterRepository
+import com.astermediaplayer.astermediaplayer.data.SettingsStore
 import com.astermediaplayer.astermediaplayer.ui.components.userMessage
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -69,6 +71,7 @@ data class PlayerUiState(
 class PlayerViewModel(
     context: Context,
     private val repo: AsterRepository,
+    private val settings: SettingsStore,
     private val itemId: UUID,
 ) : ViewModel() {
     private val _state = MutableStateFlow(PlayerUiState())
@@ -131,10 +134,16 @@ class PlayerViewModel(
         }
     }
     private var forcedTranscode = false
+    private var appSettings = AppSettings()
+    private var autoSkipped: SkipPrompt? = null
 
     init {
         player.addListener(listener)
-        start(null)
+        viewModelScope.launch {
+            appSettings = settings.current()
+            Qualities.getOrNull(appSettings.qualityIndex)?.let { q -> _state.update { it.copy(quality = q) } }
+            start(null)
+        }
     }
 
     private fun start(positionMs: Long?, forceTranscode: Boolean = false) {
@@ -265,12 +274,17 @@ class PlayerViewModel(
                 targetMs = it.endTicks / TICKS_PER_MS,
             )
         }
+        if (prompt != null && appSettings.autoSkipSegments && prompt != autoSkipped) {
+            autoSkipped = prompt
+            player.seekTo(prompt.targetMs)
+            return
+        }
         if (prompt != _state.value.skip) _state.update { it.copy(skip = prompt) }
     }
 
     private fun onEnded() {
         reportStopped()
-        nextEpisodeId?.let { _playNext.tryEmit(it) }
+        if (appSettings.autoPlayNext) nextEpisodeId?.let { _playNext.tryEmit(it) }
     }
 
     private fun reportProgress() {

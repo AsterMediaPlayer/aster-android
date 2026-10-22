@@ -23,6 +23,7 @@ import org.jellyfin.sdk.model.api.AuthenticateUserByName
 import org.jellyfin.sdk.model.api.AuthenticationResult
 import org.jellyfin.sdk.model.api.BaseItemDto
 import org.jellyfin.sdk.model.api.BaseItemKind
+import org.jellyfin.sdk.model.api.BaseItemPerson
 import org.jellyfin.sdk.model.api.ImageType
 import org.jellyfin.sdk.model.api.ItemFields
 import org.jellyfin.sdk.model.api.ItemSortBy
@@ -206,6 +207,9 @@ class AsterRepository(context: Context, private val store: SessionStore) {
             else -> null
         }
     }
+
+    fun personImageUrl(person: BaseItemPerson, maxWidth: Int): String? =
+        person.primaryImageTag?.let { api.imageApi.getItemImageUrl(person.id, ImageType.PRIMARY, maxWidth = maxWidth, tag = it) }
 
     // MARK: Playback
 

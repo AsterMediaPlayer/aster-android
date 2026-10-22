@@ -118,7 +118,7 @@ fun AsterNavHost(signedIn: Boolean) {
             deepLinks = listOf(navDeepLink { uriPattern = "aster://play/{id}" }),
         ) { entry ->
             val id = UUID.fromString(entry.arguments!!.getString("id"))
-            val vm: PlayerViewModel = viewModel(factory = viewModelFactory { initializer { PlayerViewModel(app, repo, id) } })
+            val vm: PlayerViewModel = viewModel(factory = viewModelFactory { initializer { PlayerViewModel(app, repo, app.settings, id) } })
             PlayerScreen(
                 vm,
                 onBack = { nav.popBackStack() },
@@ -148,7 +148,7 @@ private fun MainTabs(onItem: (BaseItemDto) -> Unit, onLibrary: (BaseItemDto) -> 
         when (Tab.entries[selected]) {
             Tab.Home -> HomeScreen(home, onItem = onItem, onLibrary = onLibrary, modifier = modifier)
             Tab.Search -> SearchScreen(search, onItem = onItem, modifier = modifier)
-            Tab.Account -> SettingsScreen(repo.session, onSignOut, modifier)
+            Tab.Account -> SettingsScreen(repo.session, app.settings, onSignOut, modifier)
         }
     }
 

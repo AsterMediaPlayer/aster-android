@@ -11,7 +11,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -40,6 +42,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
@@ -63,6 +66,8 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import org.jellyfin.sdk.model.api.BaseItemDto
 import org.jellyfin.sdk.model.api.BaseItemKind
+import org.jellyfin.sdk.model.api.BaseItemPerson
+import org.jellyfin.sdk.model.api.PersonKind
 import org.jellyfin.sdk.model.api.ImageType
 import java.util.UUID
 
@@ -240,7 +245,33 @@ private fun DetailBody(
                 content.episodes.forEach { episode -> EpisodeRow(episode, repo, onPlay) }
             }
         }
+        CastRow(item.people.orEmpty(), repo)
         Shelf("More like this", content.similar, onItem = onItem)
+    }
+}
+
+@Composable
+private fun CastRow(people: List<BaseItemPerson>, repo: AsterRepository) {
+    val cast = people.filter { it.type == PersonKind.ACTOR || it.type == PersonKind.GUEST_STAR }.ifEmpty { people }.take(30)
+    if (cast.isEmpty()) return
+    Column(Modifier.padding(top = 20.dp)) {
+        Text("Cast", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
+        LazyRow(contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            items(cast, key = { "${it.id}-${it.role}" }) { person ->
+                Column(Modifier.width(90.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Box(Modifier.size(80.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceVariant)) {
+                        AsyncImage(
+                            model = repo.personImageUrl(person, 200), contentDescription = null,
+                            contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize(),
+                        )
+                    }
+                    Text(person.name.orEmpty(), style = MaterialTheme.typography.labelMedium, maxLines = 2, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
+                    person.role?.takeIf { it.isNotBlank() }?.let {
+                        Text(it, style = MaterialTheme.typography.labelSmall, maxLines = 2, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+        }
     }
 }
 

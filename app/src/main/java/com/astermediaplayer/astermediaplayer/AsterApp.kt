@@ -10,9 +10,11 @@ import coil3.memory.MemoryCache
 import coil3.request.crossfade
 import com.astermediaplayer.astermediaplayer.data.AsterRepository
 import com.astermediaplayer.astermediaplayer.data.SessionStore
+import com.astermediaplayer.astermediaplayer.data.SettingsStore
 
 class AsterApp : Application(), SingletonImageLoader.Factory {
     val repository: AsterRepository by lazy { AsterRepository(this, SessionStore(this)) }
+    val settings: SettingsStore by lazy { SettingsStore(this) }
 
     override fun newImageLoader(context: PlatformContext): ImageLoader = ImageLoader.Builder(context)
         .crossfade(true)
