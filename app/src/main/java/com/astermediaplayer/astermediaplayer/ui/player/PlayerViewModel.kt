@@ -93,6 +93,8 @@ class PlayerViewModel(
     private val clip: ClipRange? = null,
     /** Plays this file from the OP/ED plugin instead of a library item. */
     private val direct: DirectMedia? = null,
+    /** Start over even when there's a resume point. */
+    private val fromBeginning: Boolean = false,
 ) : ViewModel() {
     /** A clip or a plugin file isn't the viewer watching the item, so nothing is reported to the server. */
     private val readOnly = clip != null || direct != null
@@ -195,7 +197,7 @@ class PlayerViewModel(
                     return@launch
                 }
                 val dto = item ?: repo.item(itemId).also { item = it }
-                val resumeMs = positionMs ?: clip?.startMs ?: ((dto.userData?.playbackPositionTicks ?: 0L) / TICKS_PER_MS)
+                val resumeMs = positionMs ?: clip?.startMs ?: if (fromBeginning) 0L else ((dto.userData?.playbackPositionTicks ?: 0L) / TICKS_PER_MS)
                 if (!readOnly && item != null && segments.isEmpty()) segments = repo.segments(itemId)
                 if (!readOnly && nextEpisodeId == null) nextEpisodeId = findNextEpisode(dto)
 

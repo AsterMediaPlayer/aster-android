@@ -88,11 +88,11 @@ private object Routes {
     const val MAIN = "main"
     const val LIBRARY = "library/{id}/{name}"
     const val DETAIL = "detail/{id}"
-    const val PLAYER = "player/{id}?start={start}&end={end}&label={label}"
+    const val PLAYER = "player/{id}?start={start}&end={end}&label={label}&begin={begin}"
     const val THEME = "theme?path={path}&title={title}&subtitle={subtitle}"
     fun library(id: UUID, name: String) = "library/$id/${android.net.Uri.encode(name)}"
     fun detail(id: UUID) = "detail/$id"
-    fun player(id: UUID) = "player/$id"
+    fun player(id: UUID, fromBeginning: Boolean = false) = if (fromBeginning) "player/$id?begin=true" else "player/$id"
     /** A stretch of an episode, in milliseconds. */
     fun clip(id: UUID, startMs: Long, endMs: Long, label: String) = "player/$id?start=$startMs&end=$endMs&label=${android.net.Uri.encode(label)}"
     fun theme(path: String, title: String, subtitle: String?) =
@@ -146,6 +146,8 @@ fun AsterNavHost(signedIn: Boolean) {
             val vm: DetailViewModel = viewModel(factory = viewModelFactory { initializer { DetailViewModel(repo, id) } })
             DetailScreen(
                 vm, onBack = { nav.popBackStack() }, onPlay = { nav.navigate(Routes.player(it)) }, onItem = ::open,
+                onPlayFromBeginning = { nav.navigate(Routes.player(it, fromBeginning = true)) },
+                onGoToSeries = { nav.navigate(Routes.detail(it)) },
                 onPlayTheme = { oe ->
                     scope.launch {
                         when (oe) {
@@ -188,6 +190,7 @@ fun AsterNavHost(signedIn: Boolean) {
                 navArgument("start") { type = NavType.LongType; defaultValue = -1L },
                 navArgument("end") { type = NavType.LongType; defaultValue = -1L },
                 navArgument("label") { type = NavType.StringType; defaultValue = "" },
+                navArgument("begin") { type = NavType.BoolType; defaultValue = false },
             ),
             deepLinks = listOf(navDeepLink { uriPattern = "aster://play/{id}" }),
         ) { entry ->
@@ -195,7 +198,7 @@ fun AsterNavHost(signedIn: Boolean) {
             val start = entry.arguments!!.getLong("start")
             val end = entry.arguments!!.getLong("end")
             val clip = if (start >= 0 && end > start) ClipRange(start, end, entry.arguments!!.getString("label")?.ifEmpty { null }) else null
-            val vm: PlayerViewModel = viewModel(factory = viewModelFactory { initializer { PlayerViewModel(app, repo, app.settings, id, clip) } })
+            val vm: PlayerViewModel = viewModel(factory = viewModelFactory { initializer { PlayerViewModel(app, repo, app.settings, id, clip, fromBeginning = entry.arguments!!.getBoolean("begin")) } })
             PlayerScreen(
                 vm,
                 onBack = { nav.popBackStack() },

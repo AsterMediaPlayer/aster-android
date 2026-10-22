@@ -320,6 +320,10 @@ class AsterRepository(context: Context, private val store: SessionStore) {
         seriesId = seriesId, userId = userId, seasonId = seasonId, fields = fields,
     ).content.items
 
+    /** Extras: behind the scenes, trailers, deleted scenes. */
+    suspend fun specialFeatures(id: UUID): List<BaseItemDto> =
+        runCatching { api.libraryApi.getSpecialFeatures(itemId = id, userId = userId).content }.getOrDefault(emptyList())
+
     suspend fun similar(id: UUID, limit: Int = 12): List<BaseItemDto> =
         api.libraryApi.getSimilarItems(itemId = id, userId = userId, limit = limit).content.items
 
