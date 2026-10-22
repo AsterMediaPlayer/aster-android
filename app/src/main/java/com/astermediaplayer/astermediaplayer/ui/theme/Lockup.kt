@@ -3,6 +3,7 @@ package com.astermediaplayer.astermediaplayer.ui.theme
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.LineBreak
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
@@ -62,18 +63,23 @@ object DetailMetrics {
     val seasonShelfSpacing = 10.dp
 }
 
-/** iOS's text styles: size and line height in points, the weight the Apple apps ask for. */
+/**
+ * iOS's text styles: size and line height in points, and the weight the Apple apps use. Inter sets a little narrower
+ * than San Francisco, so the letter-spacing is what makes a string here as wide as the same string there: it was
+ * tuned against widths measured on an iPhone ("Episodes" at 20sp is 82.6 wide, "Beastars (2021)" at 16sp 118.8,
+ * "Watch OP" at 17sp 76.9, the tab control's "Episodes" 55.5).
+ */
 object Type {
-    val callout = TextStyle(fontSize = 16.sp, lineHeight = 21.sp)
+    val callout = TextStyle(fontFamily = SfText, lineBreak = LineBreak.Simple, fontSize = 16.sp, lineHeight = 21.sp, letterSpacing = (-0.04).sp)
     val calloutMedium = callout.copy(fontWeight = FontWeight.Medium)
     val calloutSemibold = callout.copy(fontWeight = FontWeight.SemiBold)
-    val headline = TextStyle(fontSize = 17.sp, lineHeight = 22.sp, fontWeight = FontWeight.SemiBold)
-    val title3 = TextStyle(fontSize = 20.sp, lineHeight = 25.sp, fontWeight = FontWeight.SemiBold)
-    val caption = TextStyle(fontSize = 12.sp, lineHeight = 16.sp)
-    val caption2Bold = TextStyle(fontSize = 11.sp, lineHeight = 13.sp, fontWeight = FontWeight.Bold)
-    val segmented = TextStyle(fontSize = 14.sp, lineHeight = 18.sp, fontWeight = FontWeight.Medium)
+    val headline = TextStyle(fontFamily = SfText, lineBreak = LineBreak.Simple, fontSize = 17.sp, lineHeight = 22.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-0.19).sp)
+    val title3 = TextStyle(fontFamily = SfDisplay, lineBreak = LineBreak.Simple, fontSize = 20.sp, lineHeight = 25.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.3.sp)
+    val caption = TextStyle(fontFamily = SfText, lineBreak = LineBreak.Simple, fontSize = 12.sp, lineHeight = 16.sp)
+    val caption2Bold = TextStyle(fontFamily = SfText, lineBreak = LineBreak.Simple, fontSize = 11.sp, lineHeight = 13.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.1.sp)
+    val segmented = TextStyle(fontFamily = SfText, lineBreak = LineBreak.Simple, fontSize = 14.sp, lineHeight = 18.sp, fontWeight = FontWeight.Medium, letterSpacing = (-0.26).sp)
     /** A title with no clear-art logo. */
-    val pageTitle = TextStyle(fontSize = 30.sp, lineHeight = 36.sp, fontWeight = FontWeight.Bold)
+    val pageTitle = TextStyle(fontFamily = SfDisplay, lineBreak = LineBreak.Simple, fontSize = 30.sp, lineHeight = 36.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.0.sp)
 }
 
 /** `.secondary` on a dark page. */

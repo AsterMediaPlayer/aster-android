@@ -88,6 +88,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
@@ -598,7 +599,9 @@ private fun DetailInfo(
 @Composable
 private fun MetaLine(item: BaseItemDto) {
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-        Text(metaLine(item), style = Type.callout, color = SecondaryText, modifier = Modifier.weight(1f, fill = false))
+        // Inter sets digits and the separators wider than San Francisco, so this line is tracked a little tighter to
+        // wrap where the Apple apps' does.
+        Text(metaLine(item), style = Type.callout.copy(letterSpacing = (-0.2).sp), color = SecondaryText, modifier = Modifier.weight(1f, fill = false))
         videoBadge(item)?.let { Badge(it) }
         item.communityRating?.let {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {

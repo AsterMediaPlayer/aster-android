@@ -3,6 +3,7 @@ package com.astermediaplayer.astermediaplayer.ui.theme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
 
 private val Accent = Color(0xFF0A84FF)
@@ -20,5 +21,5 @@ private val Dark = darkColorScheme(
 @Composable
 fun AsterTheme(content: @Composable () -> Unit) {
     // Aster is dark everywhere, like the Apple apps.
-    MaterialTheme(colorScheme = Dark, content = content)
+    MaterialTheme(colorScheme = Dark, typography = remember { asterTypography() }, content = content)
 }
