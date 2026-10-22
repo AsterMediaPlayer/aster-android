@@ -80,6 +80,8 @@ data class PlayerUiState(
     val quality: Quality = Qualities.first(),
     val transcoding: Boolean = false,
     val chapters: List<Chapter> = emptyList(),
+    /** A TV channel: no resume point and no next episode, and the dial can change channel. */
+    val live: Boolean = false,
     val chapterIndex: Int = -1,
 )
 
@@ -88,7 +90,7 @@ class PlayerViewModel(
     context: Context,
     private val repo: AsterRepository,
     private val settings: SettingsStore,
-    private val itemId: UUID,
+    initialItemId: UUID,
     /** Plays just this stretch of the item (an opening or ending found in the chapters). */
     private val clip: ClipRange? = null,
     /** Plays this file from the OP/ED plugin instead of a library item. */
@@ -96,6 +98,16 @@ class PlayerViewModel(
     /** Start over even when there's a resume point. */
     private val fromBeginning: Boolean = false,
 ) : ViewModel() {
+    /** The item playing; changes when a live channel is switched. */
+    private var itemId = initialItemId
+    private var liveStreamId: String? = null
+
+    /** The channels the dial goes through, in the guide's order, and the one playing. Empty off live TV. */
+    private val _channels = MutableStateFlow<List<BaseItemDto>>(emptyList())
+    val channels: StateFlow<List<BaseItemDto>> = _channels.asStateFlow()
+    private val _channelId = MutableStateFlow(initialItemId)
+    val channelId: StateFlow<UUID> = _channelId.asStateFlow()
+
     /** A clip or a plugin file isn't the viewer watching the item, so nothing is reported to the server. */
     private val readOnly = clip != null || direct != null
 
@@ -197,9 +209,10 @@ class PlayerViewModel(
                     return@launch
                 }
                 val dto = item ?: repo.item(itemId).also { item = it }
-                val resumeMs = positionMs ?: clip?.startMs ?: if (fromBeginning) 0L else ((dto.userData?.playbackPositionTicks ?: 0L) / TICKS_PER_MS)
-                if (!readOnly && item != null && segments.isEmpty()) segments = repo.segments(itemId)
-                if (!readOnly && nextEpisodeId == null) nextEpisodeId = findNextEpisode(dto)
+                val isLive = dto.type == BaseItemKind.TV_CHANNEL
+                val resumeMs = positionMs ?: clip?.startMs ?: if (fromBeginning || isLive) 0L else ((dto.userData?.playbackPositionTicks ?: 0L) / TICKS_PER_MS)
+                if (!readOnly && !isLive && item != null && segments.isEmpty()) segments = repo.segments(itemId)
+                if (!readOnly && !isLive && nextEpisodeId == null) nextEpisodeId = findNextEpisode(dto)
 
                 // A failed direct play usually means the device can't decode the source (4K, Dolby Vision, ...),
                 // so the fallback transcode is capped to something every phone can handle.
@@ -212,6 +225,8 @@ class PlayerViewModel(
                 val source = info.mediaSources.firstOrNull() ?: error("This item has no playable media")
                 mediaSourceId = source.id
                 playSessionId = info.playSessionId
+                liveStreamId = source.liveStreamId
+                if (isLive && _channels.value.isEmpty()) viewModelScope.launch { _channels.value = runCatching { repo.liveChannels() }.getOrDefault(emptyList()) }
 
                 val direct = source.supportsDirectPlay && !forceTranscode
                 val url = when {
@@ -245,6 +260,7 @@ class PlayerViewModel(
                         title = clip?.label ?: dto.name.orEmpty(),
                         subtitle = if (dto.type == BaseItemKind.EPISODE) dto.seriesName else null,
                         transcoding = !direct,
+                        live = isLive,
                         chapters = (if (readOnly) emptyList() else dto.chapters.orEmpty()).mapIndexed { i, c ->
                             Chapter(c.name?.takeIf { n -> n.isNotBlank() } ?: "Chapter ${i + 1}", c.startPositionTicks / TICKS_PER_MS)
                         },
@@ -254,7 +270,7 @@ class PlayerViewModel(
                     reported = true
                     repo.reportStart(
                         PlaybackStartInfo(
-                            canSeek = true, itemId = itemId, mediaSourceId = source.id, playSessionId = info.playSessionId,
+                            canSeek = true, itemId = itemId, mediaSourceId = source.id, playSessionId = info.playSessionId, liveStreamId = liveStreamId,
                             playMethod = playMethod, isPaused = false, isMuted = false, positionTicks = resumeMs * TICKS_PER_MS,
                             repeatMode = RepeatMode.REPEAT_NONE, playbackOrder = PlaybackOrder.DEFAULT,
                         ),
@@ -290,6 +306,21 @@ class PlayerViewModel(
         val episodes = runCatching { repo.episodes(seriesId, null) }.getOrNull() ?: return null
         val index = episodes.indexOfFirst { it.id == dto.id }
         return episodes.getOrNull(index + 1)?.id
+    }
+
+    /** Tunes to another channel without leaving the player: the one on is let go, the new one opens in its place. */
+    fun switchChannel(channelId: UUID) {
+        if (channelId == itemId) return
+        reportStopped()
+        player.stop()
+        item = null
+        mediaSourceId = null
+        reported = false
+        stopped = false
+        forcedTranscode = false
+        itemId = channelId
+        _channelId.value = channelId
+        start(null)
     }
 
     fun setQuality(quality: Quality) {
@@ -362,7 +393,7 @@ class PlayerViewModel(
     private fun reportProgress() {
         if (!reported || stopped) return
         val info = PlaybackProgressInfo(
-            canSeek = true, itemId = itemId, mediaSourceId = mediaSourceId, playSessionId = playSessionId,
+            canSeek = true, itemId = itemId, mediaSourceId = mediaSourceId, playSessionId = playSessionId, liveStreamId = liveStreamId,
             playMethod = playMethod, isPaused = !player.isPlaying, isMuted = false,
             positionTicks = player.currentPosition * TICKS_PER_MS,
             repeatMode = RepeatMode.REPEAT_NONE, playbackOrder = PlaybackOrder.DEFAULT,
@@ -374,11 +405,16 @@ class PlayerViewModel(
         if (!reported || stopped) return
         stopped = true
         val info = PlaybackStopInfo(
-            itemId = itemId, mediaSourceId = mediaSourceId, playSessionId = playSessionId,
+            itemId = itemId, mediaSourceId = mediaSourceId, playSessionId = playSessionId, liveStreamId = liveStreamId,
             positionTicks = player.currentPosition * TICKS_PER_MS, failed = false,
         )
+        val live = liveStreamId
         // viewModelScope is cancelled by the time onCleared runs, so the stop report needs its own scope.
-        kotlinx.coroutines.GlobalScope.launch { repo.reportStopped(info) }
+        kotlinx.coroutines.GlobalScope.launch {
+            repo.reportStopped(info)
+            // A channel's tuner is let go, so the server doesn't hold it open.
+            if (live != null) repo.closeLiveStream(live)
+        }
     }
 
     override fun onCleared() {

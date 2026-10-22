@@ -11,6 +11,7 @@ import org.jellyfin.sdk.api.client.extensions.playlistApi
 import org.jellyfin.sdk.api.client.extensions.authenticationApi
 import org.jellyfin.sdk.api.client.extensions.imageApi
 import org.jellyfin.sdk.api.client.extensions.libraryApi
+import org.jellyfin.sdk.api.client.extensions.liveTvApi
 import org.jellyfin.sdk.api.client.extensions.mediaInfoApi
 import org.jellyfin.sdk.api.client.extensions.mediaSegmentApi
 import org.jellyfin.sdk.api.client.extensions.searchApi
@@ -157,6 +158,53 @@ class AsterRepository(context: Context, private val store: SessionStore) {
         userId = userId, parentId = parentId, limit = limit, includeItemTypes = kinds,
         fields = listOf(ItemFields.OVERVIEW, ItemFields.GENRES),
     ).content
+
+    // MARK: Live TV
+
+    /** The server's TV channels with what's on each now, in the guide's order: favourites first, then by number. */
+    suspend fun liveChannels(): List<BaseItemDto> {
+        val channels = api.liveTvApi.getLiveTvChannels(
+            org.jellyfin.sdk.model.api.request.GetLiveTvChannelsRequest(
+                userId = userId, addCurrentProgram = true, limit = 500,
+                fields = listOf(ItemFields.OVERVIEW),
+            ),
+        ).content.items
+        return guideOrder(channels)
+    }
+
+    private fun guideOrder(channels: List<BaseItemDto>): List<BaseItemDto> = channels.sortedWith(
+        compareByDescending<BaseItemDto> { it.userData?.isFavorite == true }
+            .thenBy { it.channelNumber?.toDoubleOrNull() ?: Double.MAX_VALUE }
+            .thenBy { it.name.orEmpty() },
+    )
+
+    /** What's on now across channels, optionally just one kind of programme. */
+    suspend fun recommendedPrograms(
+        limit: Int = 24, movie: Boolean? = null, sports: Boolean? = null, kids: Boolean? = null, news: Boolean? = null,
+    ): List<BaseItemDto> = api.liveTvApi.getRecommendedPrograms(
+        org.jellyfin.sdk.model.api.request.GetRecommendedProgramsRequest(
+            userId = userId, limit = limit, isAiring = true, isMovie = movie, isSports = sports, isKids = kids, isNews = news,
+            enableImageTypes = listOf(ImageType.PRIMARY, ImageType.THUMB, ImageType.BACKDROP),
+            fields = listOf(ItemFields.OVERVIEW, ItemFields.CHANNEL_INFO),
+        ),
+    ).content.items
+
+    suspend fun recordings(limit: Int = 100): List<BaseItemDto> = api.liveTvApi.getRecordings(
+        org.jellyfin.sdk.model.api.request.GetRecordingsRequest(userId = userId, limit = limit, fields = listOf(ItemFields.OVERVIEW)),
+    ).content.items
+
+    /** Lets go of a channel's tuner once playback of it ends. */
+    suspend fun closeLiveStream(liveStreamId: String) {
+        runCatching { api.mediaInfoApi.closeLiveStream(liveStreamId) }
+    }
+
+    /** A channel's logo, which the server draws on its own picture. */
+    fun channelLogoUrl(channel: BaseItemDto, maxWidth: Int = 300): String? =
+        imageUrl(channel, ImageType.PRIMARY, maxWidth)
+
+    /** A programme's picture: its own, else its thumb or backdrop. */
+    fun programImageUrl(program: BaseItemDto, maxWidth: Int = 800): String? =
+        imageUrl(program, ImageType.PRIMARY, maxWidth) ?: imageUrl(program, ImageType.THUMB, maxWidth) ?: imageUrl(program, ImageType.BACKDROP, maxWidth)
 
     // MARK: Music
 

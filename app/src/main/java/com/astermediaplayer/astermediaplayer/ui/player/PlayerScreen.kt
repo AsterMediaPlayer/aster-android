@@ -61,6 +61,7 @@ fun PlayerScreen(
     var controlsVisible by remember { mutableStateOf(true) }
     var qualityMenu by remember { mutableStateOf(false) }
     var chapterMenu by remember { mutableStateOf(false) }
+    var playerView by remember { mutableStateOf<PlayerView?>(null) }
 
     LaunchedEffect(viewModel) { viewModel.playNext.collect(onPlayNext) }
     LaunchedEffect(viewModel) { viewModel.finished.collect { onBack() } }
@@ -98,6 +99,7 @@ fun PlayerScreen(
                     layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
                     player = viewModel.player
                     keepScreenOn = true
+                    playerView = this
                     setShowSubtitleButton(true)
                     viewModel.assHandler?.let { subtitleView?.addView(AssSubtitleView(ctx, it)) }
                     setControllerVisibilityListener(PlayerView.ControllerVisibilityListener { controlsVisible = it == android.view.View.VISIBLE })
@@ -143,6 +145,18 @@ fun PlayerScreen(
                     }
                 }
             }
+        }
+
+        if (state.live) {
+            val channels by viewModel.channels.collectAsStateWithLifecycle()
+            val channelId by viewModel.channelId.collectAsStateWithLifecycle()
+            ChannelDialOverlay(
+                channels = channels, playingId = channelId, controlsShown = controlsVisible,
+                // The controls stay up while the dial turns, and go once a channel's tuned, the dial with them.
+                onActivity = { playerView?.showController() },
+                onTune = { viewModel.switchChannel(it) },
+                onTuned = { playerView?.hideController() },
+            )
         }
 
         state.skip?.let { prompt ->

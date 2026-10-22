@@ -21,12 +21,14 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.LibraryBooks
 import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.Sensors
 import androidx.compose.material3.IconButton
 import androidx.compose.runtime.LaunchedEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.astermediaplayer.astermediaplayer.data.Audiobook
 import com.astermediaplayer.astermediaplayer.data.AudiobookShelf
 import com.astermediaplayer.astermediaplayer.ui.audiobooks.AudiobookBar
+import com.astermediaplayer.astermediaplayer.ui.livetv.LiveTvScreen
 import com.astermediaplayer.astermediaplayer.ui.music.AlbumPage
 import com.astermediaplayer.astermediaplayer.ui.music.ArtistPage
 import com.astermediaplayer.astermediaplayer.ui.music.MusicPlayerScreen
@@ -317,6 +319,7 @@ private enum class Tab(val label: String, val icon: ImageVector) {
 /** The More list, in the Apple apps' order; the ones built so far. */
 private enum class MoreDestination(val label: String, val icon: ImageVector) {
     Music("Music", Icons.Default.MusicNote),
+    LiveTv("Live TV", Icons.Default.Sensors),
     Audiobooks("Audiobooks", Icons.Default.LibraryBooks),
     Settings("Settings", Icons.Default.Settings),
     Search("Search", Icons.Default.Search),
@@ -392,6 +395,10 @@ private fun MainTabs(
             Tab.More -> when (more) {
                 MoreDestination.Music -> Box(modifier) {
                     MusicScreen(onAlbum = onAlbum, onArtist = onArtist, modifier = Modifier.fillMaxSize(), topInset = 56.dp)
+                    BackButton { more = null }
+                }
+                MoreDestination.LiveTv -> Box(modifier) {
+                    LiveTvScreen(onPlay = onPlay, modifier = Modifier.fillMaxSize(), topInset = 56.dp)
                     BackButton { more = null }
                 }
                 MoreDestination.Audiobooks -> Box(modifier) {
