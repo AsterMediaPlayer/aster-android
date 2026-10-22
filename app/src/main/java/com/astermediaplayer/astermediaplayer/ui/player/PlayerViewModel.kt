@@ -387,7 +387,7 @@ class PlayerViewModel(
         assHandler?.release()
     }
 
-    private companion object {
+    companion object {
         /**
          * Falls back to another decoder when the first one fails. Emulators expose a host-GPU codec that is flaky,
          * so there Android's own software decoders are tried first.

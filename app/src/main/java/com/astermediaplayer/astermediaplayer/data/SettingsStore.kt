@@ -18,6 +18,11 @@ data class AppSettings(
     val styledSubtitles: Boolean = true,
     /** Which version of an opening or ending plays, when there's a choice. */
     val themeCut: ThemeCut = ThemeCut.TvSize,
+    /** Title pages: a title's theme song plays quietly, and its theme video loops muted behind the page. */
+    val themeMusic: Boolean = false,
+    val themeVideos: Boolean = false,
+    /** Anime with no theme video loops its opening behind the series page; with sound it plays quietly, like theme music. */
+    val openingSound: Boolean = false,
 )
 
 private val Context.settingsDataStore by preferencesDataStore("aster_settings")
@@ -28,6 +33,9 @@ class SettingsStore(private val context: Context) {
     private val autoPlayNextKey = booleanPreferencesKey("auto_play_next")
     private val styledSubtitlesKey = booleanPreferencesKey("styled_subtitles")
     private val themeCutKey = intPreferencesKey("theme_cut")
+    private val themeMusicKey = booleanPreferencesKey("theme_music")
+    private val themeVideosKey = booleanPreferencesKey("theme_videos")
+    private val openingSoundKey = booleanPreferencesKey("opening_sound")
 
     val settings: Flow<AppSettings> = context.settingsDataStore.data.map {
         AppSettings(
@@ -36,6 +44,9 @@ class SettingsStore(private val context: Context) {
             autoPlayNext = it[autoPlayNextKey] ?: true,
             styledSubtitles = it[styledSubtitlesKey] ?: true,
             themeCut = ThemeCut.entries.getOrElse(it[themeCutKey] ?: 0) { ThemeCut.TvSize },
+            themeMusic = it[themeMusicKey] ?: false,
+            themeVideos = it[themeVideosKey] ?: false,
+            openingSound = it[openingSoundKey] ?: false,
         )
     }
 
@@ -46,4 +57,7 @@ class SettingsStore(private val context: Context) {
     suspend fun setAutoPlayNext(on: Boolean) = context.settingsDataStore.edit { it[autoPlayNextKey] = on }
     suspend fun setStyledSubtitles(on: Boolean) = context.settingsDataStore.edit { it[styledSubtitlesKey] = on }
     suspend fun setThemeCut(cut: ThemeCut) = context.settingsDataStore.edit { it[themeCutKey] = cut.ordinal }
+    suspend fun setThemeMusic(on: Boolean) = context.settingsDataStore.edit { it[themeMusicKey] = on }
+    suspend fun setThemeVideos(on: Boolean) = context.settingsDataStore.edit { it[themeVideosKey] = on }
+    suspend fun setOpeningSound(on: Boolean) = context.settingsDataStore.edit { it[openingSoundKey] = on }
 }

@@ -50,8 +50,23 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
+import androidx.annotation.OptIn
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.ui.AspectRatioFrameLayout
+import androidx.media3.ui.PlayerView
 import coil3.compose.AsyncImage
+import com.astermediaplayer.astermediaplayer.ui.player.ThemePlayer
 import com.astermediaplayer.astermediaplayer.AsterApp
+import com.astermediaplayer.astermediaplayer.data.AppSettings
 import com.astermediaplayer.astermediaplayer.data.AsterRepository
 import com.astermediaplayer.astermediaplayer.data.OpEdTheme
 import com.astermediaplayer.astermediaplayer.data.OpeningEnding
@@ -157,6 +172,38 @@ class DetailViewModel(private val repo: AsterRepository, private val itemId: UUI
     private fun preferredTheme(themes: List<OpEdTheme>, opening: Boolean): OpEdTheme? {
         val matching = themes.filter { it.isOpening == opening && it.playablePath != null }
         return matching.firstOrNull { it.videoMp4Url != null } ?: matching.firstOrNull()
+    }
+
+    /** A plugin opening that can stand in behind the page: its video, or with only audio, its song when openings have sound. */
+    private fun backgroundTheme(themes: List<OpEdTheme>, sound: Boolean): OpEdTheme? {
+        val matching = themes.filter { it.isOpening && !it.spoiler && !it.nsfw && (it.videoMp4Url != null || (sound && it.audioM4aUrl != null)) }
+        return matching.firstOrNull { it.videoMp4Url != null } ?: matching.firstOrNull()
+    }
+
+    /** The opening for a series' background, and whether it's for the selected season (else the show's own first). */
+    class BackgroundOpening(val entry: OpeningEnding, val forSeason: Boolean)
+
+    /**
+     * Anime with no theme video of its own loops an opening behind the page instead, never one marked as a spoiler or
+     * NSFW. Preference: the plugin's opening for the selected season, then one found in that season's chapters, then
+     * the show's first opening of either kind.
+     */
+    suspend fun backgroundOpening(content: DetailContent, sound: Boolean): BackgroundOpening? {
+        if (content.item.type != BaseItemKind.SERIES || content.openingsEndings.isEmpty()) return null
+        val themes = content.openingsEndings.filterIsInstance<OpeningEnding.Theme>().map { it.theme }
+        val clips = content.openingsEndings.filterIsInstance<OpeningEnding.Chapter>().map { it.clip }.filter { it.opening }
+        val seasonId = content.selectedSeason
+        if (seasonId != null) {
+            if (themes.isNotEmpty()) {
+                val forSeason = seasonThemes.getOrPut(seasonId) { repo.opEdThemes(seasonId).orEmpty() }
+                    .filter { it.seasonId != null && repo.plainId(it.seasonId) == repo.plainId(seasonId.toString()) }
+                backgroundTheme(forSeason, sound)?.let { return BackgroundOpening(OpeningEnding.Theme(it), forSeason = true) }
+            }
+            val number = content.seasons.firstOrNull { it.id == seasonId }?.indexNumber
+            clips.firstOrNull { it.season == number }?.let { return BackgroundOpening(OpeningEnding.Chapter(it), forSeason = true) }
+        }
+        backgroundTheme(themes, sound)?.let { return BackgroundOpening(OpeningEnding.Theme(it), forSeason = false) }
+        return clips.firstOrNull()?.let { BackgroundOpening(OpeningEnding.Chapter(it), forSeason = false) }
     }
 
     private suspend fun watchThemes(content: DetailContent, anime: Boolean): Pair<OpeningEnding?, OpeningEnding?> =
@@ -265,9 +312,36 @@ private fun DetailBody(
     onItem: (BaseItemDto) -> Unit,
     onPlayTheme: (OpeningEnding) -> Unit,
 ) {
-    val repo = (LocalContext.current.applicationContext as AsterApp).repository
+    val app = LocalContext.current.applicationContext as AsterApp
+    val repo = app.repository
     val item = content.item
     val target = content.playTarget
+    val themePlayer = app.themePlayer
+    val settings by app.settings.settings.collectAsStateWithLifecycle(initialValue = AppSettings())
+
+    // The title's theme song and video, shared with its series so moving to an episode doesn't restart them.
+    DisposableEffect(item.id) {
+        themePlayer.pageAppeared(item)
+        onDispose { themePlayer.pageDisappeared(item) }
+    }
+    LaunchedEffect(item.id, settings.themeMusic, settings.themeVideos) {
+        themePlayer.show(item, settings.themeMusic, settings.themeVideos)
+    }
+    // Picking another season swaps in that season's opening.
+    LaunchedEffect(item.id, content.selectedSeason, content.openingsEndings.size, settings.themeVideos, settings.openingSound) {
+        if (!settings.themeVideos) return@LaunchedEffect
+        val opening = viewModel.backgroundOpening(content, settings.openingSound) ?: return@LaunchedEffect
+        themePlayer.showOpening(opening.entry, item, sound = settings.openingSound, onlyIfNone = !opening.forSeason && content.selectedSeason != null)
+    }
+    // Quiet while the app is in the background.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_STOP) themePlayer.suspend() else if (event == Lifecycle.Event.ON_START) themePlayer.resume()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
     val resuming = target?.progress() != null
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(bottom = 32.dp)) {
         Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f)) {
@@ -275,6 +349,7 @@ private fun DetailBody(
                 model = repo.imageUrl(item, ImageType.BACKDROP, 1280) ?: repo.imageUrl(item, ImageType.PRIMARY, 800),
                 contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize(),
             )
+            ThemeVideo(themePlayer, item, Modifier.fillMaxSize())
             Box(
                 Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(120.dp)
                     .background(Brush.verticalGradient(listOf(Color.Transparent, MaterialTheme.colorScheme.background))),
@@ -353,6 +428,30 @@ private fun DetailBody(
         CastRow(item.people.orEmpty(), repo)
         Shelf("More like this", content.similar, onItem = onItem)
     }
+}
+
+/** The theme video looping over the still backdrop, once it has drawn a frame and only when it belongs to this title. */
+@OptIn(UnstableApi::class)
+@Composable
+private fun ThemeVideo(themePlayer: ThemePlayer, item: BaseItemDto, modifier: Modifier = Modifier) {
+    val key by themePlayer.key.collectAsStateWithLifecycle()
+    val video by themePlayer.video.collectAsStateWithLifecycle()
+    val ready by themePlayer.videoReady.collectAsStateWithLifecycle()
+    val player = video
+    if (player == null || key != (item.seriesId ?: item.id).toString()) return
+    val alpha by animateFloatAsState(if (ready) 1f else 0f, tween(600), label = "themeVideo")
+    AndroidView(
+        factory = { ctx ->
+            PlayerView(ctx).apply {
+                useController = false
+                resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                setShutterBackgroundColor(android.graphics.Color.TRANSPARENT)
+                this.player = player
+            }
+        },
+        update = { it.player = player },
+        modifier = modifier.alpha(alpha),
+    )
 }
 
 @Composable

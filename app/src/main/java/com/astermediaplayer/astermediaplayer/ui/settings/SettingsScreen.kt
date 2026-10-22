@@ -27,6 +27,7 @@ import com.astermediaplayer.astermediaplayer.data.AppSettings
 import com.astermediaplayer.astermediaplayer.data.Session
 import com.astermediaplayer.astermediaplayer.data.SettingsStore
 import com.astermediaplayer.astermediaplayer.data.ThemeCut
+import com.astermediaplayer.astermediaplayer.ui.home.TabBarClearance
 import com.astermediaplayer.astermediaplayer.ui.player.Qualities
 import kotlinx.coroutines.launch
 
@@ -35,7 +36,7 @@ fun SettingsScreen(session: Session?, store: SettingsStore, onSignOut: () -> Uni
     val settings by store.settings.collectAsStateWithLifecycle(initialValue = AppSettings())
     val scope = rememberCoroutineScope()
 
-    Column(modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    Column(modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = TabBarClearance), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Section("Account")
         Text(session?.userName.orEmpty(), style = MaterialTheme.typography.bodyLarge)
         Text(session?.serverUrl.orEmpty(), color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -66,6 +67,21 @@ fun SettingsScreen(session: Session?, store: SettingsStore, onSignOut: () -> Uni
         SwitchRow("Skip intros and credits automatically", settings.autoSkipSegments) { scope.launch { store.setAutoSkipSegments(it) } }
         SwitchRow("Draw styled ASS/SSA subtitles (libass)", settings.styledSubtitles) { scope.launch { store.setStyledSubtitles(it) } }
         SwitchRow("Play the next episode automatically", settings.autoPlayNext) { scope.launch { store.setAutoPlayNext(it) } }
+
+        HorizontalDivider(Modifier.padding(vertical = 8.dp))
+        Section("Title pages")
+        SwitchRow("Theme music", settings.themeMusic) { scope.launch { store.setThemeMusic(it) } }
+        SwitchRow("Theme videos", settings.themeVideos) { scope.launch { store.setThemeVideos(it) } }
+        Text(
+            "Plays a title's theme song quietly, or loops its theme video behind the page, when your library has them.",
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Section("Anime")
+        SwitchRow("Opening plays with sound", settings.openingSound, enabled = settings.themeVideos) { scope.launch { store.setOpeningSound(it) } }
+        Text(
+            "Anime with no theme video of its own loops its first opening behind the series page, when Theme videos is on. With sound, it plays quietly, like theme music.",
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 
@@ -73,9 +89,12 @@ fun SettingsScreen(session: Session?, store: SettingsStore, onSignOut: () -> Uni
 private fun Section(title: String) = Text(title, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
 
 @Composable
-private fun SwitchRow(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+private fun SwitchRow(label: String, checked: Boolean, enabled: Boolean = true, onChange: (Boolean) -> Unit) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text(label, Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
-        Switch(checked = checked, onCheckedChange = onChange)
+        Text(
+            label, Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge,
+            color = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Switch(checked = checked, onCheckedChange = onChange, enabled = enabled)
     }
 }

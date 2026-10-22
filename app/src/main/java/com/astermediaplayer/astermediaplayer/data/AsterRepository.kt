@@ -3,6 +3,7 @@ package com.astermediaplayer.astermediaplayer.data
 import android.content.Context
 import org.jellyfin.sdk.Jellyfin
 import org.jellyfin.sdk.api.client.ApiClient
+import org.jellyfin.sdk.api.client.extensions.audioApi
 import org.jellyfin.sdk.api.client.extensions.authenticationApi
 import org.jellyfin.sdk.api.client.extensions.imageApi
 import org.jellyfin.sdk.api.client.extensions.libraryApi
@@ -153,6 +154,20 @@ class AsterRepository(context: Context, private val store: SessionStore) {
         fields = listOf(ItemFields.OVERVIEW, ItemFields.GENRES),
     ).content
 
+    // MARK: Theme media
+
+    /** A title's theme songs and videos, inherited from its series when it has none of its own. */
+    suspend fun themeSongs(itemId: UUID): List<BaseItemDto> =
+        runCatching { api.libraryApi.getThemeSongs(itemId = itemId, userId = userId, inheritFromParent = true).content.items }.getOrDefault(emptyList())
+
+    suspend fun themeVideos(itemId: UUID): List<BaseItemDto> =
+        runCatching { api.libraryApi.getThemeVideos(itemId = itemId, userId = userId, inheritFromParent = true).content.items }.getOrDefault(emptyList())
+
+    fun audioStreamUrl(itemId: UUID): String = api.audioApi.getAudioStreamUrl(itemId = itemId, static = true)
+
+    fun videoStreamUrl(itemId: UUID): String =
+        api.videoApi.getVideoStreamUrl(itemId = itemId, static = true, mediaSourceId = itemId.toString())
+
     // MARK: OP/ED plugin
 
     private val http = OkHttpClient()
@@ -192,8 +207,15 @@ class AsterRepository(context: Context, private val store: SessionStore) {
         )
     }
 
-    /** A plugin media path (e.g. `VideoMp4Url`) as a URL the player can open. */
-    fun opEdMediaUrl(path: String): String = absoluteUrl(path)
+    /**
+     * A plugin media path (e.g. `VideoMp4Url`) as a URL the player can open. The plugin's files don't accept the bare
+     * token header the server's own streams do, so the token goes in the query, as the Apple apps send it.
+     */
+    fun opEdMediaUrl(path: String): String {
+        val token = android.net.Uri.encode(checkNotNull(session).accessToken)
+        val url = absoluteUrl(path)
+        return url + (if ('?' in url) "&" else "?") + "ApiKey=$token&api_key=$token"
+    }
 
     /** A library's newest music videos, for a shelf. */
     suspend fun latestMusicVideos(libraryId: UUID, limit: Int = 20): List<BaseItemDto> = runCatching {
