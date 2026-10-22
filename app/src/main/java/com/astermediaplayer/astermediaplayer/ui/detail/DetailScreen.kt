@@ -629,7 +629,7 @@ private fun DetailInfo(
 
 /** The Apple apps' capsule action button: white with black text for the main action, grey for the rest. */
 @Composable
-private fun ActionButton(title: String, icon: ImageVector, modifier: Modifier = Modifier, prominent: Boolean = false, onClick: () -> Unit) {
+internal fun ActionButton(title: String, icon: ImageVector, modifier: Modifier = Modifier, prominent: Boolean = false, onClick: () -> Unit) {
     Row(
         modifier.height(DetailMetrics.buttonHeight).clip(CircleShape).background(if (prominent) Color.White else ButtonGrey)
             .clickable(onClick = onClick).padding(horizontal = DetailMetrics.buttonHorizontalPadding),
@@ -643,7 +643,7 @@ private fun ActionButton(title: String, icon: ImageVector, modifier: Modifier = 
 
 /** Heart, watched and more: a capsule as tall as the text buttons. */
 @Composable
-private fun IconActionButton(icon: ImageVector, description: String, onClick: () -> Unit) {
+internal fun IconActionButton(icon: ImageVector, description: String, onClick: () -> Unit) {
     Box(
         Modifier.size(DetailMetrics.iconButtonWidth, DetailMetrics.buttonHeight).clip(CircleShape).background(ButtonGrey).clickable(onClick = onClick),
         contentAlignment = Alignment.Center,

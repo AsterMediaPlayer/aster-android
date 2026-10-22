@@ -29,7 +29,9 @@ import org.jellyfin.sdk.createJellyfin
 import org.jellyfin.sdk.model.ClientInfo
 import org.jellyfin.sdk.model.api.AuthenticateUserByName
 import org.jellyfin.sdk.model.api.AuthenticationResult
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
+import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Request
 import org.json.JSONObject
 import org.jellyfin.sdk.model.api.BaseItemDto
@@ -275,6 +277,53 @@ class AsterRepository(context: Context, private val store: SessionStore) {
     suspend fun recordings(limit: Int = 100): List<BaseItemDto> = api.liveTvApi.getRecordings(
         org.jellyfin.sdk.model.api.request.GetRecordingsRequest(userId = userId, limit = limit, fields = listOf(ItemFields.OVERVIEW)),
     ).content.items
+
+    /** A channel's programmes overlapping [from, to] (seconds since 1970), in order, with the pictures and overview the guide's cells and the program page start from. */
+    suspend fun livePrograms(channelId: UUID, from: Double, to: Double): List<BaseItemDto> = api.liveTvApi.getLiveTvPrograms(
+        org.jellyfin.sdk.model.api.request.GetLiveTvProgramsRequest(
+            channelIds = listOf(channelId), userId = userId,
+            minEndDate = utc(from), maxStartDate = utc(to), sortBy = listOf(ItemSortBy.START_DATE), limit = 200,
+            enableImages = true, imageTypeLimit = 1, enableImageTypes = listOf(ImageType.PRIMARY, ImageType.THUMB),
+            fields = listOf(ItemFields.OVERVIEW), enableUserData = false,
+        ),
+    ).content.items
+
+    private fun utc(seconds: Double): java.time.LocalDateTime = java.time.LocalDateTime.ofEpochSecond(seconds.toLong(), 0, java.time.ZoneOffset.UTC)
+
+    /** The programme last opened from a guide or list, so its page opens with what that already showed while the full record loads. */
+    val openedPrograms = HashMap<String, BaseItemDto>()
+
+    /** One programme with everything the server knows of it, and whether it's set to record. */
+    suspend fun liveProgram(id: String): BaseItemDto = api.liveTvApi.getProgram(id, userId).content
+
+    suspend fun timers(): List<org.jellyfin.sdk.model.api.TimerInfoDto> =
+        api.liveTvApi.getTimers(isScheduled = true).content.items.sortedBy { it.startDate }
+
+    suspend fun seriesTimers(): List<org.jellyfin.sdk.model.api.SeriesTimerInfoDto> = api.liveTvApi.getSeriesTimers().content.items
+
+    suspend fun seriesTimer(id: String): org.jellyfin.sdk.model.api.SeriesTimerInfoDto = api.liveTvApi.getSeriesTimer(id).content
+
+    suspend fun updateSeriesTimer(timer: org.jellyfin.sdk.model.api.SeriesTimerInfoDto) { api.liveTvApi.updateSeriesTimer(timer.id!!, timer) }
+
+    suspend fun cancelTimer(id: String) { api.liveTvApi.cancelTimer(id) }
+
+    suspend fun cancelSeriesTimer(id: String) { api.liveTvApi.cancelSeriesTimer(id) }
+
+    /** Schedules a recording of one programme using the server's defaults, posting them back as the server's own clients do. */
+    suspend fun recordProgram(programId: String) = postDefaults(programId, "/LiveTv/Timers")
+
+    /** Records every airing of a series using the server's defaults (one endpoint, whose answer is a series timer). */
+    suspend fun recordSeries(programId: String) = postDefaults(programId, "/LiveTv/SeriesTimers")
+
+    private suspend fun postDefaults(programId: String, path: String) = withContext(Dispatchers.IO) {
+        val base = serverUrl.trimEnd('/')
+        val defaults = http.newCall(Request.Builder().url("$base/LiveTv/Timers/Defaults?programId=$programId").header("Authorization", authorizationHeader()).build())
+            .execute().use { r -> if (!r.isSuccessful) error("The server couldn't prepare the recording (${r.code}).") else r.body.string() }
+        http.newCall(
+            Request.Builder().url(base + path).header("Authorization", authorizationHeader())
+                .post(defaults.toRequestBody("application/json".toMediaType())).build(),
+        ).execute().use { r -> if (!r.isSuccessful) error("The server couldn't schedule the recording (${r.code}).") }
+    }
 
     /** Lets go of a channel's tuner once playback of it ends. */
     suspend fun closeLiveStream(liveStreamId: String) {

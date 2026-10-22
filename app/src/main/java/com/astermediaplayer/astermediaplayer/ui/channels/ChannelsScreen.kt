@@ -4,6 +4,9 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -17,12 +20,14 @@ import com.astermediaplayer.astermediaplayer.data.channels.ScheduledProgram
 import com.astermediaplayer.astermediaplayer.ui.guide.GuideChannel
 import com.astermediaplayer.astermediaplayer.ui.guide.GuideProgram
 import com.astermediaplayer.astermediaplayer.ui.guide.GuideView
-import com.astermediaplayer.astermediaplayer.ui.guide.GUIDE_DAYS
 import com.astermediaplayer.astermediaplayer.ui.guide.floorToHalfHour
 import com.astermediaplayer.astermediaplayer.ui.theme.Lockup
 import com.astermediaplayer.astermediaplayer.ui.theme.SecondaryText
 import com.astermediaplayer.astermediaplayer.ui.theme.Type
 import org.jellyfin.sdk.model.api.BaseItemDto
+
+/** How far ahead the Channels guide reaches, like a TV guide's week. */
+private const val GUIDE_DAYS = 7
 
 /** The Channels tab: playlists made into TV-style channels, laid out in a guide. */
 @Composable
@@ -58,11 +63,18 @@ fun ChannelsScreen(onTune: (String) -> Unit, onOpen: (BaseItemDto) -> Unit, modi
                 val rows = remember(guideChannels) {
                     guideChannels.map { GuideChannel(it.id, "${it.number}", it.name, if (it.showsLogo) it.logoUrl(app.repository, 300) else null) }
                 }
+                val guideEnd = guideStart + GUIDE_DAYS * 24 * 3600.0
+                // Each row's programmes are worked out from the schedule as the row comes into view.
+                val listings = remember(guideChannels, guideStart) { mutableStateMapOf<String, List<GuideProgram>>() }
+                val scope = rememberCoroutineScope()
                 GuideView(
-                    channels = rows, guideStart = guideStart,
-                    programs = { row, from, to ->
-                        val channel = guideChannels.first { it.id == row.id }
-                        channel.programs(from, to).map { it.toListing() }
+                    channels = rows, guideStart = guideStart, guideEnd = guideEnd,
+                    programs = { listings[it.id] },
+                    ensure = { row ->
+                        if (row.id !in listings) scope.launch {
+                            val channel = guideChannels.firstOrNull { it.id == row.id } ?: return@launch
+                            listings[row.id] = withContext(Dispatchers.Default) { channel.programs(guideStart, guideEnd).map { it.toListing() } }
+                        }
                     },
                     // What's on now tunes in; anything later opens its page.
                     onProgram = { row, program ->
@@ -81,6 +93,6 @@ fun ChannelsScreen(onTune: (String) -> Unit, onOpen: (BaseItemDto) -> Unit, modi
 /** An episode is listed as the series, with the episode's name under it, as a TV guide does. */
 private fun ScheduledProgram.toListing(): GuideProgram {
     val item = item
-    return if (item.isEpisode && item.seriesName != null) GuideProgram(id, item.seriesName, item.name, start, end, this)
-    else GuideProgram(id, item.name.orEmpty(), null, start, end, this)
+    return if (item.isEpisode && item.seriesName != null) GuideProgram(id, item.seriesName, item.name, start, end, payload = this)
+    else GuideProgram(id, item.name.orEmpty(), null, start, end, payload = this)
 }
