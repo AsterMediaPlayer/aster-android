@@ -55,6 +55,8 @@ val Qualities = listOf(
     Quality("2 Mbps", 2_000_000),
 )
 
+data class Chapter(val name: String, val startMs: Long)
+
 data class SkipPrompt(val label: String, val targetMs: Long)
 
 data class PlayerUiState(
@@ -65,6 +67,8 @@ data class PlayerUiState(
     val skip: SkipPrompt? = null,
     val quality: Quality = Qualities.first(),
     val transcoding: Boolean = false,
+    val chapters: List<Chapter> = emptyList(),
+    val chapterIndex: Int = -1,
 )
 
 @OptIn(UnstableApi::class)
@@ -193,6 +197,9 @@ class PlayerViewModel(
                         title = dto.name.orEmpty(),
                         subtitle = if (dto.type == BaseItemKind.EPISODE) dto.seriesName else null,
                         transcoding = !direct,
+                        chapters = dto.chapters.orEmpty().mapIndexed { i, c ->
+                            Chapter(c.name?.takeIf { n -> n.isNotBlank() } ?: "Chapter ${i + 1}", c.startPositionTicks / TICKS_PER_MS)
+                        },
                     )
                 }
                 if (!reported) {
@@ -243,6 +250,8 @@ class PlayerViewModel(
         start(player.currentPosition)
     }
 
+    fun seekToChapter(chapter: Chapter) = player.seekTo(chapter.startMs)
+
     fun skip() {
         _state.value.skip?.let { player.seekTo(it.targetMs) }
     }
@@ -254,6 +263,7 @@ class PlayerViewModel(
             while (true) {
                 delay(500)
                 updateSkipPrompt()
+                updateChapter()
                 sinceReport += 500
                 if (sinceReport >= PROGRESS_INTERVAL_MS) {
                     sinceReport = 0
@@ -261,6 +271,13 @@ class PlayerViewModel(
                 }
             }
         }
+    }
+
+    private fun updateChapter() {
+        val chapters = _state.value.chapters
+        if (chapters.isEmpty()) return
+        val index = chapters.indexOfLast { it.startMs <= player.currentPosition }
+        if (index != _state.value.chapterIndex) _state.update { it.copy(chapterIndex = index) }
     }
 
     private fun updateSkipPrompt() {

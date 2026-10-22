@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Bookmarks
 import androidx.compose.material.icons.filled.HighQuality
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -58,6 +59,7 @@ fun PlayerScreen(
     val activity = context as? Activity
     var controlsVisible by remember { mutableStateOf(true) }
     var qualityMenu by remember { mutableStateOf(false) }
+    var chapterMenu by remember { mutableStateOf(false) }
 
     LaunchedEffect(viewModel) { viewModel.playNext.collect(onPlayNext) }
 
@@ -114,6 +116,17 @@ fun PlayerScreen(
                 Column(Modifier.weight(1f)) {
                     Text(state.title, color = Color.White, style = MaterialTheme.typography.titleMedium, maxLines = 1)
                     state.subtitle?.let { Text(it, color = Color.White.copy(alpha = 0.7f), style = MaterialTheme.typography.labelMedium) }
+                }
+                if (state.chapters.isNotEmpty()) Box {
+                    IconButton(onClick = { chapterMenu = true }) { Icon(Icons.Default.Bookmarks, "Chapters", tint = Color.White) }
+                    DropdownMenu(expanded = chapterMenu, onDismissRequest = { chapterMenu = false }) {
+                        state.chapters.forEachIndexed { index, chapter ->
+                            DropdownMenuItem(
+                                text = { Text((if (index == state.chapterIndex) "✓ " else "") + chapter.name) },
+                                onClick = { chapterMenu = false; viewModel.seekToChapter(chapter) },
+                            )
+                        }
+                    }
                 }
                 Box {
                     IconButton(onClick = { qualityMenu = true }) { Icon(Icons.Default.HighQuality, "Quality", tint = Color.White) }
