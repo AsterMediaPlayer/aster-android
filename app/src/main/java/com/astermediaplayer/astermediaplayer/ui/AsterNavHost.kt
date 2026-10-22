@@ -65,6 +65,8 @@ import com.astermediaplayer.astermediaplayer.ui.home.HomeScreen
 import com.astermediaplayer.astermediaplayer.ui.home.HomeViewModel
 import com.astermediaplayer.astermediaplayer.ui.library.LibraryScreen
 import com.astermediaplayer.astermediaplayer.ui.library.LibraryViewModel
+import com.astermediaplayer.astermediaplayer.ui.library.TypeScreen
+import com.astermediaplayer.astermediaplayer.ui.library.TypeViewModel
 import com.astermediaplayer.astermediaplayer.ui.player.ClipRange
 import com.astermediaplayer.astermediaplayer.ui.player.DirectMedia
 import com.astermediaplayer.astermediaplayer.ui.player.PlayerScreen
@@ -235,7 +237,9 @@ private fun MainTabs(onItem: (BaseItemDto) -> Unit, onPlay: (UUID) -> Unit, onSi
     val libraries by produceState(emptyList<BaseItemDto>()) { value = runCatching { repo.views() }.getOrDefault(emptyList()) }
 
     // Anime is whatever Shoko/AniDB matched; those libraries get their own tab and Movies and TV Shows skip them.
-    val animeLibraries by produceState(emptyList<BaseItemDto>(), libraries) { value = runCatching { repo.animeLibraries(libraries) }.getOrDefault(emptyList()) }
+    // Null until the check has run, so Movies and TV Shows don't load with anime still in them.
+    val detectedAnime by produceState<List<BaseItemDto>?>(null, libraries) { value = if (libraries.isEmpty()) null else runCatching { repo.animeLibraries(libraries) }.getOrDefault(emptyList()) }
+    val animeLibraries = detectedAnime.orEmpty()
     val animeIds = animeLibraries.map { it.id }.toSet()
     val moviesLibrary = libraries.firstOrNull { it.collectionType == CollectionType.MOVIES && it.id !in animeIds }
     val showsLibrary = libraries.firstOrNull { it.collectionType == CollectionType.TVSHOWS && it.id !in animeIds }
@@ -251,6 +255,17 @@ private fun MainTabs(onItem: (BaseItemDto) -> Unit, onPlay: (UUID) -> Unit, onSi
     fun select(tab: Tab) { selected = tabs.indexOf(tab); more = null }
 
     @Composable
+    fun TypeTab(kind: BaseItemKind, anime: List<BaseItemDto>, onItem: (BaseItemDto) -> Unit, onPlay: (UUID) -> Unit, modifier: Modifier) {
+        key(kind, anime.map { it.id }) {
+            val vm: TypeViewModel = viewModel(
+                key = "type-$kind-${anime.size}",
+                factory = viewModelFactory { initializer { TypeViewModel(repo, kind, anime.map { it.id }) } },
+            )
+            TypeScreen(vm, onItem = onItem, onPlay = onPlay, modifier = modifier)
+        }
+    }
+
+    @Composable
     fun Library(view: BaseItemDto?, modifier: Modifier) {
         if (view == null) return
         key(view.id) {
@@ -262,8 +277,8 @@ private fun MainTabs(onItem: (BaseItemDto) -> Unit, onPlay: (UUID) -> Unit, onSi
     val content: @Composable (Modifier) -> Unit = { modifier ->
         when (current) {
             Tab.Home -> HomeScreen(home, onItem = onItem, onPlay = onPlay, modifier = modifier)
-            Tab.Movies -> Library(moviesLibrary, modifier)
-            Tab.Shows -> Library(showsLibrary, modifier)
+            Tab.Movies -> if (detectedAnime != null) TypeTab(BaseItemKind.MOVIE, animeLibraries, onItem, onPlay, modifier)
+            Tab.Shows -> if (detectedAnime != null) TypeTab(BaseItemKind.SERIES, animeLibraries, onItem, onPlay, modifier)
             Tab.Anime -> AnimeScreen(anime, onItem = onItem, onPlay = onPlay, modifier = modifier)
             Tab.More -> when (more) {
                 MoreDestination.Search -> SearchScreen(search, onItem = onItem, modifier = modifier.statusBarsPadding())
@@ -290,7 +305,7 @@ private fun MainTabs(onItem: (BaseItemDto) -> Unit, onPlay: (UUID) -> Unit, onSi
             content(Modifier.fillMaxSize())
             FloatingTabBar(
                 tabs = tabs, current = current, onSelect = ::select,
-                modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(horizontal = 16.dp, vertical = 8.dp),
+                modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(horizontal = 16.dp),
             )
         }
     }
@@ -324,11 +339,11 @@ private fun FloatingTabBar(tabs: List<Tab>, current: Tab, onSelect: (Tab) -> Uni
             Column(
                 Modifier.weight(1f).clip(RoundedCornerShape(30.dp))
                     .background(if (active) Color.Black.copy(alpha = 0.45f) else Color.Transparent)
-                    .clickable { onSelect(tab) }.padding(vertical = 8.dp),
+                    .clickable { onSelect(tab) }.padding(vertical = 4.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 val tint = if (active) MaterialTheme.colorScheme.primary else Color.White
-                Icon(tab.icon, tab.label, tint = tint, modifier = Modifier.size(28.dp))
+                Icon(tab.icon, tab.label, tint = tint, modifier = Modifier.size(26.dp))
                 Text(tab.label, color = tint, style = MaterialTheme.typography.labelMedium, maxLines = 1)
             }
         }

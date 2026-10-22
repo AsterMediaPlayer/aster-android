@@ -149,7 +149,7 @@ class AsterRepository(context: Context, private val store: SessionStore) {
         GetNextUpRequest(userId = userId, limit = limit, seriesId = seriesId, parentId = parentId),
     ).content.items
 
-    suspend fun latest(parentId: UUID, limit: Int = 20, kinds: List<BaseItemKind>? = null): List<BaseItemDto> = api.libraryApi.getLatestMedia(
+    suspend fun latest(parentId: UUID?, limit: Int = 20, kinds: List<BaseItemKind>? = null): List<BaseItemDto> = api.libraryApi.getLatestMedia(
         userId = userId, parentId = parentId, limit = limit, includeItemTypes = kinds,
         fields = listOf(ItemFields.OVERVIEW, ItemFields.GENRES),
     ).content
@@ -309,6 +309,34 @@ class AsterRepository(context: Context, private val store: SessionStore) {
             ),
         ).content
         return ItemPage(result.items, result.totalRecordCount)
+    }
+
+    /** Every title of a kind across the server, in the order asked for, a page at a time. */
+    suspend fun typePage(kind: BaseItemKind, startIndex: Int, limit: Int, sortBy: List<ItemSortBy>, order: SortOrder): ItemPage {
+        val result = api.libraryApi.getItems(
+            GetItemsRequest(
+                userId = userId, recursive = true, includeItemTypes = listOf(kind),
+                sortBy = sortBy, sortOrder = listOf(order), startIndex = startIndex, limit = limit,
+                fields = listOf(ItemFields.OVERVIEW, ItemFields.SORT_NAME),
+            ),
+        ).content
+        return ItemPage(result.items, result.totalRecordCount)
+    }
+
+    /** Just the ids of one kind of title in some libraries (anime's, which Movies and TV Shows leave out). */
+    suspend fun itemIds(libraryIds: List<UUID>, kind: BaseItemKind): Set<UUID> = coroutineScope {
+        libraryIds.map { id ->
+            async {
+                runCatching {
+                    api.libraryApi.getItems(
+                        GetItemsRequest(
+                            userId = userId, parentId = id, recursive = true, includeItemTypes = listOf(kind),
+                            enableImages = false, enableUserData = false, fields = emptyList(),
+                        ),
+                    ).content.items.map { it.id }
+                }.getOrDefault(emptyList())
+            }
+        }.awaitAll().flatten().toSet()
     }
 
     suspend fun item(id: UUID): BaseItemDto = api.libraryApi.getItem(itemId = id, userId = userId).content

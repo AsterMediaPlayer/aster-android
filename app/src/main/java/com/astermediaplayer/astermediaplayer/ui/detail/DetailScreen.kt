@@ -18,7 +18,9 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.ui.graphics.vector.ImageVector
+import com.astermediaplayer.astermediaplayer.ui.components.MetaLine
 import com.astermediaplayer.astermediaplayer.ui.components.episodeCode
+import com.astermediaplayer.astermediaplayer.ui.components.remainingText
 import com.astermediaplayer.astermediaplayer.ui.theme.ButtonGrey
 import com.astermediaplayer.astermediaplayer.ui.theme.DetailMetrics
 import com.astermediaplayer.astermediaplayer.ui.theme.Lockup
@@ -542,7 +544,7 @@ private fun DetailInfo(
         } else if (showTitle) {
             DetailTitle(item, repo)
         }
-        MetaLine(item)
+        MetaLine(item, showsUnwatched = true)
         item.overview?.let {
             Text(it, style = Type.callout, color = Color.White, maxLines = 5, overflow = TextOverflow.Ellipsis)
         }
@@ -595,23 +597,6 @@ private fun DetailInfo(
     }
 }
 
-/** Years, what's unwatched, rating, runtime and genres, then the 4K or HD badge and the star rating. */
-@Composable
-private fun MetaLine(item: BaseItemDto) {
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-        // Inter sets digits and the separators wider than San Francisco, so this line is tracked a little tighter to
-        // wrap where the Apple apps' does.
-        Text(metaLine(item), style = Type.callout.copy(letterSpacing = (-0.2).sp), color = SecondaryText, modifier = Modifier.weight(1f, fill = false))
-        videoBadge(item)?.let { Badge(it) }
-        item.communityRating?.let {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                Icon(Icons.Default.Star, null, tint = SecondaryText, modifier = Modifier.size(12.dp))
-                Text("%.1f".format(it), style = Type.callout, color = SecondaryText)
-            }
-        }
-    }
-}
-
 /** The Apple apps' capsule action button: white with black text for the main action, grey for the rest. */
 @Composable
 private fun ActionButton(title: String, icon: ImageVector, modifier: Modifier = Modifier, prominent: Boolean = false, onClick: () -> Unit) {
@@ -633,15 +618,6 @@ private fun IconActionButton(icon: ImageVector, description: String, onClick: ()
         Modifier.size(DetailMetrics.iconButtonWidth, DetailMetrics.buttonHeight).clip(CircleShape).background(ButtonGrey).clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) { Icon(icon, description, tint = Color.White, modifier = Modifier.size(20.dp)) }
-}
-
-/** "4K" or "HD", outlined like the Apple apps' badge. */
-@Composable
-private fun Badge(text: String) {
-    Text(
-        text, style = Type.caption2Bold, color = Color.White,
-        modifier = Modifier.border(2.dp, Color.White.copy(alpha = 0.6f), RoundedCornerShape(5.dp)).padding(horizontal = 8.dp, vertical = 3.dp),
-    )
 }
 
 /** The system segmented control: a rounded track with the picked segment raised in it. */
@@ -830,47 +806,5 @@ private fun ThemeCard(oe: OpeningEnding, onClick: () -> Unit) {
             Text(title, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
             detail?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis) }
         }
-    }
-}
-
-private fun runtimeText(item: BaseItemDto): String? {
-    val minutes = item.runTimeTicks?.let { it / 600_000_000L } ?: return null
-    return if (minutes >= 60) "${minutes / 60}h ${minutes % 60}m" else "${minutes}m"
-}
-
-/** The meta line the Apple TV app shows under a title: years, what's unwatched, rating, runtime and two genres. */
-private fun metaLine(item: BaseItemDto): String = listOfNotNull(
-    yearText(item),
-    item.userData?.unplayedItemCount?.takeIf { it > 0 && item.type == BaseItemKind.SERIES }?.let { "$it unwatched" },
-    item.officialRating,
-    if (item.type == BaseItemKind.SERIES) null else runtimeText(item),
-    item.genres?.take(2)?.joinToString(", ")?.ifEmpty { null },
-).joinToString("  ·  ")
-
-/** A running show is "2019–", an ended one "2019–2021". */
-private fun yearText(item: BaseItemDto): String? {
-    val year = item.productionYear ?: return null
-    if (item.type != BaseItemKind.SERIES) return year.toString()
-    if (item.status == "Continuing") return "$year–"
-    val end = item.endDate?.year
-    return if (end != null && end != year) "$year–$end" else year.toString()
-}
-
-/** "1 hr 45 min left" for something partly watched. */
-private fun remainingText(item: BaseItemDto): String? {
-    val total = item.runTimeTicks ?: return null
-    val position = item.userData?.playbackPositionTicks ?: return null
-    if (total <= 0 || position <= 0) return null
-    val left = ((total - position) / 600_000_000L).coerceAtLeast(0)
-    return if (left >= 60) "${left / 60} hr ${left % 60} min left" else "$left min left"
-}
-
-/** "4K" or "HD" from the video stream's width. */
-private fun videoBadge(item: BaseItemDto): String? {
-    val width = item.mediaSources?.firstOrNull()?.mediaStreams?.firstOrNull { it.type == MediaStreamType.VIDEO }?.width ?: return null
-    return when {
-        width >= 3800 -> "4K"
-        width >= 1280 -> "HD"
-        else -> null
     }
 }

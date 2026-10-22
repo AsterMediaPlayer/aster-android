@@ -34,6 +34,16 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import coil3.compose.AsyncImage
 import com.astermediaplayer.astermediaplayer.AsterApp
+import com.astermediaplayer.astermediaplayer.ui.components.MetaLine
+import com.astermediaplayer.astermediaplayer.ui.components.episodeCode
+import com.astermediaplayer.astermediaplayer.ui.components.remainingText
+import com.astermediaplayer.astermediaplayer.ui.theme.Lockup
+import com.astermediaplayer.astermediaplayer.ui.theme.SecondaryText
+import com.astermediaplayer.astermediaplayer.ui.theme.Type
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalWindowInfo
+import androidx.compose.ui.unit.sp
 import com.astermediaplayer.astermediaplayer.ui.components.cardTitle
 import java.util.UUID
 import androidx.compose.foundation.layout.Column
@@ -164,19 +174,26 @@ fun HomeScreen(
 /** Space the floating tab bar covers at the bottom of every tab. */
 val TabBarClearance = 110.dp
 
+/**
+ * The hero banner, the Apple apps' `HeroCarousel` and `HeroCard`: as tall as the window, one title per swipeable page
+ * with its logo, meta line, overview and a Play button over the bottom, and the page dots under the tab bar.
+ */
 @Composable
 fun FeaturedBanner(items: List<BaseItemDto>, onItem: (BaseItemDto) -> Unit, onPlay: (UUID) -> Unit) {
     val pager = rememberPagerState { items.size }
-    val height = (LocalConfiguration.current.screenHeightDp * 0.84f).dp
-    Box(Modifier.fillMaxWidth().height(height)) {
+    val density = LocalDensity.current
+    val windowHeight = with(density) { LocalWindowInfo.current.containerSize.height.toDp() }
+    Box(Modifier.fillMaxWidth().height(windowHeight)) {
         HorizontalPager(pager, Modifier.fillMaxSize()) { page -> FeaturedPage(items[page], onItem, onPlay) }
         if (items.size > 1) {
+            // Capsule of dots at the bottom right, in line with the Play button's bottom.
             Row(
-                Modifier.align(Alignment.BottomEnd).padding(end = 24.dp, bottom = 12.dp),
+                Modifier.align(Alignment.BottomEnd).padding(end = Lockup.screenPadding, bottom = 84.dp)
+                    .clip(CircleShape).background(Color.Black.copy(alpha = 0.35f)).padding(horizontal = 14.dp, vertical = 10.dp),
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 repeat(items.size) { i ->
-                    Box(Modifier.size(12.dp).clip(CircleShape).background(if (i == pager.currentPage) Color.White else Color.White.copy(alpha = 0.3f)))
+                    Box(Modifier.size(10.dp).clip(CircleShape).background(Color.White.copy(alpha = if (i == pager.currentPage) 0.95f else 0.35f)))
                 }
             }
         }
@@ -192,79 +209,54 @@ private fun FeaturedPage(item: BaseItemDto, onItem: (BaseItemDto) -> Unit, onPla
     else repo.seriesPosterUrl(item, 1080) ?: repo.imageUrl(item, ImageType.PRIMARY, 1080) ?: repo.imageUrl(item, ImageType.BACKDROP, 1280)
     val logo = repo.imageUrl(item, ImageType.LOGO, 800)
     val playable = item.type != BaseItemKind.SERIES
+    val remaining = remainingText(item)
 
     Box(Modifier.fillMaxSize().clickable { onItem(item) }) {
         AsyncImage(model = art, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+        // Dark toward the bottom from just under the middle, and a little at the left edge.
         Box(
             Modifier.fillMaxSize().background(
-                Brush.verticalGradient(0.35f to Color.Transparent, 0.8f to Color.Black.copy(alpha = 0.85f), 1f to Color.Black),
+                Brush.verticalGradient(0.45f to Color.Transparent, 0.725f to Color.Black.copy(alpha = 0.2f), 1f to Color.Black.copy(alpha = 0.9f)),
             ),
         )
+        Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(0f to Color.Black.copy(alpha = 0.6f), 0.5f to Color.Transparent)))
         Column(
-            Modifier.align(Alignment.BottomStart).fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 40.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+            Modifier.align(Alignment.BottomStart).fillMaxWidth().padding(horizontal = Lockup.screenPadding).padding(bottom = 125.dp),
+            verticalArrangement = Arrangement.spacedBy(18.dp),
         ) {
             if (logo != null) {
-                AsyncImage(
-                    model = logo, contentDescription = item.name, contentScale = ContentScale.Fit,
-                    alignment = Alignment.CenterStart, modifier = Modifier.fillMaxWidth(0.6f).heightIn(max = 110.dp),
-                )
-            } else {
-                Text(item.cardTitle(), style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold, color = Color.White)
-            }
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(
-                    bannerMeta(item), color = Color.White.copy(alpha = 0.75f), style = MaterialTheme.typography.titleMedium,
-                    modifier = Modifier.weight(1f),
-                )
-                if ((item.width ?: 0) >= 3000) {
-                    Text(
-                        "4K", color = Color.White.copy(alpha = 0.75f), fontWeight = FontWeight.Bold,
-                        modifier = Modifier.border(2.dp, Color.White.copy(alpha = 0.75f), RoundedCornerShape(8.dp)).padding(horizontal = 10.dp, vertical = 2.dp),
-                    )
+                Box(Modifier.widthIn(max = 260.dp).height(90.dp).fillMaxWidth()) {
+                    AsyncImage(model = logo, contentDescription = item.name, contentScale = ContentScale.Fit, alignment = Alignment.CenterStart, modifier = Modifier.fillMaxSize())
                 }
-                item.communityRating?.let { Text("★ %.1f".format(it), color = Color.White.copy(alpha = 0.75f), style = MaterialTheme.typography.titleMedium) }
+            } else {
+                Text(
+                    if (item.type == BaseItemKind.EPISODE) item.seriesName ?: item.name.orEmpty() else item.name.orEmpty(),
+                    style = Type.pageTitle.copy(fontSize = 34.sp, lineHeight = 41.sp), color = Color.White, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                )
             }
+            if (item.type == BaseItemKind.EPISODE) {
+                Text(listOfNotNull(item.episodeCode(), item.name).joinToString(" · "), style = Type.title3, color = Color.White)
+            }
+            MetaLine(item)
             item.overview?.let {
-                Text(it, color = Color.White.copy(alpha = 0.75f), style = MaterialTheme.typography.bodyLarge, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                Text(it, style = Type.callout, color = SecondaryText, maxLines = 3, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 600.dp))
             }
-            val left = timeLeft(item)
-            Button(
-                onClick = { if (playable) onPlay(item.id) else onItem(item) },
-                shape = RoundedCornerShape(50),
-                colors = ButtonDefaults.buttonColors(containerColor = Color.White.copy(alpha = 0.92f), contentColor = Color.Black),
-                modifier = Modifier.fillMaxWidth(0.78f).height(56.dp),
+            Row(
+                Modifier.clip(CircleShape).background(Color.White.copy(alpha = 0.9f))
+                    .clickable { if (playable) onPlay(item.id) else onItem(item) }.padding(horizontal = 28.dp, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp),
             ) {
-                Icon(Icons.Default.PlayArrow, null)
-                Spacer(Modifier.width(10.dp))
+                Icon(Icons.Default.PlayArrow, null, tint = Color.Black, modifier = Modifier.size(17.dp))
                 Text(
                     when {
-                        !playable -> "View"
-                        left != null -> "Resume"
+                        (item.userData?.playbackPositionTicks ?: 0L) > 0 && playable -> "Resume"
+                        item.type == BaseItemKind.SERIES -> "Watch Now"
                         else -> "Play"
                     },
-                    fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleMedium,
+                    style = Type.headline, color = Color.Black,
                 )
-                if (playable && left != null) Text("  ·  $left", color = Color.Black.copy(alpha = 0.6f), style = MaterialTheme.typography.titleMedium)
+                if (playable && remaining != null) Text("·  $remaining", style = Type.headline.copy(fontWeight = FontWeight.Normal), color = Color.Black.copy(alpha = 0.5f))
             }
         }
     }
 }
-
-private fun bannerMeta(item: BaseItemDto): String = listOfNotNull(
-    item.productionYear?.toString(),
-    item.officialRating,
-    item.runTimeTicks?.let { formatDuration(it / TICKS_PER_MINUTE) },
-    item.genres?.take(2)?.joinToString(", ")?.ifEmpty { null },
-).joinToString("  ·  ")
-
-private fun timeLeft(item: BaseItemDto): String? {
-    val position = item.userData?.playbackPositionTicks ?: return null
-    val total = item.runTimeTicks ?: return null
-    if (position <= 0) return null
-    return formatDuration((total - position) / TICKS_PER_MINUTE) + " left"
-}
-
-private const val TICKS_PER_MINUTE = 600_000_000L
-
-private fun formatDuration(minutes: Long): String = if (minutes >= 60) "${minutes / 60} hr ${minutes % 60} min" else "$minutes min"
