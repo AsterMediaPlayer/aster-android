@@ -357,9 +357,18 @@ private fun MainTabs(
             Tab.Shows -> if (detectedAnime != null) TypeTab(BaseItemKind.SERIES, animeLibraries, onItem, onPlay, modifier)
             Tab.Anime -> AnimeScreen(anime, onItem = onItem, onPlay = onPlay, modifier = modifier)
             Tab.More -> when (more) {
-                MoreDestination.Audiobooks -> AudiobooksScreen(onBook = onBook, onShelf = onShelf, onListen = { app.audiobooks.play(it) }, modifier = modifier)
-                MoreDestination.Search -> SearchScreen(search, onItem = onItem, modifier = modifier.statusBarsPadding())
-                MoreDestination.Settings -> SettingsScreen(repo.session, app.settings, onSignOut, modifier.statusBarsPadding())
+                MoreDestination.Audiobooks -> Box(modifier) {
+                    AudiobooksScreen(onBook = onBook, onShelf = onShelf, onListen = { app.audiobooks.play(it) }, modifier = Modifier.fillMaxSize(), topInset = 64.dp)
+                    BackButton { more = null }
+                }
+                MoreDestination.Search -> Box(modifier) {
+                    SearchScreen(search, onItem = onItem, modifier = Modifier.statusBarsPadding().padding(top = 56.dp))
+                    BackButton { more = null }
+                }
+                MoreDestination.Settings -> Box(modifier) {
+                    SettingsScreen(repo.session, app.settings, onSignOut, Modifier.statusBarsPadding().padding(top = 56.dp))
+                    BackButton { more = null }
+                }
                 null -> MoreMenu(onPick = { more = it }, modifier = modifier.statusBarsPadding())
             }
         }

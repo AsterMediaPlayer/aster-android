@@ -105,6 +105,8 @@ fun AudiobooksScreen(
     onShelf: (AudiobookShelf) -> Unit,
     onListen: (Audiobook) -> Unit,
     modifier: Modifier = Modifier,
+    /** Room above the title for a back button, when the page was opened from a list. */
+    topInset: Dp = 0.dp,
 ) {
     val library = app().audiobookLibrary
     val state by library.state.collectAsStateWithLifecycle()
@@ -122,7 +124,7 @@ fun AudiobooksScreen(
         if (hasHero) AudiobookHero(featured, onListen)
         if (state.loaded || state.books.isNotEmpty()) {
             Column(
-                Modifier.padding(horizontal = Lockup.screenPadding).then(if (hasHero) Modifier else Modifier.statusBarsPadding().padding(top = 8.dp)),
+                Modifier.padding(horizontal = Lockup.screenPadding).then(if (hasHero) Modifier else Modifier.statusBarsPadding().padding(top = 8.dp + topInset)),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 Text("Audiobooks", style = Type.pageTitle.copy(fontSize = 34.sp, lineHeight = 41.sp))
