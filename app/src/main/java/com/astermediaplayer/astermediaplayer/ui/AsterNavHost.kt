@@ -88,13 +88,13 @@ private object Routes {
     const val MAIN = "main"
     const val LIBRARY = "library/{id}/{name}"
     const val DETAIL = "detail/{id}"
-    const val PLAYER = "player/{id}?start={start}&end={end}"
+    const val PLAYER = "player/{id}?start={start}&end={end}&label={label}"
     const val THEME = "theme?path={path}&title={title}&subtitle={subtitle}"
     fun library(id: UUID, name: String) = "library/$id/${android.net.Uri.encode(name)}"
     fun detail(id: UUID) = "detail/$id"
     fun player(id: UUID) = "player/$id"
     /** A stretch of an episode, in milliseconds. */
-    fun clip(id: UUID, startMs: Long, endMs: Long) = "player/$id?start=$startMs&end=$endMs"
+    fun clip(id: UUID, startMs: Long, endMs: Long, label: String) = "player/$id?start=$startMs&end=$endMs&label=${android.net.Uri.encode(label)}"
     fun theme(path: String, title: String, subtitle: String?) =
         "theme?path=${android.net.Uri.encode(path)}&title=${android.net.Uri.encode(title)}&subtitle=${android.net.Uri.encode(subtitle.orEmpty())}"
 }
@@ -150,7 +150,7 @@ fun AsterNavHost(signedIn: Boolean) {
                     scope.launch {
                         when (oe) {
                             // Chapters say where an opening is, so it plays that stretch of the episode.
-                            is OpeningEnding.Chapter -> nav.navigate(Routes.clip(oe.clip.episode.id, oe.clip.startMs, oe.clip.endMs))
+                            is OpeningEnding.Chapter -> nav.navigate(Routes.clip(oe.clip.episode.id, oe.clip.startMs, oe.clip.endMs, oe.clip.title))
                             is OpeningEnding.Theme -> {
                                 val theme = oe.theme.preferring(app.settings.current().themeCut)
                                 val published = theme.libraryItemId?.let(::parseId)
@@ -187,13 +187,14 @@ fun AsterNavHost(signedIn: Boolean) {
                 navArgument("id") { type = NavType.StringType },
                 navArgument("start") { type = NavType.LongType; defaultValue = -1L },
                 navArgument("end") { type = NavType.LongType; defaultValue = -1L },
+                navArgument("label") { type = NavType.StringType; defaultValue = "" },
             ),
             deepLinks = listOf(navDeepLink { uriPattern = "aster://play/{id}" }),
         ) { entry ->
             val id = UUID.fromString(entry.arguments!!.getString("id"))
             val start = entry.arguments!!.getLong("start")
             val end = entry.arguments!!.getLong("end")
-            val clip = if (start >= 0 && end > start) ClipRange(start, end) else null
+            val clip = if (start >= 0 && end > start) ClipRange(start, end, entry.arguments!!.getString("label")?.ifEmpty { null }) else null
             val vm: PlayerViewModel = viewModel(factory = viewModelFactory { initializer { PlayerViewModel(app, repo, app.settings, id, clip) } })
             PlayerScreen(
                 vm,

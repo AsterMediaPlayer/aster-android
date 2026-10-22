@@ -64,7 +64,8 @@ val Qualities = listOf(
 
 data class Chapter(val name: String, val startMs: Long)
 
-data class ClipRange(val startMs: Long, val endMs: Long)
+/** [label] names what the clip is ("Season 1 Opening"), shown in place of the episode's title. */
+data class ClipRange(val startMs: Long, val endMs: Long, val label: String? = null)
 
 data class DirectMedia(val path: String, val title: String, val subtitle: String?)
 
@@ -239,7 +240,7 @@ class PlayerViewModel(
                 player.playWhenReady = true
                 _state.update {
                     it.copy(
-                        title = dto.name.orEmpty(),
+                        title = clip?.label ?: dto.name.orEmpty(),
                         subtitle = if (dto.type == BaseItemKind.EPISODE) dto.seriesName else null,
                         transcoding = !direct,
                         chapters = (if (readOnly) emptyList() else dto.chapters.orEmpty()).mapIndexed { i, c ->
