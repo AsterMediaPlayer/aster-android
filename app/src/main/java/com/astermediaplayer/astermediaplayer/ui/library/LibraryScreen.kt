@@ -77,14 +77,17 @@ fun LibraryScreen(
     title: String,
     viewModel: LibraryViewModel,
     onItem: (BaseItemDto) -> Unit,
-    onBack: () -> Unit,
+    onBack: (() -> Unit)?,
+    modifier: Modifier = Modifier,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     Scaffold(
+        modifier = modifier,
+        containerColor = androidx.compose.ui.graphics.Color.Transparent,
         topBar = {
             TopAppBar(
                 title = { Text(title) },
-                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
+                navigationIcon = { if (onBack != null) IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
             )
         },
     ) { padding ->
@@ -93,7 +96,7 @@ fun LibraryScreen(
             state.error != null -> ErrorBox(state.error!!, viewModel::retry, Modifier.padding(padding))
             else -> LazyVerticalGrid(
                 columns = GridCells.Adaptive(120.dp),
-                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = padding.calculateTopPadding() + 8.dp, bottom = 24.dp),
+                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = padding.calculateTopPadding() + 8.dp, bottom = 110.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {

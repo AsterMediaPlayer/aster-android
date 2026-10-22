@@ -1,6 +1,12 @@
 package com.astermediaplayer.astermediaplayer.ui.components
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -61,7 +67,7 @@ fun PosterCard(item: BaseItemDto, onClick: () -> Unit, modifier: Modifier = Modi
     val url = repo().imageUrl(item, ImageType.PRIMARY, 400)
     Column(modifier.clickable(onClick = onClick)) {
         Box(
-            Modifier.fillMaxWidth().aspectRatio(2f / 3f).clip(RoundedCornerShape(10.dp))
+            Modifier.fillMaxWidth().aspectRatio(2f / 3f).clip(RoundedCornerShape(12.dp))
                 .then(Modifier),
         ) {
             AsyncImage(
@@ -71,17 +77,21 @@ fun PosterCard(item: BaseItemDto, onClick: () -> Unit, modifier: Modifier = Modi
             item.progress()?.let {
                 LinearProgressIndicator(
                     progress = { it },
-                    modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(3.dp),
+                    color = Color.White, trackColor = Color.White.copy(alpha = 0.3f),
+                    modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(4.dp),
                 )
+            }
+            if (item.type == BaseItemKind.EPISODE && item.userData?.played == false && item.progress() == null) {
+                Box(Modifier.align(Alignment.TopEnd).padding(10.dp).size(14.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary))
             }
         }
         Text(
-            item.cardTitle(), style = MaterialTheme.typography.labelLarge, maxLines = 1,
+            item.cardTitle(), style = MaterialTheme.typography.titleMedium, maxLines = 1,
             overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 6.dp),
         )
         item.cardSubtitle()?.let {
             Text(
-                it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1, overflow = TextOverflow.Ellipsis,
             )
         }
@@ -98,7 +108,7 @@ fun LandscapeCard(item: BaseItemDto, onClick: () -> Unit, modifier: Modifier = M
         repo.imageUrl(item, ImageType.BACKDROP, 600) ?: repo.imageUrl(item, ImageType.PRIMARY, 600)
     }
     Column(modifier.clickable(onClick = onClick)) {
-        Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(10.dp))) {
+        Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(12.dp))) {
             AsyncImage(
                 model = url, contentDescription = item.name,
                 contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize(),
@@ -106,17 +116,21 @@ fun LandscapeCard(item: BaseItemDto, onClick: () -> Unit, modifier: Modifier = M
             item.progress()?.let {
                 LinearProgressIndicator(
                     progress = { it },
-                    modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(3.dp),
+                    color = Color.White, trackColor = Color.White.copy(alpha = 0.3f),
+                    modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(4.dp),
                 )
+            }
+            if (item.type == BaseItemKind.EPISODE && item.userData?.played == false && item.progress() == null) {
+                Box(Modifier.align(Alignment.TopEnd).padding(10.dp).size(14.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary))
             }
         }
         Text(
-            item.cardTitle(), style = MaterialTheme.typography.labelLarge, maxLines = 1,
+            item.cardTitle(), style = MaterialTheme.typography.titleMedium, maxLines = 1,
             overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 6.dp),
         )
         item.cardSubtitle()?.let {
             Text(
-                it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1, overflow = TextOverflow.Ellipsis,
             )
         }
@@ -133,7 +147,7 @@ fun Shelf(
     if (items.isEmpty()) return
     Column(Modifier.padding(top = 20.dp)) {
         Text(
-            title, style = MaterialTheme.typography.titleMedium,
+            title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold,
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
         )
         LazyRow(
@@ -141,7 +155,7 @@ fun Shelf(
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             items(items, key = { it.id }) { item ->
-                val width = if (landscape) 240.dp else 130.dp
+                val width = if (landscape) (LocalConfiguration.current.screenWidthDp * 0.43f).coerceIn(170f, 300f).dp else 130.dp
                 if (landscape) LandscapeCard(item, { onItem(item) }, Modifier.width(width))
                 else PosterCard(item, { onItem(item) }, Modifier.width(width))
             }

@@ -128,7 +128,7 @@ class AsterRepository(context: Context, private val store: SessionStore) {
     suspend fun views(): List<BaseItemDto> = api.userViewApi.getUserViews(userId = userId).content.items
 
     suspend fun resume(limit: Int = 20): List<BaseItemDto> = api.libraryApi.getResumeItems(
-        GetResumeItemsRequest(userId = userId, limit = limit, mediaTypes = listOf(org.jellyfin.sdk.model.api.MediaType.VIDEO)),
+        GetResumeItemsRequest(userId = userId, limit = limit, fields = listOf(ItemFields.OVERVIEW, ItemFields.GENRES), mediaTypes = listOf(org.jellyfin.sdk.model.api.MediaType.VIDEO)),
     ).content.items
 
     suspend fun nextUp(limit: Int = 20, seriesId: UUID? = null): List<BaseItemDto> = api.showApi.getNextUp(
@@ -137,6 +137,7 @@ class AsterRepository(context: Context, private val store: SessionStore) {
 
     suspend fun latest(parentId: UUID, limit: Int = 20): List<BaseItemDto> = api.libraryApi.getLatestMedia(
         userId = userId, parentId = parentId, limit = limit,
+        fields = listOf(ItemFields.OVERVIEW, ItemFields.GENRES),
     ).content
 
     suspend fun libraryPage(parentId: UUID, startIndex: Int, limit: Int, kinds: List<BaseItemKind>? = null): ItemPage {
@@ -200,12 +201,21 @@ class AsterRepository(context: Context, private val store: SessionStore) {
             // Episodes and seasons borrow art from their series.
             type == ImageType.PRIMARY && item.seriesPrimaryImageTag != null && item.seriesId != null ->
                 api.imageApi.getItemImageUrl(item.seriesId!!, type, maxWidth = maxWidth, tag = item.seriesPrimaryImageTag)
+            type == ImageType.LOGO && item.parentLogoItemId != null && item.parentLogoImageTag != null ->
+                api.imageApi.getItemImageUrl(item.parentLogoItemId!!, type, maxWidth = maxWidth, tag = item.parentLogoImageTag)
             type == ImageType.BACKDROP && !item.backdropImageTags.isNullOrEmpty() ->
                 api.imageApi.getItemImageUrl(item.id, type, imageIndex = 0, maxWidth = maxWidth, tag = item.backdropImageTags!!.first())
             type == ImageType.BACKDROP && item.parentBackdropImageTags?.isNotEmpty() == true && item.parentBackdropItemId != null ->
                 api.imageApi.getItemImageUrl(item.parentBackdropItemId!!, type, imageIndex = 0, maxWidth = maxWidth, tag = item.parentBackdropImageTags!!.first())
             else -> null
         }
+    }
+
+    /** The series poster for an episode (or season), whose own art is just a still. */
+    fun seriesPosterUrl(item: BaseItemDto, maxWidth: Int): String? {
+        val seriesId = item.seriesId ?: return null
+        val tag = item.seriesPrimaryImageTag ?: return null
+        return api.imageApi.getItemImageUrl(seriesId, ImageType.PRIMARY, maxWidth = maxWidth, tag = tag)
     }
 
     fun personImageUrl(person: BaseItemPerson, maxWidth: Int): String? =
