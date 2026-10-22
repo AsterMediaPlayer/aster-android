@@ -157,15 +157,25 @@ class AsterRepository(context: Context, private val store: SessionStore) {
 
     private val http = OkHttpClient()
 
+    /** The `MediaBrowser` header the server's own API clients send; plugin endpoints reject a bare token. */
+    private fun authorizationHeader(): String {
+        val client = api.clientInfo
+        val device = api.deviceInfo
+        return "MediaBrowser Client=\"${client.name}\", Device=\"${device.name}\", DeviceId=\"${device.id}\", " +
+            "Version=\"${client.version}\", Token=\"${checkNotNull(session).accessToken}\""
+    }
+
     /** A GET against the OP/ED plugin; null when the plugin isn't installed, the item is unknown, or the request fails. */
     private suspend fun opEdGet(path: String): JSONObject? = withContext(Dispatchers.IO) {
         runCatching {
             val request = Request.Builder().url(serverUrl.trimEnd('/') + path)
-                .header("X-Emby-Token", checkNotNull(session).accessToken).build()
+                .header("Authorization", authorizationHeader()).build()
             http.newCall(request).execute().use { response ->
-                if (response.isSuccessful) JSONObject(response.body.string()) else null
+                val body = response.body.string()
+                android.util.Log.d("Aster", "OpEd $path -> ${response.code} ${body.take(200)}")
+                if (response.isSuccessful) JSONObject(body) else null
             }
-        }.getOrNull()
+        }.onFailure { android.util.Log.w("Aster", "OpEd $path failed", it) }.getOrNull()
     }
 
     /** Openings and endings from the plugin for a series, season or episode. */
