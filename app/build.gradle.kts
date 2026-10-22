@@ -52,6 +52,7 @@ dependencies {
     implementation(libs.androidx.media3.exoplayer.hls)
     implementation(libs.androidx.media3.ui)
     implementation(libs.androidx.media3.datasource.okhttp)
+    implementation(libs.libass.media3)
     implementation(libs.jellyfin.core)
     implementation(libs.slf4j.android)
     implementation(libs.coil.compose)

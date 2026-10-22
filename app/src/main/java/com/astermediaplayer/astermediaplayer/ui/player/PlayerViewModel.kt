@@ -16,6 +16,13 @@ import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.extractor.DefaultExtractorsFactory
+import io.github.peerless2012.ass.media.AssHandler
+import io.github.peerless2012.ass.media.AssHandlerConfig
+import io.github.peerless2012.ass.media.factory.AssRenderersFactory
+import io.github.peerless2012.ass.media.kt.withAssMkvSupport
+import io.github.peerless2012.ass.media.parser.AssSubtitleParserFactory
+import io.github.peerless2012.ass.media.type.AssRenderType
 import com.astermediaplayer.astermediaplayer.data.AppSettings
 import com.astermediaplayer.astermediaplayer.data.AsterRepository
 import com.astermediaplayer.astermediaplayer.data.SettingsStore
@@ -85,12 +92,17 @@ class PlayerViewModel(
     /** Emits the next episode's id when the current one finishes. */
     val playNext: SharedFlow<UUID> = _playNext.asSharedFlow()
 
-    val player: ExoPlayer = ExoPlayer.Builder(context.applicationContext, renderersFactory(context))
+    /** libass draws ASS/SSA the way the release intended: positioned signs, vector drawings and embedded fonts. */
+    val assHandler = AssHandler(AssRenderType.OVERLAY_OPEN_GL, AssHandlerConfig(maxRenderPixels = 1920 * 1080))
+    private val assParserFactory = AssSubtitleParserFactory(assHandler)
+
+    val player: ExoPlayer = ExoPlayer.Builder(context.applicationContext, AssRenderersFactory(assHandler, renderersFactory(context)))
         .setMediaSourceFactory(
             DefaultMediaSourceFactory(
                 DefaultHttpDataSource.Factory()
                     .setDefaultRequestProperties(mapOf("X-Emby-Token" to repo.session!!.accessToken)),
-            ),
+                DefaultExtractorsFactory().withAssMkvSupport(assParserFactory, assHandler),
+            ).setSubtitleParserFactory(assParserFactory),
         )
         .setLoadControl(DefaultLoadControl.Builder().setBufferDurationsMs(30_000, 90_000, 2_500, 5_000).build())
         .setAudioAttributes(
@@ -143,6 +155,7 @@ class PlayerViewModel(
 
     init {
         player.addListener(listener)
+        assHandler.init(player)
         viewModelScope.launch {
             appSettings = settings.current()
             Qualities.getOrNull(appSettings.qualityIndex)?.let { q -> _state.update { it.copy(quality = q) } }
@@ -331,6 +344,7 @@ class PlayerViewModel(
         tickJob?.cancel()
         player.removeListener(listener)
         player.release()
+        assHandler.release()
     }
 
     private companion object {

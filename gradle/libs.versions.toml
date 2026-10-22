@@ -6,6 +6,7 @@ activityCompose = "1.13.0"
 lifecycle = "2.11.0"
 navigationCompose = "2.10.2"
 media3 = "1.11.1"
+libass = "0.5.1"
 jellyfinSdk = "1.9.2"
 coil = "3.6.3"
 okhttp = "5.5.0"
@@ -35,7 +36,8 @@ androidx-media3-exoplayer = { group = "androidx.media3", name = "media3-exoplaye
 androidx-media3-exoplayer-hls = { group = "androidx.media3", name = "media3-exoplayer-hls", version.ref = "media3" }
 androidx-media3-ui = { group = "androidx.media3", name = "media3-ui", version.ref = "media3" }
 androidx-media3-datasource-okhttp = { group = "androidx.media3", name = "media3-datasource-okhttp", version.ref = "media3" }
-jellyfin-core = { group = "org.jellyfin.sdk", name = "jellyfin-core", version.ref = "jellyfinSdk" }
+libass-media3 = { group = "io.github.peerless2012", name = "ass-media", version.ref = "libass" }
+jellyfin-core ={ group = "org.jellyfin.sdk", name = "jellyfin-core", version.ref = "jellyfinSdk" }
 coil-compose = { group = "io.coil-kt.coil3", name = "coil-compose", version.ref = "coil" }
 coil-network-okhttp = { group = "io.coil-kt.coil3", name = "coil-network-okhttp", version.ref = "coil" }
 okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhttp" }

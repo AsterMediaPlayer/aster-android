@@ -45,6 +45,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.PlayerView
+import io.github.peerless2012.ass.media.widget.AssSubtitleView
 import java.util.UUID
 
 @OptIn(UnstableApi::class)
@@ -97,6 +98,7 @@ fun PlayerScreen(
                     player = viewModel.player
                     keepScreenOn = true
                     setShowSubtitleButton(true)
+                    subtitleView?.addView(AssSubtitleView(ctx, viewModel.assHandler))
                     setControllerVisibilityListener(PlayerView.ControllerVisibilityListener { controlsVisible = it == android.view.View.VISIBLE })
                 }
             },
