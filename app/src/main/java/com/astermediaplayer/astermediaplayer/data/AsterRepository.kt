@@ -24,6 +24,7 @@ import org.jellyfin.sdk.model.api.AuthenticationResult
 import org.jellyfin.sdk.model.api.BaseItemDto
 import org.jellyfin.sdk.model.api.BaseItemKind
 import org.jellyfin.sdk.model.api.BaseItemPerson
+import org.jellyfin.sdk.model.api.CollectionType
 import org.jellyfin.sdk.model.api.ImageType
 import org.jellyfin.sdk.model.api.ItemFields
 import org.jellyfin.sdk.model.api.ItemSortBy
@@ -41,6 +42,9 @@ import org.jellyfin.sdk.model.api.UserDto
 import org.jellyfin.sdk.model.api.request.GetItemsRequest
 import org.jellyfin.sdk.model.api.request.GetNextUpRequest
 import org.jellyfin.sdk.model.api.request.GetResumeItemsRequest
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import java.util.UUID
 
 /** Thin wrapper over the Jellyfin SDK; the Kotlin counterpart of the app's `JellyfinClient`. */
@@ -119,6 +123,7 @@ class AsterRepository(context: Context, private val store: SessionStore) {
     suspend fun signOut() {
         runCatching { api.sessionApi.reportSessionEnded() }
         store.clearCredentials()
+        animeLibraryCache = null
         client = null
         session = null
     }
@@ -127,18 +132,72 @@ class AsterRepository(context: Context, private val store: SessionStore) {
 
     suspend fun views(): List<BaseItemDto> = api.userViewApi.getUserViews(userId = userId).content.items
 
-    suspend fun resume(limit: Int = 20): List<BaseItemDto> = api.libraryApi.getResumeItems(
-        GetResumeItemsRequest(userId = userId, limit = limit, fields = listOf(ItemFields.OVERVIEW, ItemFields.GENRES), mediaTypes = listOf(org.jellyfin.sdk.model.api.MediaType.VIDEO)),
+    suspend fun resume(limit: Int = 20, parentId: UUID? = null): List<BaseItemDto> = api.libraryApi.getResumeItems(
+        GetResumeItemsRequest(
+            userId = userId, limit = limit, parentId = parentId, fields = listOf(ItemFields.OVERVIEW, ItemFields.GENRES),
+            mediaTypes = listOf(org.jellyfin.sdk.model.api.MediaType.VIDEO),
+        ),
     ).content.items
 
-    suspend fun nextUp(limit: Int = 20, seriesId: UUID? = null): List<BaseItemDto> = api.showApi.getNextUp(
-        GetNextUpRequest(userId = userId, limit = limit, seriesId = seriesId),
+    suspend fun nextUp(limit: Int = 20, seriesId: UUID? = null, parentId: UUID? = null): List<BaseItemDto> = api.showApi.getNextUp(
+        GetNextUpRequest(userId = userId, limit = limit, seriesId = seriesId, parentId = parentId),
     ).content.items
 
-    suspend fun latest(parentId: UUID, limit: Int = 20): List<BaseItemDto> = api.libraryApi.getLatestMedia(
-        userId = userId, parentId = parentId, limit = limit,
+    suspend fun latest(parentId: UUID, limit: Int = 20, kinds: List<BaseItemKind>? = null): List<BaseItemDto> = api.libraryApi.getLatestMedia(
+        userId = userId, parentId = parentId, limit = limit, includeItemTypes = kinds,
         fields = listOf(ItemFields.OVERVIEW, ItemFields.GENRES),
     ).content
+
+    // MARK: Anime
+
+    private var animeLibraryCache: List<BaseItemDto>? = null
+
+    /**
+     * The TV and movie libraries that hold anime. Reading a library's metadata settings needs an admin account,
+     * so a few titles in each are sampled: when at least half were matched by Shoko/AniDB, the library is anime.
+     */
+    suspend fun animeLibraries(views: List<BaseItemDto>): List<BaseItemDto> {
+        animeLibraryCache?.let { return it }
+        // Nothing to sample yet (the views haven't loaded); don't remember that as "no anime".
+        if (views.isEmpty()) return emptyList()
+        val found = coroutineScope {
+            views.filter { it.collectionType == CollectionType.MOVIES || it.collectionType == CollectionType.TVSHOWS }
+                .map { library ->
+                    async {
+                        val sample = runCatching {
+                            api.libraryApi.getItems(
+                                GetItemsRequest(
+                                    userId = userId, parentId = library.id, recursive = true,
+                                    includeItemTypes = listOf(BaseItemKind.SERIES, BaseItemKind.MOVIE),
+                                    limit = 5, fields = listOf(ItemFields.PROVIDER_IDS),
+                                ),
+                            ).content.items
+                        }.getOrDefault(emptyList())
+                        library to (sample.isNotEmpty() && sample.count { it.isAnime() } * 2 >= sample.size)
+                    }
+                }
+                .awaitAll().filter { it.second }.map { it.first }
+        }
+        animeLibraryCache = found
+        return found
+    }
+
+    /** The newest series and films across the anime libraries; a season that got new episodes shows as its series. */
+    suspend fun recentlyAddedAnime(libraries: List<BaseItemDto>, limit: Int = 20): List<BaseItemDto> = coroutineScope {
+        val all = libraries.map { async { runCatching { latest(it.id, limit) }.getOrDefault(emptyList()) } }.awaitAll().flatten()
+        val newest = all.sortedByDescending { it.dateCreated }
+        val seriesIds = newest.filter { it.type == BaseItemKind.SEASON }.mapNotNull { it.seriesId }.toSet()
+        val series = if (seriesIds.isEmpty()) emptyMap() else runCatching {
+            api.libraryApi.getItems(GetItemsRequest(userId = userId, ids = seriesIds.toList(), fields = listOf(ItemFields.OVERVIEW, ItemFields.GENRES)))
+                .content.items.associateBy { it.id }
+        }.getOrDefault(emptyMap())
+        val shown = mutableListOf<BaseItemDto>()
+        for (item in newest) {
+            val entry = if (item.type == BaseItemKind.SEASON) item.seriesId?.let { series[it] } ?: item else item
+            if (shown.none { it.id == entry.id }) shown += entry
+        }
+        shown.take(limit)
+    }
 
     suspend fun libraryPage(parentId: UUID, startIndex: Int, limit: Int, kinds: List<BaseItemKind>? = null): ItemPage {
         val result = api.libraryApi.getItems(
@@ -284,5 +343,8 @@ class AsterRepository(context: Context, private val store: SessionStore) {
         runCatching { api.sessionApi.reportPlaybackStopped(info) }
     }
 }
+
+/** Matched by Shoko, which also records the AniDB id: how the app tells anime from other shows and films. */
+fun BaseItemDto.isAnime(): Boolean = providerIds?.keys?.any { it == "AniDB" || it.startsWith("Shoko") } == true
 
 data class ItemPage(val items: List<BaseItemDto>, val total: Int)

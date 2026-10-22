@@ -57,6 +57,7 @@ import com.astermediaplayer.astermediaplayer.ui.components.LoadingBox
 import com.astermediaplayer.astermediaplayer.ui.components.Shelf
 import com.astermediaplayer.astermediaplayer.ui.components.userMessage
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -67,18 +68,23 @@ import org.jellyfin.sdk.model.api.BaseItemKind
 import org.jellyfin.sdk.model.api.ImageType
 import org.jellyfin.sdk.model.api.CollectionType
 
-private val NoLatestShelf = setOf(CollectionType.PLAYLISTS, CollectionType.LIVETV, CollectionType.BOXSETS, CollectionType.MUSIC, CollectionType.BOOKS)
+/** Collection types whose libraries get no "Recently Added" shelf of their own on Home. */
+private val NoLibraryShelf = setOf(
+    CollectionType.MOVIES, CollectionType.TVSHOWS, CollectionType.MUSIC, CollectionType.PLAYLISTS,
+    CollectionType.LIVETV, CollectionType.BOOKS, CollectionType.PHOTOS,
+)
 
 data class HomeContent(
-    val views: List<BaseItemDto>,
     val resume: List<BaseItemDto>,
     val nextUp: List<BaseItemDto>,
-    val latest: List<Pair<BaseItemDto, List<BaseItemDto>>>,
+    val movies: List<BaseItemDto>,
+    val shows: List<BaseItemDto>,
+    val anime: List<BaseItemDto>,
+    val libraryShelves: List<Pair<BaseItemDto, List<BaseItemDto>>>,
 ) {
     /** What the banner pages through: what's being watched first, then the newest additions. */
-    val featured: List<BaseItemDto> = (resume.take(3) + latest.flatMap { it.second.take(2) })
+    val featured: List<BaseItemDto> = (resume.take(3) + nextUp.take(3) + movies.take(4) + shows.take(3))
         .distinctBy { it.id }
-        .filter { it.type in setOf(BaseItemKind.MOVIE, BaseItemKind.SERIES, BaseItemKind.EPISODE) }
         .take(8)
 }
 
@@ -98,10 +104,27 @@ class HomeViewModel(private val repo: AsterRepository) : ViewModel() {
                     val views = repo.views()
                     val resume = async { repo.resume() }
                     val nextUp = async { repo.nextUp() }
-                    val latest = views
-                        .filter { it.collectionType !in NoLatestShelf }
+                    // Anime has its own shelf, so the Movies and TV shelves skip its libraries.
+                    val animeLibraries = repo.animeLibraries(views)
+                    val animeIds = animeLibraries.map { it.id }.toSet()
+                    val movies = views.firstOrNull { it.collectionType == CollectionType.MOVIES && it.id !in animeIds }
+                        ?.let { library -> async { runCatching { repo.latest(library.id, kinds = listOf(BaseItemKind.MOVIE)) }.getOrDefault(emptyList()) } }
+                    val shows = views.firstOrNull { it.collectionType == CollectionType.TVSHOWS && it.id !in animeIds }
+                        ?.let { library -> async { runCatching { repo.latest(library.id, kinds = listOf(BaseItemKind.SERIES)) }.getOrDefault(emptyList()) } }
+                    val anime = async { repo.recentlyAddedAnime(animeLibraries) }
+                    val shelves = views.filter { it.collectionType !in NoLibraryShelf }
                         .map { view -> async { view to runCatching { repo.latest(view.id) }.getOrDefault(emptyList()) } }
-                    Load.Ready(HomeContent(views, resume.await(), nextUp.await(), latest.map { it.await() }))
+                    val resumed = resume.await()
+                    Load.Ready(
+                        HomeContent(
+                            resume = resumed,
+                            nextUp = nextUp.await().filter { next -> resumed.none { it.id == next.id } },
+                            movies = movies?.await().orEmpty(),
+                            shows = shows?.await().orEmpty(),
+                            anime = anime.await(),
+                            libraryShelves = shelves.awaitAll().filter { it.second.isNotEmpty() },
+                        ),
+                    )
                 }
             } catch (e: Exception) {
                 Load.Failed(e.userMessage())
@@ -129,7 +152,10 @@ fun HomeScreen(
                 if (s.value.featured.isNotEmpty()) FeaturedBanner(s.value.featured, onItem, onPlay)
                 Shelf("Continue Watching", s.value.resume, landscape = true, onItem = onItem)
                 Shelf("Up Next", s.value.nextUp, landscape = true, onItem = onItem)
-                s.value.latest.forEach { (view, items) -> Shelf("Recently Added ${view.name.orEmpty()}", items, landscape = true, onItem = onItem) }
+                Shelf("Recently Added Movies", s.value.movies, landscape = true, onItem = onItem)
+                Shelf("Recently Added TV Shows", s.value.shows, landscape = true, onItem = onItem)
+                Shelf("Recently Added Anime", s.value.anime, landscape = true, onItem = onItem)
+                s.value.libraryShelves.forEach { (view, items) -> Shelf(view.name.orEmpty(), items, landscape = true, onItem = onItem) }
             }
         }
     }
@@ -139,7 +165,7 @@ fun HomeScreen(
 val TabBarClearance = 110.dp
 
 @Composable
-private fun FeaturedBanner(items: List<BaseItemDto>, onItem: (BaseItemDto) -> Unit, onPlay: (UUID) -> Unit) {
+fun FeaturedBanner(items: List<BaseItemDto>, onItem: (BaseItemDto) -> Unit, onPlay: (UUID) -> Unit) {
     val pager = rememberPagerState { items.size }
     val height = (LocalConfiguration.current.screenHeightDp * 0.84f).dp
     Box(Modifier.fillMaxWidth().height(height)) {

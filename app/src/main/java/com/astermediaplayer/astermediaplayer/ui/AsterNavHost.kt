@@ -54,6 +54,8 @@ import androidx.navigation.navDeepLink
 import androidx.navigation.compose.rememberNavController
 import androidx.compose.runtime.rememberCoroutineScope
 import com.astermediaplayer.astermediaplayer.AsterApp
+import com.astermediaplayer.astermediaplayer.ui.anime.AnimeScreen
+import com.astermediaplayer.astermediaplayer.ui.anime.AnimeViewModel
 import com.astermediaplayer.astermediaplayer.ui.auth.AuthScreen
 import com.astermediaplayer.astermediaplayer.ui.auth.AuthViewModel
 import com.astermediaplayer.astermediaplayer.ui.detail.DetailScreen
@@ -160,8 +162,6 @@ private enum class MoreDestination(val label: String, val icon: ImageVector) {
     Settings("Settings", Icons.Default.Settings),
 }
 
-private fun BaseItemDto.isAnimeLibrary() = name.orEmpty().contains("anime", ignoreCase = true)
-
 @Composable
 private fun MainTabs(onItem: (BaseItemDto) -> Unit, onPlay: (UUID) -> Unit, onSignOut: () -> Unit) {
     val app = LocalContext.current.applicationContext as AsterApp
@@ -171,17 +171,20 @@ private fun MainTabs(onItem: (BaseItemDto) -> Unit, onPlay: (UUID) -> Unit, onSi
     val wide = LocalConfiguration.current.screenWidthDp >= 600
 
     val home: HomeViewModel = viewModel(factory = viewModelFactory { initializer { HomeViewModel(repo) } })
+    val anime: AnimeViewModel = viewModel(factory = viewModelFactory { initializer { AnimeViewModel(repo) } })
     val search: SearchViewModel = viewModel(factory = viewModelFactory { initializer { SearchViewModel(repo) } })
     val libraries by produceState(emptyList<BaseItemDto>()) { value = runCatching { repo.views() }.getOrDefault(emptyList()) }
 
-    val moviesLibrary = libraries.firstOrNull { it.collectionType == CollectionType.MOVIES && !it.isAnimeLibrary() }
-    val showsLibrary = libraries.firstOrNull { it.collectionType == CollectionType.TVSHOWS && !it.isAnimeLibrary() }
-    val animeLibrary = libraries.firstOrNull { it.isAnimeLibrary() }
+    // Anime is whatever Shoko/AniDB matched; those libraries get their own tab and Movies and TV Shows skip them.
+    val animeLibraries by produceState(emptyList<BaseItemDto>(), libraries) { value = runCatching { repo.animeLibraries(libraries) }.getOrDefault(emptyList()) }
+    val animeIds = animeLibraries.map { it.id }.toSet()
+    val moviesLibrary = libraries.firstOrNull { it.collectionType == CollectionType.MOVIES && it.id !in animeIds }
+    val showsLibrary = libraries.firstOrNull { it.collectionType == CollectionType.TVSHOWS && it.id !in animeIds }
     val tabs = Tab.entries.filter {
         when (it) {
             Tab.Movies -> moviesLibrary != null
             Tab.Shows -> showsLibrary != null
-            Tab.Anime -> animeLibrary != null
+            Tab.Anime -> animeLibraries.isNotEmpty()
             else -> true
         }
     }
@@ -202,7 +205,7 @@ private fun MainTabs(onItem: (BaseItemDto) -> Unit, onPlay: (UUID) -> Unit, onSi
             Tab.Home -> HomeScreen(home, onItem = onItem, onPlay = onPlay, modifier = modifier)
             Tab.Movies -> Library(moviesLibrary, modifier)
             Tab.Shows -> Library(showsLibrary, modifier)
-            Tab.Anime -> Library(animeLibrary, modifier)
+            Tab.Anime -> AnimeScreen(anime, onItem = onItem, onPlay = onPlay, modifier = modifier)
             Tab.More -> when (more) {
                 MoreDestination.Search -> SearchScreen(search, onItem = onItem, modifier = modifier.statusBarsPadding())
                 MoreDestination.Settings -> SettingsScreen(repo.session, app.settings, onSignOut, modifier.statusBarsPadding())
