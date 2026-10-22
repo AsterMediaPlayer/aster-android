@@ -283,7 +283,7 @@ fun TypeScreen(
     }
 }
 
-private val INDEX_ROOM = 28.dp
+internal val INDEX_ROOM = 28.dp
 
 private fun rowKey(row: Row): String = when (row) {
     Row.Hero -> "hero"; Row.Header -> "header"; Row.Recent -> "recent"; Row.AllTitles -> "all"
@@ -292,7 +292,7 @@ private fun rowKey(row: Row): String = when (row) {
 
 /** The sort picker next to the title: the current choice in the accent colour, with a menu of the others. */
 @Composable
-private fun SortMenu(sort: LibrarySort, onSort: (LibrarySort) -> Unit) {
+internal fun SortMenu(sort: LibrarySort, onSort: (LibrarySort) -> Unit) {
     var open by remember { mutableStateOf(false) }
     Box {
         Row(Modifier.clip(CircleShape).clickable { open = true }.padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -309,7 +309,7 @@ private fun SortMenu(sort: LibrarySort, onSort: (LibrarySort) -> Unit) {
 
 /** The strip of letters down the right edge: tap one, or drag along them. 15dp a letter, as on iOS. */
 @Composable
-private fun IndexBar(keys: List<String>, modifier: Modifier = Modifier, jump: (String) -> Unit) {
+internal fun IndexBar(keys: List<String>, modifier: Modifier = Modifier, jump: (String) -> Unit) {
     val density = LocalDensity.current
     val letterHeight = 15.dp
     var last by remember { mutableStateOf<String?>(null) }

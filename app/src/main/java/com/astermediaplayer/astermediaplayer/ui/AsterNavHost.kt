@@ -1,5 +1,6 @@
 package com.astermediaplayer.astermediaplayer.ui
 
+import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.foundation.layout.Box
@@ -100,6 +101,8 @@ import com.astermediaplayer.astermediaplayer.ui.detail.DetailScreen
 import com.astermediaplayer.astermediaplayer.ui.detail.DetailViewModel
 import com.astermediaplayer.astermediaplayer.ui.home.HomeScreen
 import com.astermediaplayer.astermediaplayer.ui.home.HomeViewModel
+import com.astermediaplayer.astermediaplayer.ui.library.LibraryHomeScreen
+import com.astermediaplayer.astermediaplayer.ui.library.LibraryHomeViewModel
 import com.astermediaplayer.astermediaplayer.ui.library.LibraryScreen
 import com.astermediaplayer.astermediaplayer.ui.library.LibraryViewModel
 import com.astermediaplayer.astermediaplayer.ui.library.TypeScreen
@@ -119,7 +122,7 @@ import java.util.UUID
 
 /** A round back button over a page's art, like the title page's. */
 @Composable
-private fun BackButton(onClick: () -> Unit) {
+internal fun BackButton(onClick: () -> Unit) {
     IconButton(
         onClick = onClick,
         modifier = Modifier.statusBarsPadding().padding(start = Lockup.screenPadding, top = 4.dp).size(DetailMetrics.backButtonSize).clip(CircleShape).background(Color.Black.copy(alpha = 0.35f)),
@@ -356,6 +359,7 @@ private enum class MoreDestination(val label: String, val icon: ImageVector) {
     Upcoming("Upcoming", Icons.Default.CalendarMonth),
     LiveTv("Live TV", Icons.Default.Sensors),
     Channels("Channels", Icons.Default.Tv),
+    Library("Library", Icons.Default.Layers),
     Downloads("Downloads", Icons.Default.Download),
     Settings("Settings", Icons.Default.Settings),
     Search("Search", Icons.Default.Search),
@@ -389,6 +393,7 @@ private fun MainTabs(
     // Upcoming is listed only while the server has something coming up, as on the Apple apps.
     val hasUpcoming by produceState(false) { value = runCatching { repo.upcoming(1).isNotEmpty() }.getOrDefault(false) }
     val upcoming: UpcomingViewModel = viewModel(factory = viewModelFactory { initializer { UpcomingViewModel(repo) } })
+    val libraryHome: LibraryHomeViewModel = viewModel(factory = viewModelFactory { initializer { LibraryHomeViewModel(repo) } })
     val animeLibraries = detectedAnime.orEmpty()
     val animeIds = animeLibraries.map { it.id }.toSet()
     val moviesLibrary = libraries.firstOrNull { it.collectionType == CollectionType.MOVIES && it.id !in animeIds }
@@ -447,6 +452,10 @@ private fun MainTabs(
                 }
                 MoreDestination.Audiobooks -> Box(modifier) {
                     AudiobooksScreen(onBook = onBook, onShelf = onShelf, onListen = { app.audiobooks.play(it) }, modifier = Modifier.fillMaxSize(), topInset = 64.dp)
+                    BackButton { more = null }
+                }
+                MoreDestination.Library -> Box(modifier) {
+                    LibraryHomeScreen(libraryHome, onItem = onItem, modifier = Modifier.fillMaxSize(), topInset = 56.dp)
                     BackButton { more = null }
                 }
                 MoreDestination.Downloads -> Box(modifier) {

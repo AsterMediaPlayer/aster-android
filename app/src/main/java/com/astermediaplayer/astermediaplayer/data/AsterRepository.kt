@@ -564,6 +564,39 @@ class AsterRepository(context: Context, private val store: SessionStore) {
     }
 
     /** Just the ids of one kind of title in some libraries (anime's, which Movies and TV Shows leave out). */
+    /**
+     * A page of what's in one library or collection, as the Apple apps' `LibraryGridView` asks for it: the titles of the
+     * library's kind (movies, shows, collections, music videos) wherever they sit in it, and for any other kind of library
+     * what's directly inside.
+     */
+    suspend fun libraryItems(parentId: UUID, type: CollectionType?, startIndex: Int, limit: Int, sortBy: List<ItemSortBy>, order: SortOrder): ItemPage {
+        val kind = when (type) {
+            CollectionType.MOVIES -> BaseItemKind.MOVIE
+            CollectionType.TVSHOWS -> BaseItemKind.SERIES
+            CollectionType.BOXSETS -> BaseItemKind.BOX_SET
+            // Every video, not the folders (one per show or artist) they're in.
+            CollectionType.MUSICVIDEOS -> BaseItemKind.MUSIC_VIDEO
+            else -> null
+        }
+        val result = api.libraryApi.getItems(
+            GetItemsRequest(
+                userId = userId, parentId = parentId, recursive = kind != null, includeItemTypes = kind?.let { listOf(it) },
+                sortBy = sortBy, sortOrder = listOf(order), startIndex = startIndex, limit = limit,
+                fields = listOf(ItemFields.OVERVIEW, ItemFields.SORT_NAME),
+            ),
+        ).content
+        return ItemPage(result.items, result.totalRecordCount)
+    }
+
+    /** The titles marked as favourites, for the Library page's shelf. */
+    suspend fun favoriteTitles(limit: Int = 40): List<BaseItemDto> = api.libraryApi.getItems(
+        GetItemsRequest(
+            userId = userId, recursive = true, filters = listOf(org.jellyfin.sdk.model.api.ItemFilter.IS_FAVORITE),
+            includeItemTypes = listOf(BaseItemKind.MOVIE, BaseItemKind.SERIES, BaseItemKind.EPISODE),
+            sortBy = listOf(ItemSortBy.SORT_NAME), limit = limit, fields = listOf(ItemFields.OVERVIEW, ItemFields.GENRES),
+        ),
+    ).content.items
+
     suspend fun itemIds(libraryIds: List<UUID>, kind: BaseItemKind): Set<UUID> = coroutineScope {
         libraryIds.map { id ->
             async {
