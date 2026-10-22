@@ -2,6 +2,7 @@ package com.astermediaplayer.astermediaplayer.ui.player
 
 import android.app.PendingIntent
 import android.content.Intent
+import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
@@ -15,30 +16,42 @@ import com.astermediaplayer.astermediaplayer.MainActivity
  */
 @UnstableApi
 class PlaybackService : MediaSessionService() {
-    private var session: MediaSession? = null
+    private val sessions = mutableMapOf<Player, MediaSession>()
 
     override fun onCreate() {
         super.onCreate()
-        val player = (application as AsterApp).audiobooks.player ?: return
-        val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
-        val built = MediaSession.Builder(this, player).setSessionActivity(open).build()
-        session = built
-        // Started rather than bound to, so the session is registered here: that is what posts the notification and
-        // puts the service in the foreground once the book plays.
-        addSession(built)
+        sync()
     }
 
-    override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = session
+    /** Publishes whichever players exist: the audiobook player and the music player each get a session. */
+    private fun sync() {
+        val app = application as AsterApp
+        listOfNotNull("audiobook" to app.audiobooks.player, "music" to app.music.player).forEach { (id, player) ->
+            if (player == null || sessions.containsKey(player)) return@forEach
+            val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+            val built = MediaSession.Builder(this, player).setId(id).setSessionActivity(open).build()
+            sessions[player] = built
+            // Started rather than bound to, so each session is registered here: that is what posts its notification
+            // and puts the service in the foreground once it plays.
+            addSession(built)
+        }
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        sync()
+        return super.onStartCommand(intent, flags, startId)
+    }
+
+    override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = sessions.values.firstOrNull { it.player.isPlaying } ?: sessions.values.firstOrNull()
 
     override fun onTaskRemoved(rootIntent: Intent?) {
-        // Swiping the app away leaves a playing book going; a paused one ends the service.
-        val player = session?.player
-        if (player == null || !player.playWhenReady || player.mediaItemCount == 0) stopSelf()
+        // Swiping the app away leaves something playing going; otherwise the service ends.
+        if (sessions.values.none { it.player.playWhenReady && it.player.mediaItemCount > 0 }) stopSelf()
     }
 
     override fun onDestroy() {
-        session?.release()
-        session = null
+        sessions.values.forEach { it.release() }
+        sessions.clear()
         super.onDestroy()
     }
 }

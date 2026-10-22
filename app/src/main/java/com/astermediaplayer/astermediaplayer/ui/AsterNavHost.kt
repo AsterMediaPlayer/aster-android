@@ -20,12 +20,17 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.LibraryBooks
+import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material3.IconButton
 import androidx.compose.runtime.LaunchedEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.astermediaplayer.astermediaplayer.data.Audiobook
 import com.astermediaplayer.astermediaplayer.data.AudiobookShelf
 import com.astermediaplayer.astermediaplayer.ui.audiobooks.AudiobookBar
+import com.astermediaplayer.astermediaplayer.ui.music.AlbumPage
+import com.astermediaplayer.astermediaplayer.ui.music.ArtistPage
+import com.astermediaplayer.astermediaplayer.ui.music.MusicPlayerScreen
+import com.astermediaplayer.astermediaplayer.ui.music.MusicScreen
 import com.astermediaplayer.astermediaplayer.ui.audiobooks.AudiobookPage
 import com.astermediaplayer.astermediaplayer.ui.audiobooks.AudiobookPlayerScreen
 import com.astermediaplayer.astermediaplayer.ui.audiobooks.AudiobookShelfPage
@@ -123,11 +128,15 @@ private object Routes {
     const val DETAIL = "detail/{id}"
     const val PLAYER = "player/{id}?start={start}&end={end}&label={label}&begin={begin}"
     const val AUDIOBOOK = "audiobook/{id}"
+    const val ALBUM = "album/{id}"
+    const val ARTIST = "artist/{id}"
     const val SHELF = "audiobookshelf/{id}"
     const val THEME = "theme?path={path}&title={title}&subtitle={subtitle}"
     fun library(id: UUID, name: String) = "library/$id/${android.net.Uri.encode(name)}"
     fun detail(id: UUID) = "detail/$id"
     fun audiobook(id: UUID) = "audiobook/$id"
+    fun album(id: UUID) = "album/$id"
+    fun artist(id: UUID) = "artist/$id"
     fun shelf(id: String) = "audiobookshelf/${android.net.Uri.encode(id)}"
     fun player(id: UUID, fromBeginning: Boolean = false) = if (fromBeginning) "player/$id?begin=true" else "player/$id"
     /** A stretch of an episode, in milliseconds. */
@@ -149,10 +158,11 @@ fun AsterNavHost(signedIn: Boolean) {
     }
 
     val presented by app.audiobooks.presented.collectAsStateWithLifecycle()
+    val musicPresented by app.music.presented.collectAsStateWithLifecycle()
     // Notifications carry the book's controls on the lock screen; asked once, with the first book.
     val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}
-    LaunchedEffect(presented) {
-        if (presented && android.os.Build.VERSION.SDK_INT >= 33 &&
+    LaunchedEffect(presented || musicPresented) {
+        if ((presented || musicPresented) && android.os.Build.VERSION.SDK_INT >= 33 &&
             androidx.core.content.ContextCompat.checkSelfPermission(app, android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED
         ) notificationPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
     }
@@ -168,6 +178,8 @@ fun AsterNavHost(signedIn: Boolean) {
                     onItem = ::open,
                     onBook = { nav.navigate(Routes.audiobook(it.id)) },
                     onShelf = { nav.navigate(Routes.shelf(it.id)) },
+                onAlbum = { nav.navigate(Routes.album(it.id)) },
+                onArtist = { nav.navigate(Routes.artist(it.id)) },
                     onPlay = { nav.navigate(Routes.player(it)) },
                     onSignOut = {
                         scope.launch {
@@ -223,7 +235,21 @@ fun AsterNavHost(signedIn: Boolean) {
                     BackButton { nav.popBackStack() }
                 }
             }
-            composable(Routes.SHELF, arguments = listOf(navArgument("id") { type = NavType.StringType })) { entry ->
+            composable(Routes.ALBUM, arguments = listOf(navArgument("id") { type = NavType.StringType })) { entry ->
+            Box(Modifier.fillMaxSize()) {
+                AlbumPage(UUID.fromString(entry.arguments!!.getString("id")))
+                BackButton { nav.popBackStack() }
+                AudiobookBar(Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(horizontal = 16.dp, vertical = 8.dp))
+            }
+        }
+        composable(Routes.ARTIST, arguments = listOf(navArgument("id") { type = NavType.StringType })) { entry ->
+            Box(Modifier.fillMaxSize()) {
+                ArtistPage(UUID.fromString(entry.arguments!!.getString("id")), onAlbum = { nav.navigate(Routes.album(it.id)) })
+                BackButton { nav.popBackStack() }
+                AudiobookBar(Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(horizontal = 16.dp, vertical = 8.dp))
+            }
+        }
+        composable(Routes.SHELF, arguments = listOf(navArgument("id") { type = NavType.StringType })) { entry ->
                 Box(Modifier.fillMaxSize()) {
                     AudiobookShelfPage(entry.arguments!!.getString("id").orEmpty(), onBook = { nav.navigate(Routes.audiobook(it.id)) })
                     BackButton { nav.popBackStack() }
@@ -272,6 +298,10 @@ fun AsterNavHost(signedIn: Boolean) {
             androidx.activity.compose.BackHandler { app.audiobooks.setPresented(false) }
             AudiobookPlayerScreen()
         }
+        if (musicPresented) {
+            androidx.activity.compose.BackHandler { app.music.setPresented(false) }
+            MusicPlayerScreen()
+        }
     }
 
 }
@@ -286,6 +316,7 @@ private enum class Tab(val label: String, val icon: ImageVector) {
 
 /** The More list, in the Apple apps' order; the ones built so far. */
 private enum class MoreDestination(val label: String, val icon: ImageVector) {
+    Music("Music", Icons.Default.MusicNote),
     Audiobooks("Audiobooks", Icons.Default.LibraryBooks),
     Settings("Settings", Icons.Default.Settings),
     Search("Search", Icons.Default.Search),
@@ -297,6 +328,8 @@ private fun MainTabs(
     onPlay: (UUID) -> Unit,
     onBook: (Audiobook) -> Unit,
     onShelf: (AudiobookShelf) -> Unit,
+    onAlbum: (BaseItemDto) -> Unit,
+    onArtist: (BaseItemDto) -> Unit,
     onSignOut: () -> Unit,
 ) {
     val app = LocalContext.current.applicationContext as AsterApp
@@ -357,6 +390,10 @@ private fun MainTabs(
             Tab.Shows -> if (detectedAnime != null) TypeTab(BaseItemKind.SERIES, animeLibraries, onItem, onPlay, modifier)
             Tab.Anime -> AnimeScreen(anime, onItem = onItem, onPlay = onPlay, modifier = modifier)
             Tab.More -> when (more) {
+                MoreDestination.Music -> Box(modifier) {
+                    MusicScreen(onAlbum = onAlbum, onArtist = onArtist, modifier = Modifier.fillMaxSize(), topInset = 56.dp)
+                    BackButton { more = null }
+                }
                 MoreDestination.Audiobooks -> Box(modifier) {
                     AudiobooksScreen(onBook = onBook, onShelf = onShelf, onListen = { app.audiobooks.play(it) }, modifier = Modifier.fillMaxSize(), topInset = 64.dp)
                     BackButton { more = null }

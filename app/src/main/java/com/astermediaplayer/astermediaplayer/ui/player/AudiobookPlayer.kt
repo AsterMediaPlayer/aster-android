@@ -192,6 +192,9 @@ class AudiobookPlayer(private val context: Context, private val repo: AsterRepos
 
     // MARK: Transport
 
+    /** Another kind of audio started: this one steps aside, keeping its place. */
+    fun pauseForOther() { player?.pause() }
+
     fun togglePlayPause() { player?.let { if (it.isPlaying) it.pause() else it.play() } }
 
     /** Back or ahead by [seconds], into the part before or after when it runs past this one's start or end. */

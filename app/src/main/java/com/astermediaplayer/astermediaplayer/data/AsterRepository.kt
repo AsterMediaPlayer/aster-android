@@ -3,7 +3,11 @@ package com.astermediaplayer.astermediaplayer.data
 import android.content.Context
 import org.jellyfin.sdk.Jellyfin
 import org.jellyfin.sdk.api.client.ApiClient
+import org.jellyfin.sdk.api.client.extensions.artistApi
 import org.jellyfin.sdk.api.client.extensions.audioApi
+import org.jellyfin.sdk.api.client.extensions.instantMixApi
+import org.jellyfin.sdk.api.client.extensions.lyricApi
+import org.jellyfin.sdk.api.client.extensions.playlistApi
 import org.jellyfin.sdk.api.client.extensions.authenticationApi
 import org.jellyfin.sdk.api.client.extensions.imageApi
 import org.jellyfin.sdk.api.client.extensions.libraryApi
@@ -153,6 +157,73 @@ class AsterRepository(context: Context, private val store: SessionStore) {
         userId = userId, parentId = parentId, limit = limit, includeItemTypes = kinds,
         fields = listOf(ItemFields.OVERVIEW, ItemFields.GENRES),
     ).content
+
+    // MARK: Music
+
+    /** Albums, playlists or songs across the server, a page at a time. */
+    suspend fun musicPage(
+        kind: BaseItemKind, startIndex: Int, limit: Int,
+        sortBy: List<ItemSortBy> = listOf(ItemSortBy.SORT_NAME), order: SortOrder = SortOrder.ASCENDING,
+        favorites: Boolean = false, played: Boolean = false,
+    ): ItemPage {
+        val result = api.libraryApi.getItems(
+            GetItemsRequest(
+                userId = userId, recursive = true, includeItemTypes = listOf(kind),
+                mediaTypes = if (kind == BaseItemKind.PLAYLIST) listOf(org.jellyfin.sdk.model.api.MediaType.AUDIO) else null,
+                sortBy = sortBy, sortOrder = listOf(order), startIndex = startIndex, limit = limit,
+                filters = buildList {
+                    if (favorites) add(org.jellyfin.sdk.model.api.ItemFilter.IS_FAVORITE)
+                    if (played) add(org.jellyfin.sdk.model.api.ItemFilter.IS_PLAYED)
+                },
+                fields = listOf(ItemFields.OVERVIEW, ItemFields.GENRES),
+            ),
+        ).content
+        return ItemPage(result.items, result.totalRecordCount)
+    }
+
+    /** Artists credited on albums, paged. */
+    suspend fun albumArtists(startIndex: Int, limit: Int = 100): ItemPage {
+        val result = api.artistApi.getAlbumArtists(
+            userId = userId, startIndex = startIndex, limit = limit,
+            fields = listOf(ItemFields.OVERVIEW), sortBy = listOf(ItemSortBy.SORT_NAME), sortOrder = listOf(SortOrder.ASCENDING),
+        ).content
+        return ItemPage(result.items, result.totalRecordCount)
+    }
+
+    /** An album's songs in disc and track order. */
+    suspend fun albumTracks(albumId: UUID): List<BaseItemDto> = api.libraryApi.getItems(
+        GetItemsRequest(
+            userId = userId, parentId = albumId, includeItemTypes = listOf(BaseItemKind.AUDIO),
+            sortBy = listOf(ItemSortBy.PARENT_INDEX_NUMBER, ItemSortBy.INDEX_NUMBER, ItemSortBy.SORT_NAME),
+        ),
+    ).content.items
+
+    /** Albums an artist is credited on, newest first. */
+    suspend fun artistAlbums(artistId: UUID): List<BaseItemDto> = api.libraryApi.getItems(
+        GetItemsRequest(
+            userId = userId, albumArtistIds = listOf(artistId), includeItemTypes = listOf(BaseItemKind.MUSIC_ALBUM), recursive = true,
+            sortBy = listOf(ItemSortBy.PRODUCTION_YEAR, ItemSortBy.SORT_NAME), sortOrder = listOf(SortOrder.DESCENDING),
+        ),
+    ).content.items
+
+    /** Every song by an artist, in album order, for Play and Shuffle. */
+    suspend fun artistTracks(artistId: UUID, limit: Int = 400): List<BaseItemDto> = api.libraryApi.getItems(
+        GetItemsRequest(
+            userId = userId, artistIds = listOf(artistId), includeItemTypes = listOf(BaseItemKind.AUDIO), recursive = true,
+            sortBy = listOf(ItemSortBy.ALBUM, ItemSortBy.PARENT_INDEX_NUMBER, ItemSortBy.INDEX_NUMBER), limit = limit,
+        ),
+    ).content.items
+
+    suspend fun playlistItems(playlistId: UUID): List<BaseItemDto> =
+        api.playlistApi.getPlaylistItems(playlistId = playlistId, userId = userId).content.items
+
+    /** Songs the server thinks go with an item: a song, album, artist or genre. */
+    suspend fun instantMix(itemId: UUID, limit: Int = 100): List<BaseItemDto> =
+        api.instantMixApi.getInstantMixFromItem(itemId = itemId, userId = userId, limit = limit).content.items
+
+    /** A song's lyrics: timed lines when a synced file exists, plain lines otherwise; null when the server has none. */
+    suspend fun lyrics(itemId: UUID): org.jellyfin.sdk.model.api.LyricDto? =
+        runCatching { api.lyricApi.getLyrics(itemId).content }.getOrNull()
 
     // MARK: Audiobooks
 
@@ -440,6 +511,10 @@ class AsterRepository(context: Context, private val store: SessionStore) {
         val tag = item.seriesPrimaryImageTag ?: return null
         return api.imageApi.getItemImageUrl(seriesId, ImageType.PRIMARY, maxWidth = maxWidth, tag = tag)
     }
+
+    /** An item's primary picture by its id and tag, for art that belongs to another item (a song's album). */
+    fun imageUrlFor(id: UUID, tag: String, maxWidth: Int): String =
+        api.imageApi.getItemImageUrl(id, ImageType.PRIMARY, maxWidth = maxWidth, tag = tag)
 
     fun personImageUrl(person: BaseItemPerson, maxWidth: Int): String? =
         person.primaryImageTag?.let { api.imageApi.getItemImageUrl(person.id, ImageType.PRIMARY, maxWidth = maxWidth, tag = it) }

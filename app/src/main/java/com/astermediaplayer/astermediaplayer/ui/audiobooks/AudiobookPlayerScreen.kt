@@ -71,25 +71,43 @@ import com.astermediaplayer.astermediaplayer.ui.theme.Lockup
 import com.astermediaplayer.astermediaplayer.ui.theme.SecondaryText
 import com.astermediaplayer.astermediaplayer.ui.theme.Type
 
-/** The book playing, shown over every tab; opens the full player. */
+/** The song or book playing, shown over every tab; opens the full player. */
 @Composable
 fun AudiobookBar(modifier: Modifier = Modifier) {
-    val player = (LocalContext.current.applicationContext as AsterApp).audiobooks
+    val app = LocalContext.current.applicationContext as AsterApp
+    val music by app.music.state.collectAsStateWithLifecycle()
+    music.current?.let { song ->
+        BarRow(
+            modifier, { com.astermediaplayer.astermediaplayer.ui.music.MusicArt(song, 48.dp, width = 200, shape = RoundedCornerShape(10.dp)) },
+            song.name.orEmpty(), song.artists?.joinToString(", ") ?: song.albumArtist.orEmpty(), music.isPlaying,
+            onOpen = { app.music.setPresented(true) }, onToggle = { app.music.togglePlayPause() },
+        )
+        return
+    }
+    val player = app.audiobooks
     val state by player.state.collectAsStateWithLifecycle()
     val book = state.book ?: return
+    BarRow(
+        modifier, { AudiobookCover(book, 48.dp, Modifier.clip(RoundedCornerShape(10.dp)), 200) },
+        book.title, listOfNotNull(state.chapter?.title, book.author).joinToString(" · "), state.isPlaying,
+        onOpen = { player.setPresented(true) }, onToggle = { player.togglePlayPause() },
+    )
+}
+
+@Composable
+private fun BarRow(modifier: Modifier, art: @Composable () -> Unit, title: String, subtitle: String, playing: Boolean, onOpen: () -> Unit, onToggle: () -> Unit) {
     Row(
-        modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Color(0xE61C1C1E)).clickable { player.setPresented(true) }
-            .padding(start = 12.dp, top = 8.dp, end = 16.dp, bottom = 8.dp),
+        modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Color(0xE61C1C1E)).clickable(onClick = onOpen).padding(start = 12.dp, top = 8.dp, end = 16.dp, bottom = 8.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        AudiobookCover(book, 48.dp, Modifier.clip(RoundedCornerShape(10.dp)), 200)
+        art()
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(book.title, style = Type.calloutSemibold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(listOfNotNull(state.chapter?.title, book.author).joinToString(" · "), style = Type.caption, color = SecondaryText, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(title, style = Type.calloutSemibold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(subtitle, style = Type.caption, color = SecondaryText, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         Icon(
-            if (state.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, if (state.isPlaying) "Pause" else "Play", tint = Color.White,
-            modifier = Modifier.size(28.dp).clip(CircleShape).clickable { player.togglePlayPause() },
+            if (playing) Icons.Default.Pause else Icons.Default.PlayArrow, if (playing) "Pause" else "Play", tint = Color.White,
+            modifier = Modifier.size(28.dp).clip(CircleShape).clickable(onClick = onToggle),
         )
     }
 }
