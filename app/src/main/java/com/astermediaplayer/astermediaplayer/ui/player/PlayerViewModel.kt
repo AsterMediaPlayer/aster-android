@@ -1,0 +1,326 @@
+package com.astermediaplayer.astermediaplayer.ui.player
+
+import android.content.Context
+import android.net.Uri
+import androidx.annotation.OptIn
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import androidx.media3.common.C
+import androidx.media3.common.MediaItem
+import androidx.media3.common.MimeTypes
+import androidx.media3.common.Player
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.exoplayer.DefaultLoadControl
+import androidx.media3.exoplayer.DefaultRenderersFactory
+import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import com.astermediaplayer.astermediaplayer.data.AsterRepository
+import com.astermediaplayer.astermediaplayer.ui.components.userMessage
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import org.jellyfin.sdk.model.api.BaseItemDto
+import org.jellyfin.sdk.model.api.BaseItemKind
+import org.jellyfin.sdk.model.api.MediaSegmentDto
+import org.jellyfin.sdk.model.api.MediaSegmentType
+import org.jellyfin.sdk.model.api.MediaStream
+import org.jellyfin.sdk.model.api.MediaStreamType
+import org.jellyfin.sdk.model.api.PlayMethod
+import org.jellyfin.sdk.model.api.PlaybackOrder
+import org.jellyfin.sdk.model.api.PlaybackProgressInfo
+import org.jellyfin.sdk.model.api.PlaybackStartInfo
+import org.jellyfin.sdk.model.api.PlaybackStopInfo
+import org.jellyfin.sdk.model.api.RepeatMode
+import org.jellyfin.sdk.model.api.SubtitleDeliveryMethod
+import java.util.UUID
+
+data class Quality(val label: String, val maxBitrate: Int)
+
+val Qualities = listOf(
+    Quality("Auto", 120_000_000),
+    Quality("20 Mbps", 20_000_000),
+    Quality("8 Mbps", 8_000_000),
+    Quality("4 Mbps", 4_000_000),
+    Quality("2 Mbps", 2_000_000),
+)
+
+data class SkipPrompt(val label: String, val targetMs: Long)
+
+data class PlayerUiState(
+    val title: String = "",
+    val subtitle: String? = null,
+    val loading: Boolean = true,
+    val error: String? = null,
+    val skip: SkipPrompt? = null,
+    val quality: Quality = Qualities.first(),
+    val transcoding: Boolean = false,
+)
+
+@OptIn(UnstableApi::class)
+class PlayerViewModel(
+    context: Context,
+    private val repo: AsterRepository,
+    private val itemId: UUID,
+) : ViewModel() {
+    private val _state = MutableStateFlow(PlayerUiState())
+    val state: StateFlow<PlayerUiState> = _state.asStateFlow()
+
+    private val _playNext = MutableSharedFlow<UUID>(extraBufferCapacity = 1)
+    /** Emits the next episode's id when the current one finishes. */
+    val playNext: SharedFlow<UUID> = _playNext.asSharedFlow()
+
+    val player: ExoPlayer = ExoPlayer.Builder(context.applicationContext, renderersFactory(context))
+        .setMediaSourceFactory(
+            DefaultMediaSourceFactory(
+                DefaultHttpDataSource.Factory()
+                    .setDefaultRequestProperties(mapOf("X-Emby-Token" to repo.session!!.accessToken)),
+            ),
+        )
+        .setLoadControl(DefaultLoadControl.Builder().setBufferDurationsMs(30_000, 90_000, 2_500, 5_000).build())
+        .setAudioAttributes(
+            androidx.media3.common.AudioAttributes.Builder()
+                .setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(),
+            /* handleAudioFocus = */ true,
+        )
+        .setHandleAudioBecomingNoisy(true)
+        .build()
+
+    private var item: BaseItemDto? = null
+    private var mediaSourceId: String? = null
+    private var playSessionId: String? = null
+    private var playMethod = PlayMethod.DIRECT_PLAY
+    private var segments: List<MediaSegmentDto> = emptyList()
+    private var nextEpisodeId: UUID? = null
+    private var tickJob: Job? = null
+    private var reported = false
+    private var stopped = false
+
+    private val listener = object : Player.Listener {
+        override fun onPlaybackStateChanged(playbackState: Int) {
+            if (playbackState == Player.STATE_READY) _state.update { it.copy(loading = false) }
+            if (playbackState == Player.STATE_BUFFERING && player.currentPosition == 0L) _state.update { it.copy(loading = true) }
+            if (playbackState == Player.STATE_ENDED) onEnded()
+        }
+
+        override fun onIsPlayingChanged(isPlaying: Boolean) = reportProgress()
+
+        override fun onPositionDiscontinuity(
+            oldPosition: Player.PositionInfo, newPosition: Player.PositionInfo, reason: Int,
+        ) {
+            if (reason == Player.DISCONTINUITY_REASON_SEEK) reportProgress()
+        }
+
+        override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+            // Direct play can fail on codecs this device lacks; retry once through the server's transcode.
+            if (playMethod == PlayMethod.DIRECT_PLAY && _state.value.quality == Qualities.first() && !forcedTranscode) {
+                forcedTranscode = true
+                start(player.currentPosition, forceTranscode = true)
+            } else {
+                android.util.Log.e("Aster", "Playback failed", error)
+                _state.update { it.copy(loading = false, error = "This video couldn't be played on this device (${error.errorCodeName})") }
+            }
+        }
+    }
+    private var forcedTranscode = false
+
+    init {
+        player.addListener(listener)
+        start(null)
+    }
+
+    private fun start(positionMs: Long?, forceTranscode: Boolean = false) {
+        viewModelScope.launch {
+            _state.update { it.copy(loading = true, error = null) }
+            try {
+                val dto = item ?: repo.item(itemId).also { item = it }
+                val resumeMs = positionMs ?: ((dto.userData?.playbackPositionTicks ?: 0L) / TICKS_PER_MS)
+                if (item != null && segments.isEmpty()) segments = repo.segments(itemId)
+                if (nextEpisodeId == null) nextEpisodeId = findNextEpisode(dto)
+
+                // A failed direct play usually means the device can't decode the source (4K, Dolby Vision, ...),
+                // so the fallback transcode is capped to something every phone can handle.
+                val maxBitrate = if (forceTranscode) minOf(_state.value.quality.maxBitrate, FALLBACK_BITRATE) else _state.value.quality.maxBitrate
+                val info = repo.playbackInfo(
+                    itemId, resumeMs * TICKS_PER_MS, maxBitrate,
+                    mediaSourceId = mediaSourceId,
+                    forceTranscode = forceTranscode,
+                )
+                val source = info.mediaSources.firstOrNull() ?: error("This item has no playable media")
+                mediaSourceId = source.id
+                playSessionId = info.playSessionId
+
+                val direct = source.supportsDirectPlay && !forceTranscode
+                val url = when {
+                    direct -> repo.directStreamUrl(itemId, source.id!!, info.playSessionId, source.container)
+                    source.transcodingUrl != null -> repo.absoluteUrl(source.transcodingUrl!!)
+                    else -> error("The server can't stream this item to this device")
+                }
+                playMethod = if (direct) PlayMethod.DIRECT_PLAY else PlayMethod.TRANSCODE
+
+                val subtitles = source.mediaStreams.orEmpty()
+                    .filter { it.type == MediaStreamType.SUBTITLE && it.deliveryMethod == SubtitleDeliveryMethod.EXTERNAL && it.deliveryUrl != null }
+                    .map { subtitleConfiguration(it) }
+                player.setMediaItem(
+                    MediaItem.Builder()
+                        .setUri(url)
+                        .setSubtitleConfigurations(subtitles)
+                        .setMediaMetadata(androidx.media3.common.MediaMetadata.Builder().setTitle(dto.name).build())
+                        .build(),
+                    resumeMs.coerceAtLeast(0),
+                )
+                player.prepare()
+                player.playWhenReady = true
+                _state.update {
+                    it.copy(
+                        title = dto.name.orEmpty(),
+                        subtitle = if (dto.type == BaseItemKind.EPISODE) dto.seriesName else null,
+                        transcoding = !direct,
+                    )
+                }
+                if (!reported) {
+                    reported = true
+                    repo.reportStart(
+                        PlaybackStartInfo(
+                            canSeek = true, itemId = itemId, mediaSourceId = source.id, playSessionId = info.playSessionId,
+                            playMethod = playMethod, isPaused = false, isMuted = false, positionTicks = resumeMs * TICKS_PER_MS,
+                            repeatMode = RepeatMode.REPEAT_NONE, playbackOrder = PlaybackOrder.DEFAULT,
+                        ),
+                    )
+                }
+                startTicking()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _state.update { it.copy(loading = false, error = e.userMessage()) }
+            }
+        }
+    }
+
+    private fun subtitleConfiguration(stream: MediaStream): MediaItem.SubtitleConfiguration {
+        val mime = when (stream.codec?.lowercase()) {
+            "vtt", "webvtt" -> MimeTypes.TEXT_VTT
+            "ass", "ssa" -> MimeTypes.TEXT_SSA
+            else -> MimeTypes.APPLICATION_SUBRIP
+        }
+        return MediaItem.SubtitleConfiguration.Builder(Uri.parse(repo.absoluteUrl(stream.deliveryUrl!!)))
+            .setMimeType(mime)
+            .setLanguage(stream.language)
+            .setLabel(stream.displayTitle ?: stream.title ?: stream.language)
+            .setSelectionFlags(if (stream.isDefault) C.SELECTION_FLAG_DEFAULT else 0)
+            .build()
+    }
+
+    private suspend fun findNextEpisode(dto: BaseItemDto): UUID? {
+        val seriesId = dto.seriesId
+        if (dto.type != BaseItemKind.EPISODE || seriesId == null) return null
+        val episodes = runCatching { repo.episodes(seriesId, null) }.getOrNull() ?: return null
+        val index = episodes.indexOfFirst { it.id == dto.id }
+        return episodes.getOrNull(index + 1)?.id
+    }
+
+    fun setQuality(quality: Quality) {
+        if (quality == _state.value.quality) return
+        _state.update { it.copy(quality = quality) }
+        forcedTranscode = false
+        start(player.currentPosition)
+    }
+
+    fun skip() {
+        _state.value.skip?.let { player.seekTo(it.targetMs) }
+    }
+
+    private fun startTicking() {
+        if (tickJob?.isActive == true) return
+        tickJob = viewModelScope.launch {
+            var sinceReport = 0
+            while (true) {
+                delay(500)
+                updateSkipPrompt()
+                sinceReport += 500
+                if (sinceReport >= PROGRESS_INTERVAL_MS) {
+                    sinceReport = 0
+                    reportProgress()
+                }
+            }
+        }
+    }
+
+    private fun updateSkipPrompt() {
+        val positionTicks = player.currentPosition * TICKS_PER_MS
+        val segment = segments.firstOrNull {
+            positionTicks >= it.startTicks && positionTicks < it.endTicks - 1_000 * TICKS_PER_MS
+        }
+        val prompt = segment?.let {
+            SkipPrompt(
+                label = if (it.type == MediaSegmentType.INTRO) "Skip Intro" else "Skip Credits",
+                targetMs = it.endTicks / TICKS_PER_MS,
+            )
+        }
+        if (prompt != _state.value.skip) _state.update { it.copy(skip = prompt) }
+    }
+
+    private fun onEnded() {
+        reportStopped()
+        nextEpisodeId?.let { _playNext.tryEmit(it) }
+    }
+
+    private fun reportProgress() {
+        if (!reported || stopped) return
+        val info = PlaybackProgressInfo(
+            canSeek = true, itemId = itemId, mediaSourceId = mediaSourceId, playSessionId = playSessionId,
+            playMethod = playMethod, isPaused = !player.isPlaying, isMuted = false,
+            positionTicks = player.currentPosition * TICKS_PER_MS,
+            repeatMode = RepeatMode.REPEAT_NONE, playbackOrder = PlaybackOrder.DEFAULT,
+        )
+        viewModelScope.launch { repo.reportProgress(info) }
+    }
+
+    private fun reportStopped() {
+        if (!reported || stopped) return
+        stopped = true
+        val info = PlaybackStopInfo(
+            itemId = itemId, mediaSourceId = mediaSourceId, playSessionId = playSessionId,
+            positionTicks = player.currentPosition * TICKS_PER_MS, failed = false,
+        )
+        // viewModelScope is cancelled by the time onCleared runs, so the stop report needs its own scope.
+        kotlinx.coroutines.GlobalScope.launch { repo.reportStopped(info) }
+    }
+
+    override fun onCleared() {
+        reportStopped()
+        tickJob?.cancel()
+        player.removeListener(listener)
+        player.release()
+    }
+
+    private companion object {
+        /**
+         * Falls back to another decoder when the first one fails. Emulators expose a host-GPU codec that is flaky,
+         * so there Android's own software decoders are tried first.
+         */
+        fun renderersFactory(context: Context) = DefaultRenderersFactory(context.applicationContext)
+            .setEnableDecoderFallback(true)
+            .setMediaCodecSelector { mimeType, secure, tunneling ->
+                val decoders = MediaCodecSelector.DEFAULT.getDecoderInfos(mimeType, secure, tunneling)
+                if (isEmulator) decoders.sortedBy { if (it.name.startsWith("c2.android.") || it.name.startsWith("OMX.google.")) 0 else 1 }
+                else decoders
+            }
+
+        val isEmulator: Boolean
+            get() = android.os.Build.HARDWARE.let { it.contains("ranchu") || it.contains("goldfish") } ||
+                android.os.Build.FINGERPRINT.contains("generic")
+
+        const val TICKS_PER_MS = 10_000L
+        const val PROGRESS_INTERVAL_MS = 10_000
+        const val FALLBACK_BITRATE = 8_000_000
+    }
+}
