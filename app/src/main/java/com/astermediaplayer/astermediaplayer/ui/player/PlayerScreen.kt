@@ -98,7 +98,7 @@ fun PlayerScreen(
                     player = viewModel.player
                     keepScreenOn = true
                     setShowSubtitleButton(true)
-                    subtitleView?.addView(AssSubtitleView(ctx, viewModel.assHandler))
+                    viewModel.assHandler?.let { subtitleView?.addView(AssSubtitleView(ctx, it)) }
                     setControllerVisibilityListener(PlayerView.ControllerVisibilityListener { controlsVisible = it == android.view.View.VISIBLE })
                 }
             },

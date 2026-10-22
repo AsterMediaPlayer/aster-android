@@ -14,6 +14,8 @@ data class AppSettings(
     val qualityIndex: Int = 0,
     val autoSkipSegments: Boolean = false,
     val autoPlayNext: Boolean = true,
+    /** ASS/SSA drawn by libass; off falls back to plain text. */
+    val styledSubtitles: Boolean = true,
 )
 
 private val Context.settingsDataStore by preferencesDataStore("aster_settings")
@@ -22,12 +24,14 @@ class SettingsStore(private val context: Context) {
     private val qualityKey = intPreferencesKey("quality")
     private val autoSkipKey = booleanPreferencesKey("auto_skip")
     private val autoPlayNextKey = booleanPreferencesKey("auto_play_next")
+    private val styledSubtitlesKey = booleanPreferencesKey("styled_subtitles")
 
     val settings: Flow<AppSettings> = context.settingsDataStore.data.map {
         AppSettings(
             qualityIndex = it[qualityKey] ?: 0,
             autoSkipSegments = it[autoSkipKey] ?: false,
             autoPlayNext = it[autoPlayNextKey] ?: true,
+            styledSubtitles = it[styledSubtitlesKey] ?: true,
         )
     }
 
@@ -36,4 +40,5 @@ class SettingsStore(private val context: Context) {
     suspend fun setQualityIndex(index: Int) = context.settingsDataStore.edit { it[qualityKey] = index }
     suspend fun setAutoSkipSegments(on: Boolean) = context.settingsDataStore.edit { it[autoSkipKey] = on }
     suspend fun setAutoPlayNext(on: Boolean) = context.settingsDataStore.edit { it[autoPlayNextKey] = on }
+    suspend fun setStyledSubtitles(on: Boolean) = context.settingsDataStore.edit { it[styledSubtitlesKey] = on }
 }

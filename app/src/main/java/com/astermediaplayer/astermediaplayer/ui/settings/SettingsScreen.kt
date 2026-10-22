@@ -53,6 +53,7 @@ fun SettingsScreen(session: Session?, store: SettingsStore, onSignOut: () -> Uni
             }
         }
         SwitchRow("Skip intros and credits automatically", settings.autoSkipSegments) { scope.launch { store.setAutoSkipSegments(it) } }
+        SwitchRow("Draw styled ASS/SSA subtitles (libass)", settings.styledSubtitles) { scope.launch { store.setStyledSubtitles(it) } }
         SwitchRow("Play the next episode automatically", settings.autoPlayNext) { scope.launch { store.setAutoPlayNext(it) } }
     }
 }

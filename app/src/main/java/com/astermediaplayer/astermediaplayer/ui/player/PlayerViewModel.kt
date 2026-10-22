@@ -23,7 +23,6 @@ import io.github.peerless2012.ass.media.factory.AssRenderersFactory
 import io.github.peerless2012.ass.media.kt.withAssMkvSupport
 import io.github.peerless2012.ass.media.parser.AssSubtitleParserFactory
 import io.github.peerless2012.ass.media.type.AssRenderType
-import com.astermediaplayer.astermediaplayer.data.AppSettings
 import com.astermediaplayer.astermediaplayer.data.AsterRepository
 import com.astermediaplayer.astermediaplayer.data.SettingsStore
 import com.astermediaplayer.astermediaplayer.ui.components.userMessage
@@ -37,6 +36,7 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import org.jellyfin.sdk.model.api.BaseItemDto
 import org.jellyfin.sdk.model.api.BaseItemKind
 import org.jellyfin.sdk.model.api.MediaSegmentDto
@@ -92,18 +92,23 @@ class PlayerViewModel(
     /** Emits the next episode's id when the current one finishes. */
     val playNext: SharedFlow<UUID> = _playNext.asSharedFlow()
 
-    /** libass draws ASS/SSA the way the release intended: positioned signs, vector drawings and embedded fonts. */
-    val assHandler = AssHandler(AssRenderType.OVERLAY_OPEN_GL, AssHandlerConfig(maxRenderPixels = 1920 * 1080))
-    private val assParserFactory = AssSubtitleParserFactory(assHandler)
+    private var appSettings = runBlocking { settings.current() }
 
-    val player: ExoPlayer = ExoPlayer.Builder(context.applicationContext, AssRenderersFactory(assHandler, renderersFactory(context)))
-        .setMediaSourceFactory(
-            DefaultMediaSourceFactory(
-                DefaultHttpDataSource.Factory()
-                    .setDefaultRequestProperties(mapOf("X-Emby-Token" to repo.session!!.accessToken)),
-                DefaultExtractorsFactory().withAssMkvSupport(assParserFactory, assHandler),
-            ).setSubtitleParserFactory(assParserFactory),
-        )
+    /** libass draws ASS/SSA the way the release intended: positioned signs, vector drawings and embedded fonts. Null when turned off in Settings. */
+    val assHandler: AssHandler? =
+        if (appSettings.styledSubtitles) AssHandler(AssRenderType.OVERLAY_OPEN_GL, AssHandlerConfig(maxRenderPixels = 1920 * 1080)) else null
+    private val assParserFactory = assHandler?.let { AssSubtitleParserFactory(it) }
+
+    private val mediaSourceFactory = DefaultMediaSourceFactory(
+        DefaultHttpDataSource.Factory().setDefaultRequestProperties(mapOf("X-Emby-Token" to repo.session!!.accessToken)),
+        DefaultExtractorsFactory().let { if (assHandler != null) it.withAssMkvSupport(assParserFactory!!, assHandler) else it },
+    ).also { if (assParserFactory != null) it.setSubtitleParserFactory(assParserFactory) }
+
+    val player: ExoPlayer = ExoPlayer.Builder(
+        context.applicationContext,
+        renderersFactory(context).let { if (assHandler != null) AssRenderersFactory(assHandler, it) else it },
+    )
+        .setMediaSourceFactory(mediaSourceFactory)
         .setLoadControl(DefaultLoadControl.Builder().setBufferDurationsMs(30_000, 90_000, 2_500, 5_000).build())
         .setAudioAttributes(
             androidx.media3.common.AudioAttributes.Builder()
@@ -150,14 +155,12 @@ class PlayerViewModel(
         }
     }
     private var forcedTranscode = false
-    private var appSettings = AppSettings()
     private var autoSkipped: SkipPrompt? = null
 
     init {
         player.addListener(listener)
-        assHandler.init(player)
+        assHandler?.init(player)
         viewModelScope.launch {
-            appSettings = settings.current()
             Qualities.getOrNull(appSettings.qualityIndex)?.let { q -> _state.update { it.copy(quality = q) } }
             start(null)
         }
@@ -194,7 +197,13 @@ class PlayerViewModel(
 
                 val subtitles = source.mediaStreams.orEmpty()
                     .filter { it.type == MediaStreamType.SUBTITLE && it.deliveryMethod == SubtitleDeliveryMethod.EXTERNAL && it.deliveryUrl != null }
-                    .map { subtitleConfiguration(it) }
+                    .map { subtitleConfiguration(it, selected = it.index == source.defaultSubtitleStreamIndex) }
+                android.util.Log.i(
+                    "Aster",
+                    "Subtitles: " + source.mediaStreams.orEmpty().filter { it.type == MediaStreamType.SUBTITLE }
+                        .joinToString { "#${it.index} ${it.codec} ${it.language} ${it.deliveryMethod} default=${it.isDefault}" } +
+                        " | server default=${source.defaultSubtitleStreamIndex} | external=${subtitles.size}",
+                )
                 player.setMediaItem(
                     MediaItem.Builder()
                         .setUri(url)
@@ -234,7 +243,7 @@ class PlayerViewModel(
         }
     }
 
-    private fun subtitleConfiguration(stream: MediaStream): MediaItem.SubtitleConfiguration {
+    private fun subtitleConfiguration(stream: MediaStream, selected: Boolean): MediaItem.SubtitleConfiguration {
         val mime = when (stream.codec?.lowercase()) {
             "vtt", "webvtt" -> MimeTypes.TEXT_VTT
             "ass", "ssa" -> MimeTypes.TEXT_SSA
@@ -242,9 +251,10 @@ class PlayerViewModel(
         }
         return MediaItem.SubtitleConfiguration.Builder(Uri.parse(repo.absoluteUrl(stream.deliveryUrl!!)))
             .setMimeType(mime)
+            .setId((SUBTITLE_ID_BASE + stream.index).toString())
             .setLanguage(stream.language)
             .setLabel(stream.displayTitle ?: stream.title ?: stream.language)
-            .setSelectionFlags(if (stream.isDefault) C.SELECTION_FLAG_DEFAULT else 0)
+            .setSelectionFlags(if (selected || stream.isDefault) C.SELECTION_FLAG_DEFAULT else 0)
             .build()
     }
 
@@ -344,7 +354,7 @@ class PlayerViewModel(
         tickJob?.cancel()
         player.removeListener(listener)
         player.release()
-        assHandler.release()
+        assHandler?.release()
     }
 
     private companion object {
@@ -366,6 +376,8 @@ class PlayerViewModel(
 
         const val TICKS_PER_MS = 10_000L
         const val PROGRESS_INTERVAL_MS = 10_000
+        /** libass needs external subtitle ids that can't collide with the container's own track ids. */
+        const val SUBTITLE_ID_BASE = 128
         const val FALLBACK_BITRATE = 8_000_000
     }
 }

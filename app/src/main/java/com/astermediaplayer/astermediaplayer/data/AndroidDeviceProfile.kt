@@ -14,6 +14,11 @@ import org.jellyfin.sdk.model.api.TranscodingProfile
  * the Android counterpart of `DeviceProfile.appleTV` in the iOS app.
  */
 object AndroidDeviceProfile {
+    /** The emulator only has software AV1 decoding, and its frames come out green and doubled, so the server converts AV1 for it. */
+    private val isEmulator: Boolean
+        get() = android.os.Build.HARDWARE.let { it.contains("ranchu") || it.contains("goldfish") } ||
+            android.os.Build.FINGERPRINT.contains("generic")
+
     fun build(maxBitrate: Int) = DeviceProfile(
         name = "Aster Android",
         maxStreamingBitrate = maxBitrate,
@@ -23,7 +28,7 @@ object AndroidDeviceProfile {
             DirectPlayProfile(
                 container = "mp4,m4v,mkv,webm",
                 type = DlnaProfileType.VIDEO,
-                videoCodec = "h264,hevc,vp9,av1",
+                videoCodec = if (isEmulator) "h264,hevc,vp9" else "h264,hevc,vp9,av1",
                 audioCodec = "aac,mp3,opus,flac,vorbis,ac3,eac3",
             ),
             DirectPlayProfile(
