@@ -178,13 +178,26 @@ val TabBarClearance = 110.dp
  * The hero banner, the Apple apps' `HeroCarousel` and `HeroCard`: as tall as the window, one title per swipeable page
  * with its logo, meta line, overview and a Play button over the bottom, and the page dots under the tab bar.
  */
+/** A page's own button, in place of Play / Resume (Upcoming's "Watch Now" and "Go to Show"). */
+data class HeroAction(val title: String, val icon: androidx.compose.ui.graphics.vector.ImageVector)
+
 @Composable
-fun FeaturedBanner(items: List<BaseItemDto>, onItem: (BaseItemDto) -> Unit, onPlay: (UUID) -> Unit) {
+fun FeaturedBanner(
+    items: List<BaseItemDto>,
+    onItem: (BaseItemDto) -> Unit,
+    onPlay: (UUID) -> Unit,
+    /** A short label over a page's title, e.g. Upcoming's countdown. */
+    tag: (BaseItemDto) -> String? = { null },
+    /** A page with an action only opens (its destination); one without plays. */
+    action: (BaseItemDto) -> HeroAction? = { null },
+    /** What selecting a page opens; the page's own title unless given. */
+    destination: (BaseItemDto) -> BaseItemDto = { it },
+) {
     val pager = rememberPagerState { items.size }
     val density = LocalDensity.current
     val windowHeight = with(density) { LocalWindowInfo.current.containerSize.height.toDp() }
     Box(Modifier.fillMaxWidth().height(windowHeight)) {
-        HorizontalPager(pager, Modifier.fillMaxSize()) { page -> FeaturedPage(items[page], onItem, onPlay) }
+        HorizontalPager(pager, Modifier.fillMaxSize()) { page -> FeaturedPage(items[page], onItem, onPlay, tag(items[page]), action(items[page]), destination) }
         if (items.size > 1) {
             // Capsule of dots at the bottom right, in line with the Play button's bottom.
             Row(
@@ -201,7 +214,7 @@ fun FeaturedBanner(items: List<BaseItemDto>, onItem: (BaseItemDto) -> Unit, onPl
 }
 
 @Composable
-private fun FeaturedPage(item: BaseItemDto, onItem: (BaseItemDto) -> Unit, onPlay: (UUID) -> Unit) {
+private fun FeaturedPage(item: BaseItemDto, onItem: (BaseItemDto) -> Unit, onPlay: (UUID) -> Unit, tag: String?, action: HeroAction?, destination: (BaseItemDto) -> BaseItemDto) {
     val repo = (LocalContext.current.applicationContext as AsterApp).repository
     val wide = LocalConfiguration.current.screenWidthDp >= 600
     // Portrait phones get the poster, which fills the tall banner; wide screens get the backdrop.
@@ -211,7 +224,7 @@ private fun FeaturedPage(item: BaseItemDto, onItem: (BaseItemDto) -> Unit, onPla
     val playable = item.type != BaseItemKind.SERIES
     val remaining = remainingText(item)
 
-    Box(Modifier.fillMaxSize().clickable { onItem(item) }) {
+    Box(Modifier.fillMaxSize().clickable { onItem(destination(item)) }) {
         AsyncImage(model = art, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
         // Dark toward the bottom from just under the middle, and a little at the left edge.
         Box(
@@ -224,6 +237,13 @@ private fun FeaturedPage(item: BaseItemDto, onItem: (BaseItemDto) -> Unit, onPla
             Modifier.align(Alignment.BottomStart).fillMaxWidth().padding(horizontal = Lockup.screenPadding).padding(bottom = 125.dp),
             verticalArrangement = Arrangement.spacedBy(18.dp),
         ) {
+            if (tag != null) {
+                // White with black text, readable over any backdrop.
+                Text(
+                    tag.uppercase(), style = Type.headline.copy(fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp), color = Color.Black,
+                    modifier = Modifier.clip(CircleShape).background(Color.White).padding(horizontal = 14.dp, vertical = 6.dp),
+                )
+            }
             if (logo != null) {
                 Box(Modifier.widthIn(max = 260.dp).height(90.dp).fillMaxWidth()) {
                     AsyncImage(model = logo, contentDescription = item.name, contentScale = ContentScale.Fit, alignment = Alignment.CenterStart, modifier = Modifier.fillMaxSize())
@@ -243,19 +263,20 @@ private fun FeaturedPage(item: BaseItemDto, onItem: (BaseItemDto) -> Unit, onPla
             }
             Row(
                 Modifier.clip(CircleShape).background(Color.White.copy(alpha = 0.9f))
-                    .clickable { if (playable) onPlay(item.id) else onItem(item) }.padding(horizontal = 28.dp, vertical = 14.dp),
+                    .clickable { if (action != null) onItem(destination(item)) else if (playable) onPlay(item.id) else onItem(item) }.padding(horizontal = 28.dp, vertical = 14.dp),
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp),
             ) {
-                Icon(Icons.Default.PlayArrow, null, tint = Color.Black, modifier = Modifier.size(17.dp))
+                Icon(action?.icon ?: Icons.Default.PlayArrow, null, tint = Color.Black, modifier = Modifier.size(17.dp))
                 Text(
                     when {
+                        action != null -> action.title
                         (item.userData?.playbackPositionTicks ?: 0L) > 0 && playable -> "Resume"
                         item.type == BaseItemKind.SERIES -> "Watch Now"
                         else -> "Play"
                     },
                     style = Type.headline, color = Color.Black,
                 )
-                if (playable && remaining != null) Text("·  $remaining", style = Type.headline.copy(fontWeight = FontWeight.Normal), color = Color.Black.copy(alpha = 0.5f))
+                if (action == null && playable && remaining != null) Text("·  $remaining", style = Type.headline.copy(fontWeight = FontWeight.Normal), color = Color.Black.copy(alpha = 0.5f))
             }
         }
     }

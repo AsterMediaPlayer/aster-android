@@ -1,6 +1,7 @@
 package com.astermediaplayer.astermediaplayer.ui
 
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -33,6 +34,8 @@ import com.astermediaplayer.astermediaplayer.ui.audiobooks.AudiobookBar
 import com.astermediaplayer.astermediaplayer.data.channels.ChannelTuner
 import com.astermediaplayer.astermediaplayer.ui.channels.ChannelsScreen
 import com.astermediaplayer.astermediaplayer.ui.downloads.DownloadsScreen
+import com.astermediaplayer.astermediaplayer.ui.upcoming.UpcomingScreen
+import com.astermediaplayer.astermediaplayer.ui.upcoming.UpcomingViewModel
 import com.astermediaplayer.astermediaplayer.ui.livetv.LiveTvScreen
 import com.astermediaplayer.astermediaplayer.ui.music.AlbumPage
 import com.astermediaplayer.astermediaplayer.ui.music.ArtistPage
@@ -349,9 +352,10 @@ private enum class Tab(val label: String, val icon: ImageVector) {
 /** The More list, in the Apple apps' order; the ones built so far. */
 private enum class MoreDestination(val label: String, val icon: ImageVector) {
     Music("Music", Icons.Default.MusicNote),
+    Audiobooks("Audiobooks", Icons.Default.LibraryBooks),
+    Upcoming("Upcoming", Icons.Default.CalendarMonth),
     LiveTv("Live TV", Icons.Default.Sensors),
     Channels("Channels", Icons.Default.Tv),
-    Audiobooks("Audiobooks", Icons.Default.LibraryBooks),
     Downloads("Downloads", Icons.Default.Download),
     Settings("Settings", Icons.Default.Settings),
     Search("Search", Icons.Default.Search),
@@ -382,6 +386,9 @@ private fun MainTabs(
     // Anime is whatever Shoko/AniDB matched; those libraries get their own tab and Movies and TV Shows skip them.
     // Null until the check has run, so Movies and TV Shows don't load with anime still in them.
     val detectedAnime by produceState<List<BaseItemDto>?>(null, libraries) { value = if (libraries.isEmpty()) null else runCatching { repo.animeLibraries(libraries) }.getOrDefault(emptyList()) }
+    // Upcoming is listed only while the server has something coming up, as on the Apple apps.
+    val hasUpcoming by produceState(false) { value = runCatching { repo.upcoming(1).isNotEmpty() }.getOrDefault(false) }
+    val upcoming: UpcomingViewModel = viewModel(factory = viewModelFactory { initializer { UpcomingViewModel(repo) } })
     val animeLibraries = detectedAnime.orEmpty()
     val animeIds = animeLibraries.map { it.id }.toSet()
     val moviesLibrary = libraries.firstOrNull { it.collectionType == CollectionType.MOVIES && it.id !in animeIds }
@@ -446,6 +453,10 @@ private fun MainTabs(
                     DownloadsScreen(onPlay = onPlay, onBook = { id -> (app.audiobookLibrary.state.value.book(id) ?: app.downloads.savedBook(id))?.let(onBook) }, modifier = Modifier.fillMaxSize(), topInset = 56.dp)
                     BackButton { more = null }
                 }
+                MoreDestination.Upcoming -> Box(modifier) {
+                    UpcomingScreen(upcoming, onItem = onItem, onPlay = onPlay, modifier = Modifier.fillMaxSize())
+                    BackButton { more = null }
+                }
                 MoreDestination.Search -> Box(modifier) {
                     SearchScreen(search, onItem = onItem, modifier = Modifier.statusBarsPadding().padding(top = 56.dp))
                     BackButton { more = null }
@@ -454,7 +465,7 @@ private fun MainTabs(
                     SettingsScreen(repo.session, app.settings, onSignOut, Modifier.statusBarsPadding().padding(top = 56.dp))
                     BackButton { more = null }
                 }
-                null -> MoreMenu(onPick = { more = it }, modifier = modifier.statusBarsPadding())
+                null -> MoreMenu(MoreDestination.entries.filter { it != MoreDestination.Upcoming || hasUpcoming }, onPick = { more = it }, modifier = modifier.statusBarsPadding())
             }
         }
     }
@@ -486,11 +497,11 @@ private fun MainTabs(
 }
 
 @Composable
-private fun MoreMenu(onPick: (MoreDestination) -> Unit, modifier: Modifier = Modifier) {
+private fun MoreMenu(destinations: List<MoreDestination>, onPick: (MoreDestination) -> Unit, modifier: Modifier = Modifier) {
     Column(modifier.fillMaxSize()) {
         // The Apple apps' navigation title: small and centered.
         Text("More", style = Type.headline, modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
-        MoreDestination.entries.forEach { dest ->
+        destinations.forEach { dest ->
             Row(Modifier.fillMaxWidth().clickable { onPick(dest) }, verticalAlignment = Alignment.CenterVertically) {
                 Box(Modifier.width(56.dp), contentAlignment = Alignment.Center) { Icon(dest.icon, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(24.dp)) }
                 Column(Modifier.weight(1f)) {

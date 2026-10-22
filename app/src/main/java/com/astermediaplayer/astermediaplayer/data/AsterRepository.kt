@@ -156,6 +156,14 @@ class AsterRepository(context: Context, private val store: SessionStore) {
         GetNextUpRequest(userId = userId, limit = limit, seriesId = seriesId, parentId = parentId),
     ).content.items
 
+    /** Episodes of shows in the library that air soon, soonest first; most are placeholders from the show's schedule rather than files. */
+    suspend fun upcoming(limit: Int = 100): List<BaseItemDto> = api.showApi.getUpcomingEpisodes(
+        org.jellyfin.sdk.model.api.request.GetUpcomingEpisodesRequest(
+            userId = userId, limit = limit, fields = listOf(ItemFields.OVERVIEW, ItemFields.GENRES),
+            enableImageTypes = listOf(ImageType.PRIMARY, ImageType.BACKDROP, ImageType.THUMB, ImageType.LOGO), imageTypeLimit = 1,
+        ),
+    ).content.items
+
     suspend fun latest(parentId: UUID?, limit: Int = 20, kinds: List<BaseItemKind>? = null): List<BaseItemDto> = api.libraryApi.getLatestMedia(
         userId = userId, parentId = parentId, limit = limit, includeItemTypes = kinds,
         fields = listOf(ItemFields.OVERVIEW, ItemFields.GENRES),
