@@ -62,6 +62,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -326,7 +327,7 @@ fun DetailScreen(
 }
 
 /** The sections under a title's header. */
-private enum class DetailTab(val label: String) { Episodes("Episodes"), Music("Music"), Details("Details") }
+private enum class DetailTab(val label: String) { Episodes("Episodes"), Music("Music"), Related("Related"), Details("Details") }
 
 @Composable
 private fun DetailBody(
@@ -369,6 +370,7 @@ private fun DetailBody(
     val tabs = buildList {
         if (content.episodes.isNotEmpty()) add(DetailTab.Episodes)
         if (content.openingsEndings.isNotEmpty()) add(DetailTab.Music)
+        if (content.similar.isNotEmpty()) add(DetailTab.Related)
         add(DetailTab.Details)
     }
     var selectedTab by rememberSaveable { mutableStateOf(tabs.first().name) }
@@ -408,16 +410,21 @@ private fun DetailBody(
             }
             Column(Modifier.fillMaxWidth().background(Color.Black.copy(alpha = 0.82f)).navigationBarsPadding().padding(bottom = 32.dp)) {
                 if (tabs.size > 1) {
-                    Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    // A segmented control, as on the Apple apps' title pages.
+                    Row(
+                        Modifier.padding(horizontal = 16.dp, vertical = 20.dp).fillMaxWidth().clip(RoundedCornerShape(50))
+                            .background(Color.White.copy(alpha = 0.1f)).padding(4.dp),
+                    ) {
                         tabs.forEach { t ->
                             val active = t == tab
-                            Text(
-                                t.label, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleMedium,
-                                color = if (active) Color.White else Color.White.copy(alpha = 0.6f),
-                                modifier = Modifier.clip(RoundedCornerShape(50))
-                                    .background(if (active) Color.White.copy(alpha = 0.2f) else Color.Transparent)
-                                    .clickable { selectedTab = t.name }.padding(horizontal = 18.dp, vertical = 10.dp),
-                            )
+                            Box(
+                                Modifier.weight(1f).clip(RoundedCornerShape(50))
+                                    .background(if (active) Color.White.copy(alpha = 0.22f) else Color.Transparent)
+                                    .clickable { selectedTab = t.name }.padding(vertical = 10.dp),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Text(t.label, color = Color.White, fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal, style = MaterialTheme.typography.titleMedium, maxLines = 1)
+                            }
                         }
                     }
                 }
@@ -426,10 +433,8 @@ private fun DetailBody(
                     DetailTab.Music -> Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         content.openingsEndings.forEach { oe -> ThemeCard(oe, onClick = { onPlayTheme(oe) }) }
                     }
-                    DetailTab.Details -> {
-                        CastRow(item.people.orEmpty(), repo)
-                        Shelf("More like this", content.similar, onItem = onItem)
-                    }
+                    DetailTab.Related -> Shelf("Related", content.similar, onItem = onItem)
+                    DetailTab.Details -> CastRow(item.people.orEmpty(), repo)
                 }
             }
         }
@@ -558,20 +563,54 @@ private fun EpisodesSection(content: DetailContent, viewModel: DetailViewModel, 
     if (content.seasons.size > 1) {
         LazyRow(
             contentPadding = PaddingValues(horizontal = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            modifier = Modifier.padding(bottom = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            modifier = Modifier.padding(bottom = 16.dp),
         ) {
             items(content.seasons, key = { it.id }) { season ->
-                FilterChip(
-                    selected = season.id == content.selectedSeason,
-                    onClick = { viewModel.selectSeason(season.id) },
-                    label = { Text(season.name.orEmpty()) },
+                val active = season.id == content.selectedSeason
+                Text(
+                    season.name.orEmpty(), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold,
+                    color = if (active) Color.White else Color.White.copy(alpha = 0.8f),
+                    modifier = Modifier.clip(RoundedCornerShape(50))
+                        .background(if (active) Color.White.copy(alpha = 0.22f) else Color.White.copy(alpha = 0.1f))
+                        .clickable { viewModel.selectSeason(season.id) }.padding(horizontal = 24.dp, vertical = 14.dp),
                 )
             }
         }
     }
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        content.episodes.forEach { episode -> EpisodeRow(episode, repo, onPlay) }
+    Text("Episodes", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
+    val cardWidth = (LocalConfiguration.current.screenWidthDp * 0.43f).coerceIn(170f, 300f).dp
+    LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        items(content.episodes, key = { it.id }) { episode -> EpisodeCard(episode, repo, onPlay, Modifier.width(cardWidth)) }
+    }
+}
+
+@Composable
+private fun EpisodeCard(episode: BaseItemDto, repo: AsterRepository, onPlay: (UUID) -> Unit, modifier: Modifier = Modifier) {
+    Column(modifier.clickable { onPlay(episode.id) }) {
+        Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(12.dp))) {
+            AsyncImage(
+                model = repo.imageUrl(episode, ImageType.PRIMARY, 600), contentDescription = null,
+                contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize(),
+            )
+            episode.progress()?.let {
+                LinearProgressIndicator(
+                    progress = { it }, color = Color.White, trackColor = Color.White.copy(alpha = 0.3f),
+                    modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(4.dp),
+                )
+            }
+            if (episode.userData?.played == false && episode.progress() == null) {
+                Box(Modifier.align(Alignment.TopEnd).padding(10.dp).size(14.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary))
+            }
+        }
+        Text(
+            episode.name.orEmpty(), style = MaterialTheme.typography.titleMedium, maxLines = 1,
+            overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 6.dp),
+        )
+        Text(
+            listOfNotNull(episode.parentIndexNumber?.let { "S$it" }, episode.indexNumber?.let { "E$it" }).joinToString(", "),
+            style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 
@@ -641,38 +680,6 @@ private fun CastRow(people: List<BaseItemPerson>, repo: AsterRepository) {
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun EpisodeRow(episode: BaseItemDto, repo: AsterRepository, onPlay: (UUID) -> Unit) {
-    Row(
-        Modifier.fillMaxWidth().clickable { onPlay(episode.id) }.padding(horizontal = 16.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Box(Modifier.width(150.dp).aspectRatio(16f / 9f).clip(RoundedCornerShape(8.dp))) {
-            AsyncImage(
-                model = repo.imageUrl(episode, ImageType.PRIMARY, 400), contentDescription = null,
-                contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize(),
-            )
-            episode.progress()?.let {
-                LinearProgressIndicator(progress = { it }, modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(3.dp))
-            }
-        }
-        Column(Modifier.weight(1f)) {
-            Text(
-                listOfNotNull(episode.indexNumber?.toString(), episode.name).joinToString(". "),
-                style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                runtimeText(episode).orEmpty(), style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            episode.overview?.let {
-                Text(it, style = MaterialTheme.typography.bodySmall, maxLines = 3, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-        }
-        if (episode.userData?.played == true) Icon(Icons.Default.Check, "Watched", tint = MaterialTheme.colorScheme.primary)
     }
 }
 
