@@ -5,6 +5,29 @@ import android.content.pm.ActivityInfo
 import android.view.ViewGroup
 import androidx.annotation.OptIn
 import androidx.compose.foundation.background
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.filled.Fullscreen
+import androidx.compose.material.icons.filled.FullscreenExit
+import androidx.compose.material.icons.filled.Speed
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.sp
+import com.astermediaplayer.astermediaplayer.ui.theme.Type
+import kotlinx.coroutines.delay
+import kotlin.math.max
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -60,11 +83,45 @@ fun PlayerScreen(
     val state by viewModel.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val activity = context as? Activity
-    var controlsVisible by remember { mutableStateOf(true) }
     var qualityMenu by remember { mutableStateOf(false) }
     var chapterMenu by remember { mutableStateOf(false) }
     var subtitleMenu by remember { mutableStateOf(false) }
+    var speedMenu by remember { mutableStateOf(false) }
     var playerView by remember { mutableStateOf<PlayerView?>(null) }
+    val exo = viewModel.player
+    val clock = rememberPlayerClock(exo)
+    val scope = rememberCoroutineScope()
+
+    // The controls come up on a tap and fade a few seconds after the last touch; they stay up while paused or a menu is open.
+    var touchedAt by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    var visible by remember { mutableStateOf(true) }
+    var scrubbing by remember { mutableStateOf(false) }
+    val menuOpen = subtitleMenu || qualityMenu || chapterMenu || speedMenu
+    val controlsVisible = visible || !clock.playing
+    fun reveal() { visible = true; touchedAt = System.currentTimeMillis() }
+    LaunchedEffect(touchedAt, clock.playing, menuOpen, scrubbing, visible) {
+        if (visible && clock.playing && !menuOpen && !scrubbing) {
+            delay(5000)
+            visible = false
+        }
+    }
+    // Fill the screen (cropping the picture) or fit it in.
+    var fills by remember { mutableStateOf(false) }
+    var flash by remember { mutableStateOf<Pair<Boolean, Long>?>(null) }
+    // Skips in a row add up from where the last one was headed, not from where playback still is.
+    var lastTarget by remember { mutableLongStateOf(0L) }
+    var lastSkipAt by remember { mutableLongStateOf(0L) }
+    fun skip(seconds: Int) {
+        val now = System.currentTimeMillis()
+        val from = if (now - lastSkipAt < 1500) lastTarget else exo.currentPosition
+        val end = if (exo.duration > 0) exo.duration - 1000 else Long.MAX_VALUE
+        val to = (from + seconds * 1000L).coerceIn(0L, max(end, 0L))
+        exo.seekTo(to)
+        lastTarget = to; lastSkipAt = now
+        reveal()
+    }
+    // Back and forward 10 are for a title; a channel keeps to its schedule.
+    val canSeek = !state.live && !state.channel
 
     LaunchedEffect(viewModel) { viewModel.playNext.collect(onPlayNext) }
     LaunchedEffect(viewModel) { viewModel.finished.collect { onBack() } }
@@ -87,13 +144,6 @@ fun PlayerScreen(
         }
     }
 
-    // A menu open keeps the controls up; they'd otherwise time out from under it.
-    val menuOpen = subtitleMenu || qualityMenu || chapterMenu
-    LaunchedEffect(menuOpen) {
-        playerView?.controllerShowTimeoutMs = if (menuOpen) 0 else 5000
-        if (menuOpen) playerView?.showController()
-    }
-
     // Pause when the app goes to the background.
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
@@ -110,63 +160,116 @@ fun PlayerScreen(
                     player = viewModel.player
                     keepScreenOn = true
                     playerView = this
-                    // Our own subtitle menu, which also offers the picture-based tracks the server burns in.
-                    setShowSubtitleButton(false)
+                    // The controls are ours, drawn below, in the Apple apps' layout.
+                    useController = false
                     viewModel.assHandler?.let { subtitleView?.addView(AssSubtitleView(ctx, it)) }
-                    setControllerVisibilityListener(PlayerView.ControllerVisibilityListener { controlsVisible = it == android.view.View.VISIBLE })
                 }
             },
+            update = { it.resizeMode = if (fills) androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_ZOOM else androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT },
             modifier = Modifier.fillMaxSize(),
         )
+
+        // A tap on the picture shows or hides the controls; a double-tap on either side skips 10 seconds; a pinch fills the screen or fits it.
+        Box(
+            Modifier.fillMaxSize().pinchToFill { fills = it; reveal() }.pointerInput(canSeek) {
+                detectTapGestures(
+                    onTap = { if (controlsVisible && clock.playing) visible = false else reveal() },
+                    onDoubleTap = { at ->
+                        if (canSeek) {
+                            val forward = at.x > size.width / 2
+                            skip(if (forward) 10 else -10)
+                            flash = forward to System.currentTimeMillis()
+                        }
+                    },
+                )
+            },
+        )
+        flash?.let { (forward, at) ->
+            SkipFlash(forward)
+            LaunchedEffect(at) { delay(700); if (flash?.second == at) flash = null }
+        }
 
         if (state.loading && state.error == null) {
             CircularProgressIndicator(Modifier.align(Alignment.Center))
         }
 
-        if (controlsVisible) {
-            Row(
-                Modifier.fillMaxWidth().align(Alignment.TopStart).padding(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Color.White) }
-                Column(Modifier.weight(1f)) {
-                    Text(state.title, color = Color.White, style = MaterialTheme.typography.titleMedium, maxLines = 1)
-                    state.subtitle?.let { Text(it, color = Color.White.copy(alpha = 0.7f), style = MaterialTheme.typography.labelMedium) }
-                }
-                if (state.chapters.isNotEmpty()) Box {
-                    IconButton(onClick = { chapterMenu = true }) { Icon(Icons.Default.Bookmarks, "Chapters", tint = Color.White) }
-                    DropdownMenu(expanded = chapterMenu, onDismissRequest = { chapterMenu = false }) {
-                        state.chapters.forEachIndexed { index, chapter ->
-                            DropdownMenuItem(
-                                text = { Text((if (index == state.chapterIndex) "✓ " else "") + chapter.name) },
-                                onClick = { chapterMenu = false; viewModel.seekToChapter(chapter) },
-                            )
-                        }
+        val shade by animateFloatAsState(if (controlsVisible) 1f else 0f, tween(250), label = "controls")
+        if (shade > 0f) Box(Modifier.fillMaxSize().alpha(shade)) {
+            // Darkens the edges so white text reads over a bright picture.
+            Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0f to Color.Black.copy(alpha = 0.6f), 0.35f to Color.Transparent, 0.65f to Color.Transparent, 1f to Color.Black.copy(alpha = 0.7f))))
+            Column(Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 12.dp)) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
+                    Box(
+                        Modifier.size(44.dp).clip(CircleShape).background(Color.Black.copy(alpha = 0.35f)).clickable(onClick = onBack),
+                        contentAlignment = Alignment.Center,
+                    ) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Color.White) }
+                    Column(Modifier.weight(1f).padding(start = 12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        state.subtitle?.let { Text(it, style = Type.headline, color = Color.White.copy(alpha = 0.7f), maxLines = 1) }
+                        Text(state.title, style = Type.title3.copy(fontSize = 22.sp, lineHeight = 28.sp), color = Color.White, maxLines = 1)
                     }
                 }
-                if (state.subtitles.size > 1) Box {
-                    IconButton(onClick = { subtitleMenu = true }) { Icon(Icons.Default.Subtitles, "Subtitles", tint = Color.White) }
-                    DropdownMenu(expanded = subtitleMenu, onDismissRequest = { subtitleMenu = false }) {
-                        state.subtitles.forEach { choice ->
-                            DropdownMenuItem(
-                                text = { Text(if (choice.selected) "✓ ${choice.label}" else choice.label) },
-                                onClick = { subtitleMenu = false; viewModel.select(choice) },
-                            )
+                Spacer(Modifier.weight(1f))
+                if (state.live) {
+                    Row(
+                        Modifier.clip(CircleShape).background(Color.Black.copy(alpha = 0.5f)).padding(horizontal = 12.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Box(Modifier.size(10.dp).clip(CircleShape).background(Color.Red))
+                        Text("LIVE", style = Type.callout.copy(fontWeight = FontWeight.Bold, letterSpacing = 1.sp), color = Color.White)
+                    }
+                } else {
+                    Timeline(clock, canScrub = canSeek, onScrubbing = { scrubbing = it; if (it) reveal() }, onSeek = { exo.seekTo(it); reveal() }, preview = viewModel::scrubFrame)
+                }
+                Row(Modifier.fillMaxWidth().padding(top = 16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+                    BarIcon(if (fills) Icons.Default.FullscreenExit else Icons.Default.Fullscreen, if (fills) "Fit to Screen" else "Fill Screen") { fills = !fills; reveal() }
+                    Spacer(Modifier.weight(1f))
+                    if (!state.live && state.chapters.isNotEmpty()) Box {
+                        BarIcon(Icons.Default.Bookmarks, "Chapters") { chapterMenu = true }
+                        DropdownMenu(expanded = chapterMenu, onDismissRequest = { chapterMenu = false }) {
+                            state.chapters.forEachIndexed { index, chapter ->
+                                DropdownMenuItem(
+                                    text = { Text((if (index == state.chapterIndex) "✓ " else "") + chapter.name) },
+                                    onClick = { chapterMenu = false; viewModel.seekToChapter(chapter); reveal() },
+                                )
+                            }
                         }
                     }
-                }
-                Box {
-                    IconButton(onClick = { qualityMenu = true }) { Icon(Icons.Default.HighQuality, "Quality", tint = Color.White) }
-                    DropdownMenu(expanded = qualityMenu, onDismissRequest = { qualityMenu = false }) {
-                        Qualities.forEach { option ->
-                            DropdownMenuItem(
-                                text = { Text(if (option == state.quality) "✓ ${option.label}" else option.label) },
-                                onClick = { qualityMenu = false; viewModel.setQuality(option) },
-                            )
+                    if (!state.live) Box {
+                        BarIcon(Icons.Default.Speed, "Speed") { speedMenu = true }
+                        DropdownMenu(expanded = speedMenu, onDismissRequest = { speedMenu = false }) {
+                            PlaybackSpeeds.forEach { speed ->
+                                DropdownMenuItem(
+                                    text = { Text((if (speed == state.speed) "✓ " else "") + speedTitle(speed)) },
+                                    onClick = { speedMenu = false; viewModel.setSpeed(speed); reveal() },
+                                )
+                            }
+                        }
+                    }
+                    if (state.subtitles.size > 1) Box {
+                        BarIcon(Icons.Default.Subtitles, "Subtitles") { subtitleMenu = true }
+                        DropdownMenu(expanded = subtitleMenu, onDismissRequest = { subtitleMenu = false }) {
+                            state.subtitles.forEach { choice ->
+                                DropdownMenuItem(
+                                    text = { Text(if (choice.selected) "✓ ${choice.label}" else choice.label) },
+                                    onClick = { subtitleMenu = false; viewModel.select(choice); reveal() },
+                                )
+                            }
+                        }
+                    }
+                    Box {
+                        BarIcon(Icons.Default.HighQuality, "Quality") { qualityMenu = true }
+                        DropdownMenu(expanded = qualityMenu, onDismissRequest = { qualityMenu = false }) {
+                            Qualities.forEach { option ->
+                                DropdownMenuItem(
+                                    text = { Text(if (option == state.quality) "✓ ${option.label}" else option.label) },
+                                    onClick = { qualityMenu = false; viewModel.setQuality(option); reveal() },
+                                )
+                            }
                         }
                     }
                 }
             }
+            CenterButtons(clock.playing, canSkip = canSeek, onSkip = ::skip, onToggle = { if (exo.playWhenReady) exo.pause() else exo.play(); reveal() }, modifier = Modifier.align(Alignment.Center))
         }
 
         if (state.live) {
@@ -177,9 +280,9 @@ fun PlayerScreen(
             ChannelDialOverlay(
                 channels = dial, playingId = channelId.toString(), controlsShown = controlsVisible,
                 // The controls stay up while the dial turns, and go once a channel's tuned, the dial with them.
-                onActivity = { playerView?.showController() },
+                onActivity = { reveal() },
                 onTune = { id -> viewModel.switchChannel(java.util.UUID.fromString(id)) },
-                onTuned = { playerView?.hideController() },
+                onTuned = { visible = false },
             )
         } else if (state.channel) {
             val playing by viewModel.playingPlaylistChannel.collectAsStateWithLifecycle()
@@ -188,9 +291,9 @@ fun PlayerScreen(
             val dial = remember(playing) { ChannelTuner.orderedChannels.map { it.toDial(repo) } }
             ChannelDialOverlay(
                 channels = dial, playingId = playing.orEmpty(), controlsShown = controlsVisible,
-                onActivity = { playerView?.showController() },
+                onActivity = { reveal() },
                 onTune = { id -> viewModel.switchPlaylistChannel(id) },
-                onTuned = { playerView?.hideController() },
+                onTuned = { visible = false },
             )
             ChannelBug(playing, state.breakClip, state.title)
         }
@@ -198,7 +301,7 @@ fun PlayerScreen(
         state.skip?.let { prompt ->
             Button(
                 onClick = viewModel::skip,
-                modifier = Modifier.align(Alignment.BottomEnd).padding(end = 24.dp, bottom = if (controlsVisible) 96.dp else 32.dp),
+                modifier = Modifier.align(Alignment.BottomEnd).padding(end = 24.dp, bottom = if (controlsVisible) 150.dp else 32.dp),
             ) { Text(prompt.label) }
         }
 
@@ -210,3 +313,17 @@ fun PlayerScreen(
         }
     }
 }
+
+/** A bottom-row control: just its icon, as the Apple apps' icon-only buttons. */
+@Composable
+private fun BarIcon(icon: androidx.compose.ui.graphics.vector.ImageVector, description: String, onClick: () -> Unit) {
+    Box(Modifier.size(40.dp).clip(CircleShape).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onClick), contentAlignment = Alignment.Center) {
+        Icon(icon, description, tint = Color.White, modifier = Modifier.size(24.dp))
+    }
+}
+
+/** The speeds offered. */
+val PlaybackSpeeds = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f)
+
+/** "1×", "1.25×". */
+fun speedTitle(speed: Float): String = (if (speed == speed.toInt().toFloat()) speed.toInt().toString() else "%.2f".format(speed).trimEnd('0')) + "×"

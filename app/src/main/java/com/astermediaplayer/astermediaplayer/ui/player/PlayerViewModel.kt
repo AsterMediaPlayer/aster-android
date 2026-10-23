@@ -94,6 +94,8 @@ data class PlayerUiState(
     val chapterIndex: Int = -1,
     /** The subtitle menu: Off, the tracks the player can draw, and picture-based ones the server can burn in. */
     val subtitles: List<SubtitleChoice> = emptyList(),
+    /** Playback speed, 1 for normal. */
+    val speed: Float = 1f,
 )
 
 @OptIn(UnstableApi::class)
@@ -228,6 +230,28 @@ class PlayerViewModel(
     private var pendingPick: Triple<String?, String?, String?>? = null
     private var currentSource: org.jellyfin.sdk.model.api.MediaSourceInfo? = null
 
+    /** The frames shown above the timeline while scrubbing, when the server has made them for this title. */
+    private var scrub: com.astermediaplayer.astermediaplayer.data.ScrubPreviewSource? = null
+    private var scrubFor: UUID? = null
+
+    /** The picture for a point on the timeline, or null (the bubble then shows just the time). */
+    suspend fun scrubFrame(seconds: Double): android.graphics.Bitmap? = scrub?.frame(seconds)
+
+    private fun loadScrubPreview(forItem: UUID, mediaSourceId: String?) {
+        if (scrubFor == forItem) return
+        scrubFor = forItem
+        scrub?.release(); scrub = null
+        viewModelScope.launch {
+            val dto = repo.trickplayOf(forItem) ?: return@launch
+            if (scrubFor == forItem) scrub = com.astermediaplayer.astermediaplayer.data.ScrubPreviewSource.create(repo, dto, mediaSourceId)
+        }
+    }
+
+    fun setSpeed(speed: Float) {
+        player.playbackParameters = androidx.media3.common.PlaybackParameters(speed)
+        _state.update { it.copy(speed = speed) }
+    }
+
     init {
         player.addListener(listener)
         assHandler?.init(player)
@@ -286,6 +310,7 @@ class PlayerViewModel(
                 val source = info.mediaSources.firstOrNull() ?: error("This item has no playable media")
                 mediaSourceId = source.id
                 currentSource = source
+                if (!isLive && clip == null && playlistChannelId == null) loadScrubPreview(itemId, source.id)
                 playSessionId = info.playSessionId
                 liveStreamId = source.liveStreamId
                 if (isLive && _channels.value.isEmpty()) viewModelScope.launch { _channels.value = runCatching { repo.liveChannels() }.getOrDefault(emptyList()) }
@@ -596,6 +621,7 @@ class PlayerViewModel(
     }
 
     override fun onCleared() {
+        scrub?.release()
         reportStopped()
         tickJob?.cancel()
         player.removeListener(listener)

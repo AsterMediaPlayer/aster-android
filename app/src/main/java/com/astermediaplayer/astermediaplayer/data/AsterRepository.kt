@@ -290,6 +290,21 @@ class AsterRepository(context: Context, private val store: SessionStore) {
 
     private fun utc(seconds: Double): java.time.LocalDateTime = java.time.LocalDateTime.ofEpochSecond(seconds.toLong(), 0, java.time.ZoneOffset.UTC)
 
+    /** One sheet of a title's trickplay frames (see `TrickplayInfo`); null when the server can't give it. */
+    suspend fun trickplaySheet(itemId: UUID, width: Int, index: Int, mediaSourceId: String): ByteArray? = withContext(Dispatchers.IO) {
+        runCatching {
+            val url = "${serverUrl.trimEnd('/')}/Videos/$itemId/Trickplay/$width/$index.jpg?MediaSourceId=$mediaSourceId"
+            http.newCall(Request.Builder().url(url).header("Authorization", authorizationHeader()).build()).execute().use { r ->
+                if (r.isSuccessful) r.body.bytes() else null
+            }
+        }.getOrNull()
+    }
+
+    /** A title's trickplay listing, which the plain item fetch leaves out. */
+    suspend fun trickplayOf(id: UUID): BaseItemDto? = runCatching {
+        api.libraryApi.getItems(GetItemsRequest(userId = userId, ids = listOf(id), fields = listOf(ItemFields.TRICKPLAY))).content.items.firstOrNull()
+    }.getOrNull()
+
     /** The programme last opened from a guide or list, so its page opens with what that already showed while the full record loads. */
     val openedPrograms = HashMap<String, BaseItemDto>()
 
