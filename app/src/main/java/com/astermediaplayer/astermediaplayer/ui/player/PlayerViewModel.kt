@@ -23,6 +23,7 @@ import io.github.peerless2012.ass.media.factory.AssRenderersFactory
 import io.github.peerless2012.ass.media.kt.withAssMkvSupport
 import io.github.peerless2012.ass.media.parser.AssSubtitleParserFactory
 import io.github.peerless2012.ass.media.type.AssRenderType
+import com.astermediaplayer.astermediaplayer.data.SubtitleCue
 import com.astermediaplayer.astermediaplayer.data.AsterRepository
 import com.astermediaplayer.astermediaplayer.data.channels.ChannelTuner
 import com.astermediaplayer.astermediaplayer.data.channels.TunedSegment
@@ -80,6 +81,8 @@ data class PlayerUiState(
     val loading: Boolean = true,
     val error: String? = null,
     val skip: SkipPrompt? = null,
+    /** Near the end of an episode with another after it: Play Next Episode is on offer. */
+    val upNextOffered: Boolean = false,
     val quality: Quality = Qualities.first(),
     val transcoding: Boolean = false,
     val chapters: List<Chapter> = emptyList(),
@@ -94,6 +97,8 @@ data class PlayerUiState(
     val chapterIndex: Int = -1,
     /** The subtitle menu: Off, the tracks the player can draw, and picture-based ones the server can burn in. */
     val subtitles: List<SubtitleChoice> = emptyList(),
+    /** The line of the server's text subtitle track showing now, drawn by the app over the picture. */
+    val cueText: String? = null,
     /** Playback speed, 1 for normal. */
     val speed: Float = 1f,
 )
@@ -230,6 +235,18 @@ class PlayerViewModel(
     private var pendingPick: Triple<String?, String?, String?>? = null
     private var currentSource: org.jellyfin.sdk.model.api.MediaSourceInfo? = null
 
+    /**
+     * The server's text subtitle tracks for this stream. The app draws these itself from the JSON cue list; they are never
+     * handed to the player, which would hold playback until the server had extracted the track, and that can take minutes.
+     */
+    private var cueTracks: List<MediaStream> = emptyList()
+    /** The one of them showing, by the server's stream index. */
+    private var cueTrack: Int? = null
+    /** Once a subtitle has been chosen (or turned off), a restart of the stream doesn't bring the server's default back. */
+    private var subtitleChosen = false
+    private val cueCache = HashMap<Pair<String, Int>, List<SubtitleCue>>()
+    private var cueJob: Job? = null
+
     /** The frames shown above the timeline while scrubbing, when the server has made them for this title. */
     private var scrub: com.astermediaplayer.astermediaplayer.data.ScrubPreviewSource? = null
     private var scrubFor: UUID? = null
@@ -323,27 +340,32 @@ class PlayerViewModel(
                 }
                 playMethod = if (direct) PlayMethod.DIRECT_PLAY else PlayMethod.TRANSCODE
 
-                val subtitles = source.mediaStreams.orEmpty()
+                cueTracks = source.mediaStreams.orEmpty()
                     .filter { it.type == MediaStreamType.SUBTITLE && it.deliveryMethod == SubtitleDeliveryMethod.EXTERNAL && it.deliveryUrl != null }
-                    .map { subtitleConfiguration(it, selected = it.index == source.defaultSubtitleStreamIndex) }
+                cueTrack = when {
+                    // The picture already carries a burned-in track, so none is drawn over it.
+                    burnedIn != null -> null
+                    subtitleChosen -> cueTrack?.takeIf { t -> cueTracks.any { it.index == t } }
+                    else -> cueTracks.firstOrNull { it.index == source.defaultSubtitleStreamIndex }?.index
+                }
                 android.util.Log.i(
                     "Aster",
                     "Subtitles: " + source.mediaStreams.orEmpty().filter { it.type == MediaStreamType.SUBTITLE }
                         .joinToString { "#${it.index} ${it.codec} ${it.language} ${it.deliveryMethod} default=${it.isDefault}" } +
-                        " | server default=${source.defaultSubtitleStreamIndex} | external=${subtitles.size}",
+                        " | server default=${source.defaultSubtitleStreamIndex} | drawn by the app=${cueTracks.size}",
                 )
-                // The picture already carries a burned-in track, so none is drawn over it.
-                player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().setTrackTypeDisabled(C.TRACK_TYPE_TEXT, burnedIn != null).build()
+                player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().setTrackTypeDisabled(C.TRACK_TYPE_TEXT, burnedIn != null || cueTrack != null).build()
                 player.setMediaItem(
                     MediaItem.Builder()
                         .setUri(url)
-                        .setSubtitleConfigurations(subtitles)
                         .setMediaMetadata(androidx.media3.common.MediaMetadata.Builder().setTitle(dto.name).build())
                         .build(),
                     resumeMs.coerceAtLeast(0),
                 )
                 player.prepare()
                 player.playWhenReady = true
+                startCues()
+                refreshSubtitles()
                 _state.update {
                     it.copy(
                         title = clip?.label ?: dto.name.orEmpty(),
@@ -378,21 +400,6 @@ class PlayerViewModel(
                 _state.update { it.copy(loading = false, error = e.userMessage()) }
             }
         }
-    }
-
-    private fun subtitleConfiguration(stream: MediaStream, selected: Boolean): MediaItem.SubtitleConfiguration {
-        val mime = when (stream.codec?.lowercase()) {
-            "vtt", "webvtt" -> MimeTypes.TEXT_VTT
-            "ass", "ssa" -> MimeTypes.TEXT_SSA
-            else -> MimeTypes.APPLICATION_SUBRIP
-        }
-        return MediaItem.SubtitleConfiguration.Builder(Uri.parse(repo.absoluteUrl(stream.deliveryUrl!!)))
-            .setMimeType(mime)
-            .setId((SUBTITLE_ID_BASE + stream.index).toString())
-            .setLanguage(stream.language)
-            .setLabel(stream.displayTitle ?: stream.title ?: stream.language)
-            .setSelectionFlags(if (selected || stream.isDefault) C.SELECTION_FLAG_DEFAULT else 0)
-            .build()
     }
 
     private suspend fun findNextEpisode(dto: BaseItemDto): UUID? {
@@ -461,6 +468,33 @@ class PlayerViewModel(
 
     // MARK: Subtitles
 
+    /** Starts (or stops) drawing [cueTrack]: its cues are fetched in the background, then the one under the playhead is shown. */
+    private fun startCues() {
+        cueJob?.cancel()
+        if (_state.value.cueText != null) _state.update { it.copy(cueText = null) }
+        val track = cueTrack ?: return
+        val sourceId = currentSource?.id ?: return
+        val id = item?.id ?: itemId
+        cueJob = viewModelScope.launch {
+            val key = sourceId to track
+            val cues = cueCache[key] ?: try {
+                repo.subtitleCues(id, sourceId, track)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                android.util.Log.w("Aster", "Subtitle track $track failed to load", e)
+                return@launch
+            }
+            cueCache[key] = cues
+            refreshSubtitles()
+            while (true) {
+                val text = SubtitleCue.textAt(cues, player.currentPosition)
+                if (text != _state.value.cueText) _state.update { it.copy(cueText = text) }
+                delay(100)
+            }
+        }
+    }
+
     private fun isPicture(stream: org.jellyfin.sdk.model.api.MediaStream) =
         stream.type == MediaStreamType.SUBTITLE && !stream.isTextSubtitleStream
 
@@ -479,7 +513,7 @@ class PlayerViewModel(
         val serverBurn = if (burnedIn == null && !noBurnIn && playMethod == PlayMethod.TRANSCODE) source?.defaultSubtitleStreamIndex?.takeIf { d -> source.mediaStreams?.any { it.index == d && isPicture(it) } == true } else null
         val activeBurn = burnedIn ?: serverBurn
         val anyDrawn = drawn.any { (gi, ti) -> groups.first { it.index == gi }.value.isTrackSelected(ti) }
-        choices += SubtitleChoice("Off", selected = activeBurn == null && (textOff || !anyDrawn), isOff = true)
+        choices += SubtitleChoice("Off", selected = activeBurn == null && cueTrack == null && (textOff || !anyDrawn), isOff = true)
         for ((gi, ti) in drawn) {
             val group = tracks.groups[gi]
             val format = group.getTrackFormat(ti)
@@ -487,7 +521,15 @@ class PlayerViewModel(
                 format.language, format.label, SubtitleLabels.format(format.sampleMimeType, format.codecs),
                 forced = format.selectionFlags and C.SELECTION_FLAG_FORCED != 0, number = choices.size,
             )
-            choices += SubtitleChoice(label, selected = activeBurn == null && !textOff && group.isTrackSelected(ti), group = gi, track = ti)
+            choices += SubtitleChoice(label, selected = activeBurn == null && cueTrack == null && !textOff && group.isTrackSelected(ti), group = gi, track = ti)
+        }
+        // The server's text tracks, drawn by the app; the one picked says so while the server is still extracting it.
+        for (stream in cueTracks) {
+            val loading = cueTrack == stream.index && currentSource?.id?.let { cueCache[it to stream.index] } == null
+            choices += SubtitleChoice(
+                SubtitleLabels.label(stream.language, stream.title, SubtitleLabels.format(null, stream.codec), forced = stream.isForced, number = stream.index) + if (loading) " · loading…" else "",
+                selected = activeBurn == null && cueTrack == stream.index, serverTrack = stream.index,
+            )
         }
         if (playMethod == PlayMethod.TRANSCODE) {
             source?.mediaStreams.orEmpty().filter { isPicture(it) }.forEach { stream ->
@@ -508,21 +550,35 @@ class PlayerViewModel(
     /** Takes a choice from the subtitle menu. */
     fun select(choice: SubtitleChoice) {
         val activeBurn = _state.value.subtitles.firstOrNull { it.burnIn != null && it.selected }?.burnIn
+        subtitleChosen = true
         when {
             choice.burnIn != null -> {
                 if (choice.burnIn == activeBurn) return
-                burnedIn = choice.burnIn; noBurnIn = false
+                burnedIn = choice.burnIn; noBurnIn = false; cueTrack = null
                 start(player.currentPosition)
             }
-            // Off, or a track the player draws, while a track is burned in: the picture needs a new stream without it.
+            // Off, or a track the player or the app draws, while a track is burned in: the picture needs a new stream without it.
             activeBurn != null -> {
-                burnedIn = null; noBurnIn = true
+                burnedIn = null; noBurnIn = true; cueTrack = choice.serverTrack
                 pendingPick = choice.group?.let { g -> player.currentTracks.groups.getOrNull(g)?.getTrackFormat(choice.track)?.let { Triple(it.sampleMimeType, it.language, it.label) } }
                 start(player.currentPosition)
             }
-            choice.isOff -> player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true).build()
+            choice.serverTrack != null -> {
+                cueTrack = choice.serverTrack
+                player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true).build()
+                startCues()
+                refreshSubtitles()
+            }
+            choice.isOff -> {
+                cueTrack = null
+                startCues()
+                player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true).build()
+                refreshSubtitles()
+            }
             choice.group != null -> {
                 val group = player.currentTracks.groups.getOrNull(choice.group) ?: return
+                cueTrack = null
+                startCues()
                 player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
                     .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
                     .setOverrideForType(androidx.media3.common.TrackSelectionOverride(group.mediaTrackGroup, choice.track)).build()
@@ -541,6 +597,7 @@ class PlayerViewModel(
             while (true) {
                 delay(500)
                 updateSkipPrompt()
+                updateUpNext()
                 updateChapter()
                 if (clip != null && player.currentPosition >= clip.endMs) {
                     player.pause()
@@ -582,6 +639,23 @@ class PlayerViewModel(
             return
         }
         if (prompt != _state.value.skip) _state.update { it.copy(skip = prompt) }
+    }
+
+    /** From the credits if the server marked them, else the last 30 seconds or 8%, whichever starts later. */
+    private fun updateUpNext() {
+        val duration = player.duration.takeIf { it > 0 } ?: return
+        val runTicks = duration * TICKS_PER_MS
+        val creditsStart = segments.firstOrNull { it.type == MediaSegmentType.OUTRO }?.startTicks
+        val threshold = creditsStart ?: maxOf(runTicks - 30_000 * TICKS_PER_MS, (runTicks * 0.92).toLong())
+        val offer = nextEpisodeId != null && player.currentPosition * TICKS_PER_MS >= threshold
+        if (offer != _state.value.upNextOffered) _state.update { it.copy(upNextOffered = offer) }
+    }
+
+    /** Plays the next episode now, from Play Next Episode: this one stops here. */
+    fun playNextNow() {
+        val next = nextEpisodeId ?: return
+        reportStopped()
+        _playNext.tryEmit(next)
     }
 
     private fun onEnded() {

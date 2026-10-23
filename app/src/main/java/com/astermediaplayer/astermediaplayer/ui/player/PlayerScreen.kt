@@ -13,9 +13,12 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.filled.FastForward
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.FullscreenExit
+import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.rememberCoroutineScope
@@ -129,7 +132,9 @@ fun PlayerScreen(
     // Landscape, full-screen, screen-on while playing; everything is restored when leaving.
     DisposableEffect(activity) {
         val window = activity?.window
-        val previous = activity?.requestedOrientation
+        // Play Next brings the next player up before the last one is gone, so the orientation to
+        // come back to is the one from before the first of them.
+        if (PlayerWindow.users++ == 0) PlayerWindow.previousOrientation = activity?.requestedOrientation
         activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
         if (window != null) {
             WindowCompat.setDecorFitsSystemWindows(window, false)
@@ -139,7 +144,8 @@ fun PlayerScreen(
             }
         }
         onDispose {
-            if (previous != null) activity.requestedOrientation = previous
+            if (--PlayerWindow.users > 0) return@onDispose
+            PlayerWindow.previousOrientation?.let { activity?.requestedOrientation = it }
             if (window != null) WindowInsetsControllerCompat(window, window.decorView).show(WindowInsetsCompat.Type.systemBars())
         }
     }
@@ -188,6 +194,9 @@ fun PlayerScreen(
             SkipFlash(forward)
             LaunchedEffect(at) { delay(700); if (flash?.second == at) flash = null }
         }
+
+        // The server's text subtitle, drawn by the app under the controls; the player's own captions and libass draw in the video view.
+        state.cueText?.let { SubtitleOverlay(it) }
 
         if (state.loading && state.error == null) {
             CircularProgressIndicator(Modifier.align(Alignment.Center))
@@ -298,11 +307,27 @@ fun PlayerScreen(
             ChannelBug(playing, state.breakClip, state.title)
         }
 
-        state.skip?.let { prompt ->
+        // Skip Intro / Skip Credits, or Play Next Episode near the end, in the lower right while one
+        // applies: for 5 seconds as it comes up, and again whenever the controls do.
+        val offerKey = state.skip?.label ?: if (state.upNextOffered) "next" else null
+        var offerFresh by remember { mutableStateOf(false) }
+        LaunchedEffect(offerKey) {
+            offerFresh = offerKey != null
+            if (offerKey != null) {
+                delay(5000)
+                offerFresh = false
+            }
+        }
+        if (offerKey != null && (offerFresh || controlsVisible)) {
+            val skipPrompt = state.skip
             Button(
-                onClick = viewModel::skip,
+                onClick = if (skipPrompt != null) viewModel::skip else viewModel::playNextNow,
                 modifier = Modifier.align(Alignment.BottomEnd).padding(end = 24.dp, bottom = if (controlsVisible) 150.dp else 32.dp),
-            ) { Text(prompt.label) }
+            ) {
+                Icon(if (skipPrompt != null) Icons.Default.FastForward else Icons.Default.SkipNext, null, Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text(skipPrompt?.label ?: "Play Next Episode")
+            }
         }
 
         state.error?.let { message ->
@@ -312,6 +337,12 @@ fun PlayerScreen(
             }
         }
     }
+}
+
+/** How many player screens are up at once (two, briefly, on Play Next) and the orientation from before them. */
+private object PlayerWindow {
+    var users = 0
+    var previousOrientation: Int? = null
 }
 
 /** A bottom-row control: just its icon, as the Apple apps' icon-only buttons. */

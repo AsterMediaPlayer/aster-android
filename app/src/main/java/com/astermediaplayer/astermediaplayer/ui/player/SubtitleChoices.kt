@@ -12,6 +12,8 @@ data class SubtitleChoice(
     val track: Int = 0,
     /** The server's index of a picture-based track it burns into the video, when that's the only way. */
     val burnIn: Int? = null,
+    /** The server's index of a text track the app draws itself from the server's cue list. */
+    val serverTrack: Int? = null,
     val isOff: Boolean = false,
 )
 

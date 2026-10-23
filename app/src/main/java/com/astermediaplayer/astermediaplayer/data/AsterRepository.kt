@@ -806,6 +806,22 @@ class AsterRepository(context: Context, private val store: SessionStore) {
     fun absoluteUrl(serverRelative: String): String =
         if (serverRelative.startsWith("http")) serverRelative else serverUrl.trimEnd('/') + serverRelative
 
+    /** The patient client for subtitle extraction: the server's first request for a track inside an MKV can take minutes. */
+    private val subtitleHttp by lazy { http.newBuilder().readTimeout(10, java.util.concurrent.TimeUnit.MINUTES).callTimeout(10, java.util.concurrent.TimeUnit.MINUTES).build() }
+
+    /**
+     * The cues of a text subtitle track, converted by the server to its JSON form (what Jellyfin's web player reads).
+     * The first request for a track inside an MKV makes the server extract it, which can take minutes; later ones come
+     * from its cache. Called in the background, never in the way of playback.
+     */
+    suspend fun subtitleCues(itemId: UUID, mediaSourceId: String, streamIndex: Int): List<SubtitleCue> = withContext(Dispatchers.IO) {
+        val url = "${serverUrl.trimEnd('/')}/Videos/$itemId/$mediaSourceId/Subtitles/$streamIndex/Stream.js"
+        subtitleHttp.newCall(Request.Builder().url(url).header("Authorization", authorizationHeader()).build()).execute().use { response ->
+            check(response.isSuccessful) { "The server answered ${response.code} for subtitle track $streamIndex" }
+            SubtitleCue.parse(response.body.string())
+        }
+    }
+
     fun subtitleUrl(itemId: UUID, mediaSourceId: String, streamIndex: Int, format: String): String =
         api.subtitleApi.getSubtitleUrl(
             routeItemId = itemId, routeMediaSourceId = mediaSourceId, routeIndex = streamIndex, routeFormat = format,
