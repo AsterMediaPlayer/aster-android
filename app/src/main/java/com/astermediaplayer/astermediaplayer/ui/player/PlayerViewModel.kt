@@ -162,7 +162,12 @@ class PlayerViewModel(
     private val downloads = (context.applicationContext as com.astermediaplayer.astermediaplayer.AsterApp).downloads
 
     private val mediaSourceFactory = DefaultMediaSourceFactory(
-        DefaultHttpDataSource.Factory().setDefaultRequestProperties(mapOf("X-Emby-Token" to repo.session!!.accessToken)),
+        // The server starts its encoder on the first request for a stream, and again after a long seek, so the first
+        // segment can take longer than the 8 seconds a data source allows by default; timing out only sent the request
+        // round again (a retry), and the viewer waited for each lap.
+        DefaultHttpDataSource.Factory()
+            .setConnectTimeoutMs(HTTP_TIMEOUT_MS).setReadTimeoutMs(HTTP_TIMEOUT_MS)
+            .setDefaultRequestProperties(mapOf("X-Emby-Token" to repo.session!!.accessToken)),
         DefaultExtractorsFactory().let { if (assHandler != null) it.withAssMkvSupport(assParserFactory!!, assHandler) else it },
     ).also { if (assParserFactory != null) it.setSubtitleParserFactory(assParserFactory) }
 
@@ -725,5 +730,6 @@ class PlayerViewModel(
         /** libass needs external subtitle ids that can't collide with the container's own track ids. */
         const val SUBTITLE_ID_BASE = 128
         const val FALLBACK_BITRATE = 8_000_000
+        const val HTTP_TIMEOUT_MS = 30_000
     }
 }
