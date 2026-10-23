@@ -99,6 +99,8 @@ data class PlayerUiState(
     val subtitles: List<SubtitleChoice> = emptyList(),
     /** The line of the server's text subtitle track showing now, drawn by the app over the picture. */
     val cueText: String? = null,
+    /** Playback keeps stalling: the lower qualities on offer, highest first; null while there's no offer. */
+    val qualityOffer: List<Quality>? = null,
     /** Playback speed, 1 for normal. */
     val speed: Float = 1f,
 )
@@ -202,7 +204,7 @@ class PlayerViewModel(
 
     private val listener = object : Player.Listener {
         override fun onPlaybackStateChanged(playbackState: Int) {
-            if (playbackState == Player.STATE_READY) _state.update { it.copy(loading = false) }
+            if (playbackState == Player.STATE_READY) { hasStarted = true; seeking = false; _state.update { it.copy(loading = false) } }
             if (playbackState == Player.STATE_BUFFERING && player.currentPosition == 0L) _state.update { it.copy(loading = true) }
             if (playbackState == Player.STATE_ENDED) onEnded()
         }
@@ -215,7 +217,7 @@ class PlayerViewModel(
         override fun onPositionDiscontinuity(
             oldPosition: Player.PositionInfo, newPosition: Player.PositionInfo, reason: Int,
         ) {
-            if (reason == Player.DISCONTINUITY_REASON_SEEK) reportProgress()
+            if (reason == Player.DISCONTINUITY_REASON_SEEK) { seeking = true; reportProgress() }
         }
 
         override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
@@ -252,6 +254,12 @@ class PlayerViewModel(
     private val cueCache = HashMap<Pair<String, Int>, List<SubtitleCue>>()
     private var cueJob: Job? = null
 
+    private val stallWatch = StallWatch()
+    /** Playback has got going on this stream, so buffering from here on is a stall and not the start. */
+    private var hasStarted = false
+    /** A seek is in hand: the buffering after it is the viewer's doing, not the connection's. */
+    private var seeking = false
+
     /** The frames shown above the timeline while scrubbing, when the server has made them for this title. */
     private var scrub: com.astermediaplayer.astermediaplayer.data.ScrubPreviewSource? = null
     private var scrubFor: UUID? = null
@@ -285,7 +293,8 @@ class PlayerViewModel(
 
     private fun start(positionMs: Long?, forceTranscode: Boolean = false) {
         viewModelScope.launch {
-            _state.update { it.copy(loading = true, error = null) }
+            hasStarted = false
+            _state.update { it.copy(loading = true, error = null, qualityOffer = null) }
             try {
                 if (direct != null) {
                     player.setMediaItem(MediaItem.fromUri(repo.opEdMediaUrl(direct.path)))
@@ -603,6 +612,7 @@ class PlayerViewModel(
                 delay(500)
                 updateSkipPrompt()
                 updateUpNext()
+                updateStall()
                 updateChapter()
                 if (clip != null && player.currentPosition >= clip.endMs) {
                     player.pause()
@@ -661,6 +671,31 @@ class PlayerViewModel(
         val next = nextEpisodeId ?: return
         reportStopped()
         _playNext.tryEmit(next)
+    }
+
+    /**
+     * Four times a second in the Apple apps, twice here: whether playback is being held up, for the offer of a lower
+     * quality. Not the start, not a seek, and nothing for a download or a channel, where there's no quality to lower.
+     */
+    private fun updateStall() {
+        if (!hasStarted || seeking || readOnly || _state.value.offline || _state.value.live || _state.value.qualityOffer != null) return
+        val stalling = player.playWhenReady && player.playbackState == Player.STATE_BUFFERING
+        if (stallWatch.note(stalling, android.os.SystemClock.elapsedRealtime())) {
+            val lower = Qualities.filter { it.maxBitrate < _state.value.quality.maxBitrate }.take(3)
+            if (lower.isNotEmpty()) _state.update { it.copy(qualityOffer = lower) }
+        }
+    }
+
+    /** Plays on from here at the quality picked from the stall offer. */
+    fun chooseOfferedQuality(quality: Quality) {
+        _state.update { it.copy(qualityOffer = null) }
+        setQuality(quality)
+    }
+
+    /** Stays as it is; the offer holds off for a while. */
+    fun keepTrying() {
+        _state.update { it.copy(qualityOffer = null) }
+        stallWatch.declined(android.os.SystemClock.elapsedRealtime())
     }
 
     private fun onEnded() {

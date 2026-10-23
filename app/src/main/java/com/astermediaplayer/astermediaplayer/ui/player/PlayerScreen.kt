@@ -330,6 +330,9 @@ fun PlayerScreen(
             }
         }
 
+        // Playback keeps stopping: carry on, or a lower quality.
+        state.qualityOffer?.let { offer -> StallQualityCard(offer, onKeepTrying = viewModel::keepTrying, onChoose = viewModel::chooseOfferedQuality) }
+
         state.error?.let { message ->
             Column(Modifier.align(Alignment.Center).padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(message, color = Color.White)
