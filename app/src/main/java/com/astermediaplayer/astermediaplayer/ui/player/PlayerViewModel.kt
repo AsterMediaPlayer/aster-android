@@ -92,6 +92,8 @@ data class PlayerUiState(
     /** Playing from a download on the device. */
     val offline: Boolean = false,
     val chapterIndex: Int = -1,
+    /** The subtitle menu: Off, the tracks the player can draw, and picture-based ones the server can burn in. */
+    val subtitles: List<SubtitleChoice> = emptyList(),
 )
 
 @OptIn(UnstableApi::class)
@@ -195,6 +197,9 @@ class PlayerViewModel(
 
         override fun onIsPlayingChanged(isPlaying: Boolean) = reportProgress()
 
+        override fun onTracksChanged(tracks: androidx.media3.common.Tracks) = refreshSubtitles()
+        override fun onTrackSelectionParametersChanged(parameters: androidx.media3.common.TrackSelectionParameters) = refreshSubtitles()
+
         override fun onPositionDiscontinuity(
             oldPosition: Player.PositionInfo, newPosition: Player.PositionInfo, reason: Int,
         ) {
@@ -214,6 +219,14 @@ class PlayerViewModel(
     }
     private var forcedTranscode = false
     private var autoSkipped: SkipPrompt? = null
+
+    /** The server's picture-based subtitle burned into the video (PGS, VobSub), when the viewer chose one. */
+    private var burnedIn: Int? = null
+    /** After a burned-in track is taken off, the stream is asked for with none, so the server doesn't burn its default. */
+    private var noBurnIn = false
+    /** A track to select once the new stream's tracks are known (what was picked while a burned-in track was showing). */
+    private var pendingPick: Triple<String?, String?, String?>? = null
+    private var currentSource: org.jellyfin.sdk.model.api.MediaSourceInfo? = null
 
     init {
         player.addListener(listener)
@@ -259,20 +272,25 @@ class PlayerViewModel(
 
                 // A failed direct play usually means the device can't decode the source (4K, Dolby Vision, ...),
                 // so the fallback transcode is capped to something every phone can handle.
-                val maxBitrate = if (forceTranscode) minOf(_state.value.quality.maxBitrate, FALLBACK_BITRATE) else _state.value.quality.maxBitrate
+                // Once direct play has failed on this device, every restart of the stream (a subtitle change, say) is a transcode too.
+                val fallback = forceTranscode || forcedTranscode
+                val maxBitrate = if (fallback) minOf(_state.value.quality.maxBitrate, FALLBACK_BITRATE) else _state.value.quality.maxBitrate
                 val info = repo.playbackInfo(
                     itemId, resumeMs * TICKS_PER_MS, maxBitrate,
                     mediaSourceId = mediaSourceId,
-                    forceTranscode = forceTranscode,
+                    // A burned-in track is made by the server as it encodes, so it can't be a direct play.
+                    subtitleStreamIndex = burnedIn ?: if (noBurnIn) -1 else null,
+                    forceTranscode = fallback || burnedIn != null,
                 )
                 scheduledStartMs = null
                 val source = info.mediaSources.firstOrNull() ?: error("This item has no playable media")
                 mediaSourceId = source.id
+                currentSource = source
                 playSessionId = info.playSessionId
                 liveStreamId = source.liveStreamId
                 if (isLive && _channels.value.isEmpty()) viewModelScope.launch { _channels.value = runCatching { repo.liveChannels() }.getOrDefault(emptyList()) }
 
-                val direct = source.supportsDirectPlay && !forceTranscode
+                val direct = source.supportsDirectPlay && !fallback && burnedIn == null
                 val url = when {
                     direct -> repo.directStreamUrl(itemId, source.id!!, info.playSessionId, source.container)
                     source.transcodingUrl != null -> repo.absoluteUrl(source.transcodingUrl!!)
@@ -289,6 +307,8 @@ class PlayerViewModel(
                         .joinToString { "#${it.index} ${it.codec} ${it.language} ${it.deliveryMethod} default=${it.isDefault}" } +
                         " | server default=${source.defaultSubtitleStreamIndex} | external=${subtitles.size}",
                 )
+                // The picture already carries a burned-in track, so none is drawn over it.
+                player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().setTrackTypeDisabled(C.TRACK_TYPE_TEXT, burnedIn != null).build()
                 player.setMediaItem(
                     MediaItem.Builder()
                         .setUri(url)
@@ -413,6 +433,77 @@ class PlayerViewModel(
     }
 
     fun seekToChapter(chapter: Chapter) = player.seekTo(chapter.startMs)
+
+    // MARK: Subtitles
+
+    private fun isPicture(stream: org.jellyfin.sdk.model.api.MediaStream) =
+        stream.type == MediaStreamType.SUBTITLE && !stream.isTextSubtitleStream
+
+    /**
+     * Builds the subtitle menu: Off, the text and picture tracks the player itself can draw (embedded PGS in a direct
+     * play too), and, in a transcode, the picture-based tracks the server can burn in, which the player never sees.
+     */
+    private fun refreshSubtitles() {
+        val tracks = player.currentTracks
+        val groups = tracks.groups.withIndex().filter { it.value.type == C.TRACK_TYPE_TEXT }
+        val textOff = player.trackSelectionParameters.disabledTrackTypes.contains(C.TRACK_TYPE_TEXT)
+        val choices = mutableListOf<SubtitleChoice>()
+        val drawn = groups.flatMap { (gi, group) -> (0 until group.length).filter { group.isTrackSupported(it) }.map { gi to it } }
+        // A picture-based default the server burns in unasked (a transcode, with no choice made).
+        val source = currentSource
+        val serverBurn = if (burnedIn == null && !noBurnIn && playMethod == PlayMethod.TRANSCODE) source?.defaultSubtitleStreamIndex?.takeIf { d -> source.mediaStreams?.any { it.index == d && isPicture(it) } == true } else null
+        val activeBurn = burnedIn ?: serverBurn
+        val anyDrawn = drawn.any { (gi, ti) -> groups.first { it.index == gi }.value.isTrackSelected(ti) }
+        choices += SubtitleChoice("Off", selected = activeBurn == null && (textOff || !anyDrawn), isOff = true)
+        for ((gi, ti) in drawn) {
+            val group = tracks.groups[gi]
+            val format = group.getTrackFormat(ti)
+            val label = SubtitleLabels.label(
+                format.language, format.label, SubtitleLabels.format(format.sampleMimeType, format.codecs),
+                forced = format.selectionFlags and C.SELECTION_FLAG_FORCED != 0, number = choices.size,
+            )
+            choices += SubtitleChoice(label, selected = activeBurn == null && !textOff && group.isTrackSelected(ti), group = gi, track = ti)
+        }
+        if (playMethod == PlayMethod.TRANSCODE) {
+            source?.mediaStreams.orEmpty().filter { isPicture(it) }.forEach { stream ->
+                choices += SubtitleChoice(
+                    SubtitleLabels.label(stream.language, stream.title, SubtitleLabels.format(null, stream.codec), forced = stream.isForced, burnedIn = true, number = stream.index),
+                    selected = activeBurn == stream.index, burnIn = stream.index,
+                )
+            }
+        }
+        // What was picked while a burned-in track was showing, once the plain stream's tracks have arrived.
+        pendingPick?.let { (mime, language, label) ->
+            val match = choices.firstOrNull { c -> c.group != null && tracks.groups[c.group].getTrackFormat(c.track).let { f -> f.sampleMimeType == mime && f.language == language && f.label == label } }
+            if (match != null) { pendingPick = null; select(match); return }
+        }
+        if (choices != _state.value.subtitles) _state.update { it.copy(subtitles = choices) }
+    }
+
+    /** Takes a choice from the subtitle menu. */
+    fun select(choice: SubtitleChoice) {
+        val activeBurn = _state.value.subtitles.firstOrNull { it.burnIn != null && it.selected }?.burnIn
+        when {
+            choice.burnIn != null -> {
+                if (choice.burnIn == activeBurn) return
+                burnedIn = choice.burnIn; noBurnIn = false
+                start(player.currentPosition)
+            }
+            // Off, or a track the player draws, while a track is burned in: the picture needs a new stream without it.
+            activeBurn != null -> {
+                burnedIn = null; noBurnIn = true
+                pendingPick = choice.group?.let { g -> player.currentTracks.groups.getOrNull(g)?.getTrackFormat(choice.track)?.let { Triple(it.sampleMimeType, it.language, it.label) } }
+                start(player.currentPosition)
+            }
+            choice.isOff -> player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true).build()
+            choice.group != null -> {
+                val group = player.currentTracks.groups.getOrNull(choice.group) ?: return
+                player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+                    .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+                    .setOverrideForType(androidx.media3.common.TrackSelectionOverride(group.mediaTrackGroup, choice.track)).build()
+            }
+        }
+    }
 
     fun skip() {
         _state.value.skip?.let { player.seekTo(it.targetMs) }

@@ -15,6 +15,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Bookmarks
 import androidx.compose.material.icons.filled.HighQuality
+import androidx.compose.material.icons.filled.Subtitles
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -62,6 +63,7 @@ fun PlayerScreen(
     var controlsVisible by remember { mutableStateOf(true) }
     var qualityMenu by remember { mutableStateOf(false) }
     var chapterMenu by remember { mutableStateOf(false) }
+    var subtitleMenu by remember { mutableStateOf(false) }
     var playerView by remember { mutableStateOf<PlayerView?>(null) }
 
     LaunchedEffect(viewModel) { viewModel.playNext.collect(onPlayNext) }
@@ -85,6 +87,13 @@ fun PlayerScreen(
         }
     }
 
+    // A menu open keeps the controls up; they'd otherwise time out from under it.
+    val menuOpen = subtitleMenu || qualityMenu || chapterMenu
+    LaunchedEffect(menuOpen) {
+        playerView?.controllerShowTimeoutMs = if (menuOpen) 0 else 5000
+        if (menuOpen) playerView?.showController()
+    }
+
     // Pause when the app goes to the background.
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
@@ -101,7 +110,8 @@ fun PlayerScreen(
                     player = viewModel.player
                     keepScreenOn = true
                     playerView = this
-                    setShowSubtitleButton(true)
+                    // Our own subtitle menu, which also offers the picture-based tracks the server burns in.
+                    setShowSubtitleButton(false)
                     viewModel.assHandler?.let { subtitleView?.addView(AssSubtitleView(ctx, it)) }
                     setControllerVisibilityListener(PlayerView.ControllerVisibilityListener { controlsVisible = it == android.view.View.VISIBLE })
                 }
@@ -130,6 +140,17 @@ fun PlayerScreen(
                             DropdownMenuItem(
                                 text = { Text((if (index == state.chapterIndex) "✓ " else "") + chapter.name) },
                                 onClick = { chapterMenu = false; viewModel.seekToChapter(chapter) },
+                            )
+                        }
+                    }
+                }
+                if (state.subtitles.size > 1) Box {
+                    IconButton(onClick = { subtitleMenu = true }) { Icon(Icons.Default.Subtitles, "Subtitles", tint = Color.White) }
+                    DropdownMenu(expanded = subtitleMenu, onDismissRequest = { subtitleMenu = false }) {
+                        state.subtitles.forEach { choice ->
+                            DropdownMenuItem(
+                                text = { Text(if (choice.selected) "✓ ${choice.label}" else choice.label) },
+                                onClick = { subtitleMenu = false; viewModel.select(choice) },
                             )
                         }
                     }
