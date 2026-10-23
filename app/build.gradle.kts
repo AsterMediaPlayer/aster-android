@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
@@ -19,8 +21,30 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    signingConfigs {
+        create("release") {
+            val props = rootProject.file("keystore.properties")
+                .takeIf { it.exists() }
+                ?.inputStream()
+                ?.use { Properties().apply { load(it) } }
+            fun secret(key: String, env: String) =
+                props?.getProperty(key) ?: System.getenv(env)
+
+            val path = secret("storeFile", "KEYSTORE_PATH")
+            if (path != null) {
+                storeFile = rootProject.file(path)
+                storePassword = secret("storePassword", "KEYSTORE_PASSWORD")
+                keyAlias = secret("keyAlias", "KEY_ALIAS")
+                keyPassword = secret("keyPassword", "KEY_PASSWORD")
+            }
+        }
+    }
+
     buildTypes {
         release {
+            if (signingConfigs.getByName("release").storeFile != null) {
+                signingConfig = signingConfigs.getByName("release")
+            }
             optimization {
                 enable = true
                 packageScope = setOf("androidx.**", "kotlin.**", "kotlinx.**")
