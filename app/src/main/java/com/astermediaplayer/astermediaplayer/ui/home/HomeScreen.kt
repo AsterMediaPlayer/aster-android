@@ -196,12 +196,14 @@ fun FeaturedBanner(
     val pager = rememberPagerState { items.size }
     val density = LocalDensity.current
     val windowHeight = with(density) { LocalWindowInfo.current.containerSize.height.toDp() }
+    // A phone on its side: the window is short, so the page and the dots sit tighter (see FeaturedPage).
+    val compact = LocalConfiguration.current.screenHeightDp < 500
     Box(Modifier.fillMaxWidth().height(windowHeight)) {
         HorizontalPager(pager, Modifier.fillMaxSize()) { page -> FeaturedPage(items[page], onItem, onPlay, tag(items[page]), action(items[page]), destination) }
         if (items.size > 1) {
             // Capsule of dots at the bottom right, in line with the Play button's bottom.
             Row(
-                Modifier.align(Alignment.BottomEnd).padding(end = Lockup.screenPadding, bottom = 84.dp)
+                Modifier.align(Alignment.BottomEnd).padding(end = if (compact) 28.dp else Lockup.screenPadding, bottom = if (compact) 88.dp else 84.dp)
                     .clip(CircleShape).background(Color.Black.copy(alpha = 0.35f)).padding(horizontal = 14.dp, vertical = 10.dp),
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
@@ -223,6 +225,8 @@ private fun FeaturedPage(item: BaseItemDto, onItem: (BaseItemDto) -> Unit, onPla
     val logo = repo.imageUrl(item, ImageType.LOGO, 800)
     val playable = item.type != BaseItemKind.SERIES
     val remaining = remainingText(item)
+    // On its side a phone is about 400dp tall, so the page is smaller all round and keeps the Play button its full height.
+    val compact = LocalConfiguration.current.screenHeightDp < 500
 
     Box(Modifier.fillMaxSize().clickable { onItem(destination(item)) }) {
         AsyncImage(model = art, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
@@ -234,8 +238,8 @@ private fun FeaturedPage(item: BaseItemDto, onItem: (BaseItemDto) -> Unit, onPla
         )
         Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(0f to Color.Black.copy(alpha = 0.6f), 0.5f to Color.Transparent)))
         Column(
-            Modifier.align(Alignment.BottomStart).fillMaxWidth().padding(horizontal = Lockup.screenPadding).padding(bottom = 125.dp),
-            verticalArrangement = Arrangement.spacedBy(18.dp),
+            Modifier.align(Alignment.BottomStart).fillMaxWidth().padding(horizontal = Lockup.screenPadding).padding(bottom = if (compact) 96.dp else 125.dp),
+            verticalArrangement = Arrangement.spacedBy(if (compact) 10.dp else 18.dp),
         ) {
             if (tag != null) {
                 // White with black text, readable over any backdrop.
@@ -245,13 +249,13 @@ private fun FeaturedPage(item: BaseItemDto, onItem: (BaseItemDto) -> Unit, onPla
                 )
             }
             if (logo != null) {
-                Box(Modifier.widthIn(max = 260.dp).height(90.dp).fillMaxWidth()) {
+                Box(Modifier.widthIn(max = if (compact) 220.dp else 260.dp).height(if (compact) 64.dp else 90.dp).fillMaxWidth()) {
                     AsyncImage(model = logo, contentDescription = item.name, contentScale = ContentScale.Fit, alignment = Alignment.CenterStart, modifier = Modifier.fillMaxSize())
                 }
             } else {
                 Text(
                     if (item.type == BaseItemKind.EPISODE) item.seriesName ?: item.name.orEmpty() else item.name.orEmpty(),
-                    style = Type.pageTitle.copy(fontSize = 34.sp, lineHeight = 41.sp), color = Color.White, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                    style = Type.pageTitle.copy(fontSize = if (compact) 28.sp else 34.sp, lineHeight = if (compact) 34.sp else 41.sp), color = Color.White, maxLines = 2, overflow = TextOverflow.Ellipsis,
                 )
             }
             if (item.type == BaseItemKind.EPISODE) {

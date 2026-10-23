@@ -69,6 +69,7 @@ import androidx.compose.runtime.produceState
 import androidx.compose.runtime.key
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -390,6 +391,27 @@ private enum class MoreDestination(val label: String, val icon: ImageVector) {
     Search("Search", Icons.Default.Search),
 }
 
+/** What the bar shows: a tab, or a More destination given a place of its own while there's room (a phone on its side). */
+private data class BarItem(val label: String, val icon: ImageVector, val tab: Tab, val destination: MoreDestination? = null)
+
+/** The destinations that move into the bar from More, in the Apple apps' tab order, as far as the width allows. */
+private val PromotedOrder = listOf(MoreDestination.Music, MoreDestination.Audiobooks, MoreDestination.Upcoming)
+
+/** About what a tab takes in the side-on bar, in dp: icon, gap, label and padding. */
+private fun barItemWidth(label: String) = 20 + 6 + (label.length * 6.5f).toInt() + 20
+
+private fun promotedFor(tabs: List<Tab>, candidates: List<MoreDestination>, widthDp: Int): List<MoreDestination> {
+    var used = 12 + tabs.sumOf { barItemWidth(it.label) }
+    val shown = mutableListOf<MoreDestination>()
+    for (destination in candidates) {
+        val width = barItemWidth(destination.label)
+        if (used + width > widthDp * 0.88f) break
+        used += width
+        shown += destination
+    }
+    return shown
+}
+
 @Composable
 private fun MainTabs(
     onItem: (BaseItemDto) -> Unit,
@@ -436,6 +458,25 @@ private fun MainTabs(
     val current = tabs.getOrElse(selected) { Tab.Home }
     fun select(tab: Tab) { selected = tabs.indexOf(tab); more = null }
 
+    // A phone on its side has room for more tabs, as the Apple apps' bar does: as many as fit, then More.
+    val config = LocalConfiguration.current
+    val landscape = !wide && config.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+    val promoted = if (landscape) promotedFor(tabs, PromotedOrder.filter { it != MoreDestination.Upcoming || hasUpcoming }, config.screenWidthDp) else emptyList()
+    val barItems = if (landscape) {
+        tabs.filter { it != Tab.More }.map { BarItem(it.label, it.icon, it) } +
+            promoted.map { BarItem(it.label, it.icon, Tab.More, it) } + BarItem(Tab.More.label, Tab.More.icon, Tab.More)
+    } else tabs.map { BarItem(it.label, it.icon, it) }
+    fun isSelected(item: BarItem) = when {
+        item.destination != null -> current == Tab.More && more == item.destination
+        item.tab == Tab.More -> current == Tab.More && more !in promoted
+        else -> current == item.tab
+    }
+    fun pick(item: BarItem) {
+        if (item.destination != null) { selected = tabs.indexOf(Tab.More); more = item.destination } else select(item.tab)
+    }
+    // Back from a page under More goes to the list; from one with a place in the bar, Home.
+    fun back() { if (more in promoted) select(Tab.Home) else more = null }
+
     @Composable
     fun TypeTab(kind: BaseItemKind, anime: List<BaseItemDto>, onItem: (BaseItemDto) -> Unit, onPlay: (UUID) -> Unit, modifier: Modifier) {
         key(kind, anime.map { it.id }) {
@@ -456,8 +497,7 @@ private fun MainTabs(
         }
     }
 
-    // Back from a page under More goes to the list.
-    androidx.activity.compose.BackHandler(enabled = current == Tab.More && more != null) { more = null }
+    androidx.activity.compose.BackHandler(enabled = current == Tab.More && more != null) { back() }
     val content: @Composable (Modifier) -> Unit = { modifier ->
         when (current) {
             Tab.Home -> HomeScreen(home, onItem = onItem, onPlay = onPlay, modifier = modifier)
@@ -467,41 +507,41 @@ private fun MainTabs(
             Tab.More -> when (more) {
                 MoreDestination.Music -> Box(modifier) {
                     MusicScreen(onAlbum = onAlbum, onArtist = onArtist, modifier = Modifier.fillMaxSize(), topInset = 56.dp)
-                    BackButton { more = null }
+                    BackButton { back() }
                 }
                 MoreDestination.Channels -> Box(modifier) {
                     ChannelsScreen(onTune = onTuneChannel, onOpen = onItem, modifier = Modifier.fillMaxSize(), topInset = 56.dp)
-                    BackButton { more = null }
+                    BackButton { back() }
                 }
                 MoreDestination.LiveTv -> Box(modifier) {
                     LiveTvScreen(onPlay = onPlay, onProgram = onProgram, onSeriesRule = onSeriesRule, modifier = Modifier.fillMaxSize(), topInset = 56.dp)
-                    BackButton { more = null }
+                    BackButton { back() }
                 }
                 MoreDestination.Audiobooks -> Box(modifier) {
                     AudiobooksScreen(onBook = onBook, onShelf = onShelf, onListen = { app.audiobooks.play(it) }, modifier = Modifier.fillMaxSize(), topInset = 64.dp)
-                    BackButton { more = null }
+                    BackButton { back() }
                 }
                 MoreDestination.Library -> Box(modifier) {
                     LibraryHomeScreen(libraryHome, onItem = onItem, modifier = Modifier.fillMaxSize(), topInset = 56.dp)
-                    BackButton { more = null }
+                    BackButton { back() }
                 }
                 MoreDestination.Downloads -> Box(modifier) {
                     DownloadsScreen(onPlay = onPlay, onBook = { id -> (app.audiobookLibrary.state.value.book(id) ?: app.downloads.savedBook(id))?.let(onBook) }, modifier = Modifier.fillMaxSize(), topInset = 56.dp)
-                    BackButton { more = null }
+                    BackButton { back() }
                 }
                 MoreDestination.Upcoming -> Box(modifier) {
                     UpcomingScreen(upcoming, onItem = onItem, onPlay = onPlay, modifier = Modifier.fillMaxSize())
-                    BackButton { more = null }
+                    BackButton { back() }
                 }
                 MoreDestination.Search -> Box(modifier) {
                     SearchScreen(search, onItem = onItem, modifier = Modifier.statusBarsPadding().padding(top = 56.dp))
-                    BackButton { more = null }
+                    BackButton { back() }
                 }
                 MoreDestination.Settings -> Box(modifier) {
                     SettingsScreen(repo.session, app.settings, onSignOut, Modifier.statusBarsPadding().padding(top = 56.dp))
-                    BackButton { more = null }
+                    BackButton { back() }
                 }
-                null -> MoreMenu(MoreDestination.entries.filter { it != MoreDestination.Upcoming || hasUpcoming }, onPick = { more = it }, modifier = modifier.statusBarsPadding())
+                null -> MoreMenu(MoreDestination.entries.filter { (it != MoreDestination.Upcoming || hasUpcoming) && it !in promoted }, onPick = { more = it }, modifier = modifier.statusBarsPadding())
             }
         }
     }
@@ -524,9 +564,10 @@ private fun MainTabs(
             Column(
                 Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(horizontal = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 AudiobookBar()
-                FloatingTabBar(tabs = tabs, current = current, onSelect = ::select, modifier = Modifier)
+                FloatingTabBar(items = barItems, isSelected = ::isSelected, onPick = ::pick, sideOn = landscape)
             }
         }
     }
@@ -553,24 +594,33 @@ private fun MoreMenu(destinations: List<MoreDestination>, onPick: (MoreDestinati
     }
 }
 
-/** The Apple apps' floating, rounded tab bar: the selected tab is blue on a darker pill. */
+/**
+ * The Apple apps' floating, rounded tab bar: the selected tab is blue on a darker pill. Upright it spans the width with each
+ * label under its icon; on a phone's side it is a centered pill of icon-and-label tabs, as the Apple apps' is there.
+ */
 @Composable
-private fun FloatingTabBar(tabs: List<Tab>, current: Tab, onSelect: (Tab) -> Unit, modifier: Modifier = Modifier) {
+private fun FloatingTabBar(items: List<BarItem>, isSelected: (BarItem) -> Boolean, onPick: (BarItem) -> Unit, sideOn: Boolean, modifier: Modifier = Modifier) {
     Row(
-        modifier.fillMaxWidth().clip(RoundedCornerShape(36.dp)).background(Color(0xCC2C2C2E)).padding(6.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
+        (if (sideOn) modifier else modifier.fillMaxWidth()).clip(RoundedCornerShape(36.dp)).background(Color(0xCC2C2C2E)).padding(6.dp),
+        horizontalArrangement = if (sideOn) Arrangement.spacedBy(2.dp) else Arrangement.SpaceBetween,
     ) {
-        tabs.forEach { tab ->
-            val active = tab == current
-            Column(
-                Modifier.weight(1f).clip(RoundedCornerShape(30.dp))
-                    .background(if (active) Color.Black.copy(alpha = 0.45f) else Color.Transparent)
-                    .clickable { onSelect(tab) }.padding(vertical = 4.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                val tint = if (active) MaterialTheme.colorScheme.primary else Color.White
-                Icon(tab.icon, tab.label, tint = tint, modifier = Modifier.size(26.dp))
-                Text(tab.label, color = tint, style = MaterialTheme.typography.labelMedium, maxLines = 1)
+        items.forEach { item ->
+            val active = isSelected(item)
+            val tint = if (active) MaterialTheme.colorScheme.primary else Color.White
+            val pill = Modifier.clip(RoundedCornerShape(30.dp)).background(if (active) Color.Black.copy(alpha = 0.45f) else Color.Transparent).clickable { onPick(item) }
+            if (sideOn) {
+                Row(
+                    pill.padding(horizontal = 10.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Icon(item.icon, item.label, tint = tint, modifier = Modifier.size(20.dp))
+                    Text(item.label, color = tint, style = MaterialTheme.typography.labelLarge.copy(fontSize = 12.sp), maxLines = 1)
+                }
+            } else {
+                Column(Modifier.weight(1f).then(pill).padding(vertical = 4.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(item.icon, item.label, tint = tint, modifier = Modifier.size(26.dp))
+                    Text(item.label, color = tint, style = MaterialTheme.typography.labelMedium, maxLines = 1)
+                }
             }
         }
     }
