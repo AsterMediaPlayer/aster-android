@@ -483,7 +483,6 @@ private fun DetailBody(
     if (isTv) LaunchedEffect(enterSection) { if (enterSection > 0) { delay(350); runCatching { sectionLead.requestFocus() } } }
     // The Play button's middle across the screen, which the episode strip lines the next episode up under.
     var playCenterPx by remember { mutableStateOf<Float?>(null) }
-    val panelPlayFocus = remember { FocusRequester() }
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val screenHeight = maxHeight
@@ -546,20 +545,6 @@ private fun DetailBody(
                     DetailsSection(item, repo)
                 }
             }
-        }
-        // The Now Playing panel floats at the top right while the Music tab plays something, over the page (the Apple TV's).
-        val deck = app.themeDeck
-        // Asked for by a card pressed: once the panel has settled in, focus goes to its Play/Pause.
-        val firstRequest = remember { deck.focusRequest }
-        LaunchedEffect(deck.focusRequest) { if (deck.focusRequest != firstRequest) { delay(350); runCatching { panelPlayFocus.requestFocus() } } }
-        if (isTv && deck.isActive) {
-            val artwork = remember(item.id) { repo.imageUrl(item, ImageType.PRIMARY, 640) ?: repo.imageUrl(item, ImageType.BACKDROP, 640) }
-            ThemeNowPlayingPanel(
-                deck, artwork,
-                Modifier.align(Alignment.TopEnd).padding(top = 20.dp, end = 40.dp).width(300.dp),
-                showDetails = true, wide = false, playFocus = panelPlayFocus,
-                onFullScreen = { deck.current?.let { entry -> deck.stop(); onPlayTheme(entry) } },
-            )
         }
     }
 }
@@ -878,10 +863,26 @@ private fun MusicSection(content: DetailContent, onPlayTheme: (OpeningEnding) ->
     val context = LocalContext.current
 
     // A start from here takes focus to the panel's Play/Pause, as on the Apple TV.
-    fun start(entry: OpeningEnding, order: List<OpeningEnding> = queue) { deck.play(entry, order, content.item); deck.requestPanelFocus() }
+    // The card that started the song takes the panel's Back, so focus returns to it.
+    val returnFocus = remember { FocusRequester() }
+    var startedBy by remember { mutableStateOf<String?>(null) }
+    fun keyOf(entry: OpeningEnding): String = when (entry) { is OpeningEnding.Theme -> entry.theme.id; is OpeningEnding.Chapter -> "${entry.clip.episode.id}-${entry.clip.startMs}" }
+    fun start(entry: OpeningEnding, order: List<OpeningEnding> = queue, fromCard: Boolean = false) {
+        deck.play(entry, order, content.item, content.seasons)
+        startedBy = if (fromCard) keyOf(entry) else null
+        deck.returnFocus = if (fromCard) returnFocus else null
+        deck.requestPanelFocus()
+    }
     fun pressed(entry: OpeningEnding) {
         val e = preferred(entry)
-        if (e is OpeningEnding.Theme && (e.theme.spoiler || e.theme.nsfw)) confirming = e else start(e)
+        if (e is OpeningEnding.Theme && (e.theme.spoiler || e.theme.nsfw)) confirming = e else start(e, fromCard = true)
+    }
+    /** A card's hold menu picked one version: that one plays. */
+    fun pressedCut(entry: OpeningEnding, cut: com.astermediaplayer.astermediaplayer.data.ThemeCut) {
+        val theme = (entry as? OpeningEnding.Theme)?.theme ?: return
+        val picked = theme.cut(cut) ?: return
+        val e = OpeningEnding.Theme(picked)
+        if (picked.spoiler || picked.nsfw) confirming = e else start(e, fromCard = true)
     }
     fun isPlaying(entry: OpeningEnding): Boolean = when (val c = deck.current) {
         is OpeningEnding.Theme -> entry is OpeningEnding.Theme && entry.theme.id == c.theme.id
@@ -920,9 +921,14 @@ private fun MusicSection(content: DetailContent, onPlayTheme: (OpeningEnding) ->
                         when (entry) {
                             is OpeningEnding.Theme -> {
                                 val seasonName = if (realSeasons.size > 1) entry.theme.seasonId?.let { id -> content.seasons.firstOrNull { it.id.toString().replace("-", "") == id.replace("-", "") }?.name } else null
-                                ThemeCard(entry.theme, repo, seasonName, artwork, isPlaying(preferred(entry))) { pressed(entry) }
+                                ThemeCard(
+                                    entry.theme, repo, seasonName, artwork, isPlaying(preferred(entry)),
+                                    onPlayCut = { cut -> pressedCut(entry, cut) },
+                                    onAddToPlaylist = entry.theme.libraryItemId?.let(::parseDiscUuid)?.let { id -> { addingIds = listOf(id) } },
+                                    focusRequester = if (startedBy == keyOf(preferred(entry)) || startedBy == keyOf(entry)) returnFocus else null,
+                                ) { pressed(entry) }
                             }
-                            is OpeningEnding.Chapter -> ThemeClipCard(entry.clip, repo.imageUrl(entry.clip.episode, ImageType.PRIMARY, 480), isPlaying(entry)) { pressed(entry) }
+                            is OpeningEnding.Chapter -> ThemeClipCard(entry.clip, repo.imageUrl(entry.clip.episode, ImageType.PRIMARY, 480), isPlaying(entry), focusRequester = if (startedBy == keyOf(entry)) returnFocus else null) { pressed(entry) }
                         }
                     }
                 }
@@ -934,7 +940,7 @@ private fun MusicSection(content: DetailContent, onPlayTheme: (OpeningEnding) ->
             onDismissRequest = { confirming = null },
             title = { Text(if (theme.theme.nsfw) "NSFW" else "Spoilers") },
             text = { Text(if (theme.theme.nsfw) "This opening or ending is marked as not safe for work." else "This opening or ending is marked as containing spoilers.") },
-            confirmButton = { androidx.compose.material3.TextButton({ confirming = null; start(theme) }) { Text("Play") } },
+            confirmButton = { androidx.compose.material3.TextButton({ confirming = null; start(theme, fromCard = true) }) { Text("Play") } },
             dismissButton = { androidx.compose.material3.TextButton({ confirming = null }) { Text("Cancel") } },
         )
     }

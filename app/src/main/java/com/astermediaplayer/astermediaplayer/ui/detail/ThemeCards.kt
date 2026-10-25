@@ -4,6 +4,8 @@ import android.graphics.Bitmap
 import android.media.MediaMetadataRetriever
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -17,6 +19,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.PlaylistAdd
 import androidx.compose.material.icons.filled.HourglassEmpty
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.VisibilityOff
@@ -34,6 +37,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
@@ -44,6 +48,7 @@ import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import com.astermediaplayer.astermediaplayer.data.AsterRepository
 import com.astermediaplayer.astermediaplayer.data.OpEdTheme
+import com.astermediaplayer.astermediaplayer.data.ThemeCut
 import com.astermediaplayer.astermediaplayer.data.ThemeClip
 import com.astermediaplayer.astermediaplayer.ui.theme.Lockup
 import com.astermediaplayer.astermediaplayer.ui.theme.SecondaryText
@@ -108,17 +113,32 @@ private fun Pill(text: String, icon: androidx.compose.ui.graphics.vector.ImageVe
  * alone), "OP 1" and its length over it, and the song, artist and episodes below.
  */
 @Composable
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 fun ThemeCard(
-    theme: OpEdTheme, repo: AsterRepository, seasonName: String?, fallbackArtwork: String?, isPlaying: Boolean, onClick: () -> Unit,
+    theme: OpEdTheme, repo: AsterRepository, seasonName: String?, fallbackArtwork: String?, isPlaying: Boolean,
+    /** Plays one version (TV size, full, music video); null when it has only the TV size. */
+    onPlayCut: ((ThemeCut) -> Unit)? = null,
+    /** For a theme the plugin published as a music video: adds it to a playlist. */
+    onAddToPlaylist: (() -> Unit)? = null,
+    focusRequester: androidx.compose.ui.focus.FocusRequester? = null,
+    onClick: () -> Unit,
 ) {
+    val deck = (androidx.compose.ui.platform.LocalContext.current.applicationContext as com.astermediaplayer.astermediaplayer.AsterApp).themeDeck
+    var menu by remember { mutableStateOf(false) }
+    // The versions this theme has: the TV size, and a full version or a music video where the plugin has them.
+    val cuts = ThemeCut.entries.filter { it == ThemeCut.TvSize || theme.cut(it) != null }
+    val hasMenu = (onPlayCut != null && cuts.size > 1) || onAddToPlaylist != null
     val hidden = theme.spoiler || theme.nsfw
     val preview by produceState<ThemePreview?>(null, theme.id) { value = ThemePreviews.preview(theme, repo) }
     val badge = (if (theme.isOpening) "OP" else "ED") + " ${theme.sequence}" + if (theme.version > 1) " v${theme.version}" else ""
     val detail = listOfNotNull(seasonName, theme.episodes?.let { "Episodes $it" }).joinToString(" · ").ifEmpty { null }
     Column(Modifier.width(Lockup.landscapeWidth), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Box(
-            Modifier.fillMaxWidth().aspectRatio(16f / 9f).tvFocus(14.dp).clip(RoundedCornerShape(14.dp)).background(Color.Black)
-                .clickable(enabled = !theme.isPreparing, onClick = onClick),
+            Modifier.fillMaxWidth().aspectRatio(16f / 9f).then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier).tvFocus(14.dp)
+                // Holding Select here opens this card's menu instead of going to the Now Playing panel.
+                .onFocusChanged { if (hasMenu) deck.cardHoldFocused = it.isFocused }
+                .clip(RoundedCornerShape(14.dp)).background(Color.Black)
+                .combinedClickable(enabled = !theme.isPreparing, onClick = onClick, onLongClick = if (hasMenu) ({ menu = true }) else null),
         ) {
             val frame = preview?.frame
             val blurModifier = if (hidden) Modifier.blur(24.dp) else Modifier
@@ -138,6 +158,12 @@ fun ThemeCard(
                 preview?.seconds?.let { Pill(time(it)) }
             }
         }
+        MenuHost(expanded = menu, onDismiss = { menu = false }, below = true) {
+            if (onPlayCut != null && cuts.size > 1) cuts.reversed().forEachIndexed { i, cut ->
+                MenuItem("Play ${cut.settingTitle}", Icons.Default.MusicNote, first = i == 0, onClick = { menu = false; onPlayCut(cut) })
+            }
+            onAddToPlaylist?.let { add -> MenuItem("Add to Playlist", Icons.AutoMirrored.Filled.PlaylistAdd, first = onPlayCut == null || cuts.size <= 1, onClick = { menu = false; add() }) }
+        }
         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(theme.songTitle ?: badge, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
             if (theme.artists.isNotEmpty()) Text(theme.artists.joinToString(", "), style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -148,13 +174,13 @@ fun ThemeCard(
 
 /** An opening or ending found in an episode's chapters: the episode's picture, "OP 1" and its length over it, and where it's from below. */
 @Composable
-fun ThemeClipCard(clip: ThemeClip, artwork: String?, isPlaying: Boolean, onClick: () -> Unit) {
+fun ThemeClipCard(clip: ThemeClip, artwork: String?, isPlaying: Boolean, focusRequester: androidx.compose.ui.focus.FocusRequester? = null, onClick: () -> Unit) {
     val badge = (if (clip.opening) "OP" else "ED") + " ${clip.number}"
     val season = clip.episode.parentIndexNumber
     val number = clip.episode.indexNumber
     val from = if (season != null && number != null) "From S$season, E$number" else clip.episode.name
     Column(Modifier.width(Lockup.landscapeWidth), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).tvFocus(14.dp).clip(RoundedCornerShape(14.dp)).background(Color.Black).clickable(onClick = onClick)) {
+        Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier).tvFocus(14.dp).clip(RoundedCornerShape(14.dp)).background(Color.Black).clickable(onClick = onClick)) {
             if (artwork != null) AsyncImage(artwork, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
             Row(Modifier.align(Alignment.TopStart)) { Pill(badge); if (isPlaying) Pill("Playing", Icons.Default.VolumeUp) }
             Box(Modifier.align(Alignment.BottomEnd)) { Pill(time(clip.seconds)) }

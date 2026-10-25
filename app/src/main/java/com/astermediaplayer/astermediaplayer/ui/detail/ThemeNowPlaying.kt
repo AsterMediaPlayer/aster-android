@@ -30,6 +30,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRestorer
 import androidx.compose.ui.focus.focusRequester
@@ -45,6 +50,9 @@ import coil3.compose.AsyncImage
 import com.astermediaplayer.astermediaplayer.data.OpeningEnding
 import com.astermediaplayer.astermediaplayer.ui.player.ThemeDeck
 import com.astermediaplayer.astermediaplayer.ui.theme.SecondaryText
+
+/** Where Back from the Now Playing panel sends focus: the page, which remembers what had it. */
+val LocalPageFocus = androidx.compose.runtime.compositionLocalOf<FocusRequester?> { null }
 
 /** The Music tab's Now Playing panel: the picture, what's playing and its progress, the controls, and what it is. Nothing while nothing plays. */
 @OptIn(UnstableApi::class, androidx.compose.ui.ExperimentalComposeUiApi::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
@@ -103,7 +111,7 @@ fun ThemeNowPlayingPanel(deck: ThemeDeck, artwork: String?, modifier: Modifier =
             onOpenShow?.let { IconActionButton(Icons.Default.ChevronRight, "Go to the Show", onClick = it) }
         }
         if (showDetails) Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            for ((label, value) in details(entry)) {
+            for ((label, value) in details(entry, deck.seasons)) {
                 Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                     Text(label, style = MaterialTheme.typography.bodySmall, color = SecondaryText, modifier = Modifier.padding(end = 4.dp))
                     Text(value, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
@@ -111,7 +119,15 @@ fun ThemeNowPlayingPanel(deck: ThemeDeck, artwork: String?, modifier: Modifier =
             }
         }
     }
-    val shape = Modifier.clip(RoundedCornerShape(24.dp)).background(Color(0xF21C1C1E))
+    val page = LocalPageFocus.current
+    // Back in the panel goes back to what had focus on the page, rather than leaving the page.
+    val shape = Modifier.clip(RoundedCornerShape(24.dp)).background(Color(0xF21C1C1E)).onPreviewKeyEvent { e ->
+        if (e.key == Key.Back && e.type == KeyEventType.KeyDown && (deck.returnFocus != null || page != null)) {
+            // The card that started it, if it is still on the page; otherwise the page's last-focused item.
+            if (runCatching { deck.returnFocus?.requestFocus() }.getOrNull() == null) runCatching { page?.requestFocus() }
+            true
+        } else false
+    }
     // Wide (a TV, across the page): the picture beside what it is and the controls; narrow: stacked.
     if (wide) Row(modifier.then(shape).padding(20.dp), horizontalArrangement = Arrangement.spacedBy(24.dp)) {
         picture(Modifier.width(300.dp))
@@ -139,11 +155,13 @@ private fun episodeCode(entry: OpeningEnding.Chapter): String? {
 }
 
 /** What it is, in rows, from what's known. */
-private fun details(entry: OpeningEnding): List<Pair<String, String>> = when (entry) {
+private fun details(entry: OpeningEnding, seasons: List<org.jellyfin.sdk.model.api.BaseItemDto>): List<Pair<String, String>> = when (entry) {
     is OpeningEnding.Theme -> {
         val t = entry.theme
         listOfNotNull(
             "Type" to ((if (t.isOpening) "Opening" else "Ending") + " ${t.sequence}" + if (t.version > 1) ", version ${t.version}" else ""),
+            // OP 1 comes round again each season, so the season is named when the show has more than one.
+            if (seasons.count { (it.indexNumber ?: 0) > 0 } > 1) t.seasonId?.let { id -> seasons.firstOrNull { it.id.toString().replace("-", "") == id.replace("-", "") }?.name }?.let { "Season" to it } else null,
             if (t.artists.isEmpty()) null else (if (t.artists.size == 1) "Artist" else "Artists") to t.artists.joinToString(", "),
             "Plays" to if (t.videoMp4Url == null) "Song only" else "Music video",
         )

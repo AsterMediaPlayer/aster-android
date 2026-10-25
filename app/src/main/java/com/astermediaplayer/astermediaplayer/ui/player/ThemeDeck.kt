@@ -46,6 +46,13 @@ class ThemeDeck(private val repo: AsterRepository, private val themes: ThemePlay
     /** The show it was started from, for its picture. */
     var showItem: BaseItemDto? = null
         private set
+    /** The show's seasons, to name the one a theme belongs to. */
+    var seasons: List<BaseItemDto> = emptyList()
+        private set
+    /** The card that started what's playing, for Back in the panel to return focus to (null when it has gone). */
+    var returnFocus: androidx.compose.ui.focus.FocusRequester? = null
+    /** A card with its own hold menu has focus, so holding Select there opens that menu rather than going to the panel. */
+    var cardHoldFocused by mutableStateOf(false)
 
     private var queue = emptyList<OpeningEnding>()
     private var startMs = 0L
@@ -68,7 +75,8 @@ class ThemeDeck(private val repo: AsterRepository, private val themes: ThemePlay
     }
 
     /** Plays [entry], then the rest of [queue] after it. */
-    fun play(entry: OpeningEnding, queue: List<OpeningEnding>, show: BaseItemDto) {
+    fun play(entry: OpeningEnding, queue: List<OpeningEnding>, show: BaseItemDto, seasons: List<BaseItemDto> = this.seasons) {
+        this.seasons = seasons
         val wasActive = isActive
         if (!wasActive) themes.suspend()
         load?.cancel()

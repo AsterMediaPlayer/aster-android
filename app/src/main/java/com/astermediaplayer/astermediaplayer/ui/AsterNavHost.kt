@@ -1,5 +1,6 @@
 package com.astermediaplayer.astermediaplayer.ui
 
+import androidx.compose.ui.focus.focusRestorer
 import com.astermediaplayer.astermediaplayer.ui.detail.ThemeNowPlayingPanel
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.compose.ui.input.key.onPreviewKeyEvent
@@ -265,10 +266,11 @@ fun AsterNavHost(signedIn: Boolean) {
     LaunchedEffect(deck.focusRequest) { if (deck.focusRequest != firstRequest) runCatching { miniFocus.requestFocus() } }
     // Holding Select from anywhere brings focus to the slim Now Playing panel, as holding Play/Pause does on the Apple TV.
     var holdHandled by remember { mutableStateOf(false) }
+    val pageFocus = remember { androidx.compose.ui.focus.FocusRequester() }
 
     Box(
         Modifier.fillMaxSize().onPreviewKeyEvent { e ->
-            if (!isTv || !deck.isActive || e.key != androidx.compose.ui.input.key.Key.DirectionCenter) false
+            if (!isTv || !deck.isActive || deck.cardHoldFocused || e.key != androidx.compose.ui.input.key.Key.DirectionCenter) false
             else when (e.type) {
                 androidx.compose.ui.input.key.KeyEventType.KeyDown ->
                     if (e.nativeKeyEvent.repeatCount > 0) {
@@ -281,7 +283,9 @@ fun AsterNavHost(signedIn: Boolean) {
             }
         },
     ) {
-        NavHost(nav, startDestination = if (signedIn) Routes.MAIN else Routes.AUTH, modifier = Modifier.fillMaxSize()) {
+        // The pages remember what had focus, so Back from the Now Playing panel lands where you were.
+        androidx.compose.runtime.CompositionLocalProvider(com.astermediaplayer.astermediaplayer.ui.detail.LocalPageFocus provides pageFocus) {
+        NavHost(nav, startDestination = if (signedIn) Routes.MAIN else Routes.AUTH, modifier = Modifier.fillMaxSize().focusRequester(pageFocus).focusRestorer()) {
             composable(Routes.AUTH) {
                 val vm: AuthViewModel = viewModel(factory = viewModelFactory { initializer { AuthViewModel(repo, app::resetForServerChange) } })
                 AuthScreen(vm, onSignedIn = { nav.navigate(Routes.MAIN) { popUpTo(Routes.AUTH) { inclusive = true } } })
@@ -487,14 +491,35 @@ fun AsterNavHost(signedIn: Boolean) {
                 )
             }
         }
+        }
         // The slim Now Playing panel, over the browsing pages (a show's own page carries its own).
-        val browsing = route.startsWith("main") || route.startsWith("library/") || route.startsWith("audiobook") || route.startsWith("album") || route.startsWith("artist")
-        if (isTv && deck.isActive && browsing) {
+        val onDetail = route.startsWith("detail")
+        val browsing = onDetail || route.startsWith("main") || route.startsWith("library/") || route.startsWith("audiobook") || route.startsWith("album") || route.startsWith("artist")
+        if (isTv && deck.isActive && browsing) androidx.compose.runtime.CompositionLocalProvider(com.astermediaplayer.astermediaplayer.ui.detail.LocalPageFocus provides pageFocus) {
             ThemeNowPlayingPanel(
                 deck, null,
                 Modifier.align(Alignment.TopEnd).padding(top = 20.dp, end = 40.dp).width(300.dp),
-                showDetails = false, playFocus = miniFocus,
-                onOpenShow = deck.showItem?.let { show -> { nav.navigate(Routes.detail(show.id)) } },
+                showDetails = onDetail, playFocus = miniFocus,
+                onFullScreen = {
+                    deck.current?.let { oe ->
+                        deck.stop()
+                        scope.launch {
+                            when (oe) {
+                                is OpeningEnding.Chapter -> nav.navigate(Routes.clip(oe.clip.episode.id, oe.clip.startMs, oe.clip.endMs, oe.clip.title))
+                                is OpeningEnding.Theme -> {
+                                    val theme = oe.theme.preferring(app.settings.current().themeCut)
+                                    val published = theme.libraryItemId?.let(::parseId)
+                                    val path = theme.playablePath
+                                    when {
+                                        published != null -> nav.navigate(Routes.player(published))
+                                        path != null -> nav.navigate(Routes.theme(path, theme.code, theme.songLine))
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                onOpenShow = if (onDetail) null else deck.showItem?.let { show -> { nav.navigate(Routes.detail(show.id)) } },
             )
         }
         if (presented) {
