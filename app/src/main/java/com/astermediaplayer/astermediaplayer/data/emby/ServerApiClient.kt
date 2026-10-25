@@ -35,7 +35,8 @@ class ServerApiClient(private val inner: ApiClient, private val kind: ServerKind
     /** Image and stream addresses are built here too, so their ids go out as Emby's numbers. */
     override fun createUrl(pathTemplate: String, pathParameters: Map<String, Any?>, queryParameters: Map<String, Any?>, ignorePathParameters: Boolean): String =
         if (!emby) inner.createUrl(pathTemplate, pathParameters, queryParameters, ignorePathParameters)
-        else inner.createUrl(pathTemplate, pathParameters.mapValues { outgoing(it.value) }, queryParameters.mapValues { outgoing(it.value) }, ignorePathParameters)
+        // The SDK adds `streamOptions={}` to stream addresses; Emby answers a 500 to it, so it isn't sent.
+        else inner.createUrl(pathTemplate, pathParameters.mapValues { outgoing(it.value) }, queryParameters.filterKeys { it != "streamOptions" }.mapValues { outgoing(it.value) }, ignorePathParameters)
 
     override suspend fun request(
         method: HttpMethod, pathTemplate: String, pathParameters: Map<String, Any?>, queryParameters: Map<String, Any?>, requestBody: Any?,
