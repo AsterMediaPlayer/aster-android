@@ -483,6 +483,7 @@ private fun DetailBody(
     if (isTv) LaunchedEffect(enterSection) { if (enterSection > 0) { delay(350); runCatching { sectionLead.requestFocus() } } }
     // The Play button's middle across the screen, which the episode strip lines the next episode up under.
     var playCenterPx by remember { mutableStateOf<Float?>(null) }
+    val panelPlayFocus = remember { FocusRequester() }
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val screenHeight = maxHeight
@@ -548,12 +549,14 @@ private fun DetailBody(
         }
         // The Now Playing panel floats at the top right while the Music tab plays something, over the page (the Apple TV's).
         val deck = app.themeDeck
+        // Asked for by a card pressed: once the panel has settled in, focus goes to its Play/Pause.
+        LaunchedEffect(deck.focusRequest) { if (deck.focusRequest > 0) { delay(350); runCatching { panelPlayFocus.requestFocus() } } }
         if (isTv && deck.isActive) {
             val artwork = remember(item.id) { repo.imageUrl(item, ImageType.PRIMARY, 640) ?: repo.imageUrl(item, ImageType.BACKDROP, 640) }
             ThemeNowPlayingPanel(
                 deck, artwork,
                 Modifier.align(Alignment.TopEnd).padding(top = 20.dp, end = 40.dp).width(300.dp),
-                showDetails = true, wide = false,
+                showDetails = true, wide = false, playFocus = panelPlayFocus,
                 onFullScreen = { deck.current?.let { entry -> deck.stop(); onPlayTheme(entry) } },
             )
         }
@@ -751,10 +754,10 @@ internal fun ActionButton(title: String, icon: ImageVector, modifier: Modifier =
 
 /** Heart, watched and more: a capsule as tall as the text buttons. */
 @Composable
-internal fun IconActionButton(icon: ImageVector, description: String, onClick: () -> Unit) {
-    if (LocalIsTv.current) { TvActionButton(null, icon, description, Modifier, false, onClick); return }
+internal fun IconActionButton(icon: ImageVector, description: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    if (LocalIsTv.current) { TvActionButton(null, icon, description, modifier, false, onClick); return }
     Box(
-        Modifier.size(DetailMetrics.iconButtonWidth, DetailMetrics.buttonHeight).tvFocus(DetailMetrics.buttonHeight / 2).clip(CircleShape).background(ButtonGrey).clickable(onClick = onClick),
+        modifier.size(DetailMetrics.iconButtonWidth, DetailMetrics.buttonHeight).tvFocus(DetailMetrics.buttonHeight / 2).clip(CircleShape).background(ButtonGrey).clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) { Icon(icon, description, tint = Color.White, modifier = Modifier.size(20.dp)) }
 }
@@ -871,7 +874,8 @@ private fun MusicSection(content: DetailContent, onPlayTheme: (OpeningEnding) ->
     var addingIds by remember { mutableStateOf<List<UUID>?>(null) }
     val context = LocalContext.current
 
-    fun start(entry: OpeningEnding, order: List<OpeningEnding> = queue) = deck.play(entry, order, content.item)
+    // A start from here takes focus to the panel's Play/Pause, as on the Apple TV.
+    fun start(entry: OpeningEnding, order: List<OpeningEnding> = queue) { deck.play(entry, order, content.item); deck.requestPanelFocus() }
     fun pressed(entry: OpeningEnding) {
         val e = preferred(entry)
         if (e is OpeningEnding.Theme && (e.theme.spoiler || e.theme.nsfw)) confirming = e else start(e)

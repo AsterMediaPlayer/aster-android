@@ -2,6 +2,7 @@ package com.astermediaplayer.astermediaplayer.ui.detail
 
 import androidx.annotation.OptIn
 import androidx.compose.foundation.background
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -28,6 +29,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRestorer
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextOverflow
@@ -42,9 +46,9 @@ import com.astermediaplayer.astermediaplayer.ui.player.ThemeDeck
 import com.astermediaplayer.astermediaplayer.ui.theme.SecondaryText
 
 /** The Music tab's Now Playing panel: the picture, what's playing and its progress, the controls, and what it is. Nothing while nothing plays. */
-@OptIn(UnstableApi::class)
+@OptIn(UnstableApi::class, androidx.compose.ui.ExperimentalComposeUiApi::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-fun ThemeNowPlayingPanel(deck: ThemeDeck, artwork: String?, modifier: Modifier = Modifier, showDetails: Boolean = true, wide: Boolean = false, onFullScreen: (() -> Unit)? = null) {
+fun ThemeNowPlayingPanel(deck: ThemeDeck, artwork: String?, modifier: Modifier = Modifier, showDetails: Boolean = true, wide: Boolean = false, onFullScreen: (() -> Unit)? = null, playFocus: FocusRequester? = null) {
     val entry = deck.current ?: return
     val picture: @Composable (Modifier) -> Unit = { m ->
         Box(m.aspectRatio(16f / 9f).clip(RoundedCornerShape(14.dp)).background(Color.Black), contentAlignment = Alignment.Center) {
@@ -84,13 +88,17 @@ fun ThemeNowPlayingPanel(deck: ThemeDeck, artwork: String?, modifier: Modifier =
                 Text(if (deck.durationMs > 0) time(deck.durationMs) else "–:––", style = MaterialTheme.typography.labelSmall, color = SecondaryText)
             }
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+        // Moving in from outside lands on Play/Pause, not on whichever button is nearest.
+        Row(
+            Modifier.focusGroup().then(if (playFocus != null) Modifier.focusRestorer(playFocus) else Modifier),
+            horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically,
+        ) {
             IconActionButton(Icons.Default.SkipPrevious, "Previous") { deck.previous() }
-            IconActionButton(if (deck.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, if (deck.isPlaying) "Pause" else "Play") { deck.togglePlaying() }
+            IconActionButton(if (deck.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, if (deck.isPlaying) "Pause" else "Play", if (playFocus != null) Modifier.focusRequester(playFocus) else Modifier) { deck.togglePlaying() }
             IconActionButton(Icons.Default.SkipNext, "Next") { deck.next() }
             IconActionButton(Icons.Default.Stop, "Stop") { deck.stop() }
             // The same one, bigger.
-            onFullScreen?.let { IconActionButton(Icons.Default.Fullscreen, "Full Screen", it) }
+            onFullScreen?.let { IconActionButton(Icons.Default.Fullscreen, "Full Screen", onClick = it) }
         }
         if (showDetails) Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             for ((label, value) in details(entry)) {
