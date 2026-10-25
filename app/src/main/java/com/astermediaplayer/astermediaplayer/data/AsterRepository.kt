@@ -75,6 +75,20 @@ class AsterRepository(context: Context, private val store: SessionStore) {
 
     private var client: ApiClient? = null
 
+    /** The servers signed in to, in use or not (the Apple apps' `savedServers`). */
+    private val _servers = kotlinx.coroutines.flow.MutableStateFlow<List<SavedServer>>(emptyList())
+    val savedServers: kotlinx.coroutines.flow.StateFlow<List<SavedServer>> = _servers
+
+    /** The server in use was left for longer than its lock-after: its user's password is asked for to carry on. */
+    private val _locked = kotlinx.coroutines.flow.MutableStateFlow(false)
+    val locked: kotlinx.coroutines.flow.StateFlow<Boolean> = _locked
+
+    /** What the server just reached calls itself, kept with the sign-in that follows. */
+    private var reachedName: String? = null
+
+    val currentServerId: String? get() = session?.let { SavedServer.id(it.serverUrl, it.userId) }
+    val currentServer: SavedServer? get() = currentServerId?.let { id -> _servers.value.firstOrNull { it.id == id } }
+
     /** The kind of server reached, which decides the routes and ids the client speaks (see [ServerApiClient]). */
     var serverKind: ServerKind = ServerKind.Jellyfin
         private set
@@ -97,10 +111,16 @@ class AsterRepository(context: Context, private val store: SessionStore) {
 
     /** Restores the saved sign-in. Returns false when there isn't one. */
     suspend fun restore(): Boolean {
-        val saved = store.load() ?: return false
+        val saved = store.load()
+        var list = store.loadServers()
+        // Signed in before servers were kept: that one is the first.
+        if (list.isEmpty() && saved != null) { list = listOf(SavedServer(saved)); store.saveServers(list) }
+        _servers.value = list
+        if (saved == null) return false
         serverKind = saved.kind
         client = connect(saved.serverUrl, saved.accessToken, saved.kind)
         session = saved
+        checkLock()
         return true
     }
 
@@ -117,6 +137,7 @@ class AsterRepository(context: Context, private val store: SessionStore) {
                 val probe = jellyfin.createApi(baseUrl = candidate)
                 val info = probe.systemApi.getPublicSystemInfo().content
                 serverKind = ServerKind.fromProductName(info.productName)
+                reachedName = info.serverName
                 client = connect(candidate, kind = serverKind)
                 return candidate
             } catch (e: Exception) {
@@ -150,18 +171,105 @@ class AsterRepository(context: Context, private val store: SessionStore) {
     private suspend fun finishSignIn(serverUrl: String, result: AuthenticationResult) {
         val token = checkNotNull(result.accessToken) { "The server didn't return an access token" }
         val user = checkNotNull(result.user) { "The server didn't return a user" }
-        val saved = Session(serverUrl, token, user.id.toString(), user.name.orEmpty(), serverKind)
+        val saved = Session(serverUrl, token, user.id.toString(), user.name.orEmpty(), serverKind, reachedName)
         store.save(saved)
         client = connect(serverUrl, token)
         session = saved
+        remember(saved)
+        _locked.value = false
     }
 
+    /** Signs out of the server in use and forgets it; the others stay saved. */
     suspend fun signOut() {
         runCatching { api.sessionApi.reportSessionEnded() }
+        currentServerId?.let { id -> update(_servers.value.filterNot { it.id == id }) }
         store.clearCredentials()
         animeLibraryCache = null
         client = null
         session = null
+        _locked.value = false
+    }
+
+    /** Off to sign in to another server: the one in use stays saved and signed in, to switch back to. */
+    suspend fun changeServer() {
+        store.clearCredentials()
+        animeLibraryCache = null
+        client = null
+        session = null
+        _locked.value = false
+    }
+
+    /** Back to a saved server, with its saved sign-in or (`fresh`) a new one made from its password. */
+    suspend fun switchTo(saved: SavedServer, fresh: Session? = null) {
+        val stored = fresh ?: saved.session
+        store.save(stored)
+        serverKind = stored.kind
+        client = connect(stored.serverUrl, stored.accessToken, stored.kind)
+        session = stored
+        animeLibraryCache = null
+        remember(stored)
+        _locked.value = false
+    }
+
+    /** Checks a saved server's password with the server itself; the fresh sign-in to switch or unlock with. */
+    suspend fun signInAgain(saved: SavedServer, password: String): Session {
+        val s = saved.session
+        val result = connect(s.serverUrl, null, s.kind).authenticationApi.authenticateUserByName(AuthenticateUserByName(s.userName, password)).content
+        val token = checkNotNull(result.accessToken) { "The server didn't return an access token" }
+        val user = checkNotNull(result.user) { "The server didn't return a user" }
+        return Session(s.serverUrl, token, user.id.toString(), user.name.orEmpty(), s.kind, s.serverName)
+    }
+
+    /** The password was right: carry on with the fresh sign-in. */
+    suspend fun unlock(fresh: Session) {
+        store.save(fresh)
+        client = connect(fresh.serverUrl, fresh.accessToken, fresh.kind)
+        session = fresh
+        remember(fresh)
+        _locked.value = false
+    }
+
+    suspend fun setAsksPasswordToSwitch(id: String, asks: Boolean) =
+        update(_servers.value.map { if (it.id == id) it.copy(asksPasswordToSwitch = asks) else it })
+
+    suspend fun setLockAfter(id: String, minutes: Int?) =
+        update(_servers.value.map { if (it.id == id) it.copy(lockAfterMinutes = minutes) else it })
+
+    /** Forgets a saved server (not the one in use), signing it out. */
+    suspend fun removeServer(id: String) {
+        if (id == currentServerId) return
+        val gone = _servers.value.firstOrNull { it.id == id } ?: return
+        update(_servers.value.filterNot { it.id == id })
+        runCatching {
+            val s = gone.session
+            val api = connect(s.serverUrl, s.accessToken, s.kind)
+            api.sessionApi.reportSessionEnded()
+        }
+    }
+
+    /** The app left the screen: the clock for the lock starts. */
+    suspend fun noteLeftApp() = store.noteLeft(System.currentTimeMillis())
+
+    /** The app is back (or just opened): locks the server in use if it was away past its lock-after. */
+    suspend fun checkLock() {
+        if (session == null) return
+        val leftAt = store.leftAt()
+        store.clearLeft()
+        val minutes = currentServer?.lockAfterMinutes ?: return
+        if (_locked.value || leftAt == null) return
+        if (System.currentTimeMillis() - leftAt >= minutes * 60_000L) _locked.value = true
+    }
+
+    /** Adds or updates a server in the saved list, keeping its password settings. */
+    private suspend fun remember(stored: Session) {
+        val id = SavedServer.id(stored.serverUrl, stored.userId)
+        val list = _servers.value
+        update(if (list.any { it.id == id }) list.map { if (it.id == id) it.copy(session = stored) else it } else list + SavedServer(stored))
+    }
+
+    private suspend fun update(list: List<SavedServer>) {
+        _servers.value = list
+        store.saveServers(list)
     }
 
     // MARK: Browsing
@@ -247,6 +355,9 @@ class AsterRepository(context: Context, private val store: SessionStore) {
             // The server answers with 32 hex digits, no dashes.
             UUID.fromString(if (id.length == 32) "${id.substring(0, 8)}-${id.substring(8, 12)}-${id.substring(12, 16)}-${id.substring(16, 20)}-${id.substring(20)}" else id)
         }
+
+    /** The version of the server in use, for Account. */
+    suspend fun serverVersion(): String? = runCatching { api.systemApi.getPublicSystemInfo().content.version }.getOrNull()
 
     /** Whether this account is the server's administrator, who alone can change the tags that make a playlist a channel. */
     suspend fun isAdministrator(): Boolean =

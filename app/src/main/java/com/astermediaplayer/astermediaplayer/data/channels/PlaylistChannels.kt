@@ -173,6 +173,13 @@ class ChannelsModel(private val repo: AsterRepository) {
 
     private class Tagged(val playlist: BaseItemDto, val tags: ChannelTags)
 
+    /** Forgets everything about one server's channels, for another's. */
+    fun reset() {
+        itemCache.clear(); sourceCache.clear(); episodeCache.clear()
+        _channels.value = emptyList(); _loaded.value = false; _error.value = null
+        ChannelTuner.register(emptyList())
+    }
+
     /** Loads the channels [userName] gets (`aster:user=`), every one for null. */
     suspend fun load(userName: String? = null, force: Boolean = false) {
         _error.value = null

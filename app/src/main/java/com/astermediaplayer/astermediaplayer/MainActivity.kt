@@ -1,5 +1,7 @@
 package com.astermediaplayer.astermediaplayer
 
+import kotlinx.coroutines.launch
+import androidx.lifecycle.lifecycleScope
 import android.graphics.Color
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -39,6 +41,11 @@ class MainActivity : ComponentActivity() {
             Lockup.useTv(unit)
             Type.useTv(unit / resources.configuration.fontScale)
         }
+        // The clock for each server's lock-after: it starts when the app leaves the screen and is read when it's back.
+        lifecycle.addObserver(object : androidx.lifecycle.DefaultLifecycleObserver {
+            override fun onStop(owner: androidx.lifecycle.LifecycleOwner) { lifecycleScope.launch { repo.noteLeftApp() } }
+            override fun onStart(owner: androidx.lifecycle.LifecycleOwner) { lifecycleScope.launch { repo.checkLock() } }
+        })
         setContent {
             val signedIn by produceState<Boolean?>(null) { value = repo.restore() }
             val tv = isTelevision(this)

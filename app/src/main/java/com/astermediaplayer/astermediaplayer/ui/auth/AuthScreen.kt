@@ -2,6 +2,10 @@ package com.astermediaplayer.astermediaplayer.ui.auth
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material3.Icon
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -35,6 +39,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 @Composable
 fun AuthScreen(viewModel: AuthViewModel, onSignedIn: () -> Unit) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val servers by viewModel.servers.collectAsStateWithLifecycle()
     LaunchedEffect(state.signedIn) { if (state.signedIn) onSignedIn() }
 
     Box(Modifier.fillMaxSize().safeDrawingPadding().imePadding(), contentAlignment = Alignment.Center) {
@@ -44,7 +49,7 @@ fun AuthScreen(viewModel: AuthViewModel, onSignedIn: () -> Unit) {
         ) {
             Text("Aster", style = MaterialTheme.typography.displaySmall, color = MaterialTheme.colorScheme.primary)
             if (state.connectedServer == null) {
-                Text("Connect to your Jellyfin server", style = MaterialTheme.typography.titleMedium)
+                Text("Connect to your Jellyfin or Emby server", style = MaterialTheme.typography.titleMedium)
                 OutlinedTextField(
                     value = state.serverInput, onValueChange = viewModel::setServer,
                     label = { Text("Server address") }, placeholder = { Text("jellyfin.example.com:8096") },
@@ -56,6 +61,19 @@ fun AuthScreen(viewModel: AuthViewModel, onSignedIn: () -> Unit) {
                     onClick = viewModel::connect, enabled = !state.busy && state.serverInput.isNotBlank(),
                     modifier = Modifier.fillMaxWidth(),
                 ) { if (state.busy) CircularProgressIndicator(Modifier.padding(2.dp)) else Text("Connect") }
+                // Servers already signed in to: back to one without typing it.
+                if (servers.isNotEmpty()) {
+                    Text("Your Servers", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 10.dp))
+                    servers.forEach { server ->
+                        OutlinedButton(onClick = { viewModel.switchTo(server) }, modifier = Modifier.fillMaxWidth(), contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp)) {
+                            Column(Modifier.weight(1f)) {
+                                Text(server.titleAmong(servers), style = MaterialTheme.typography.bodyLarge)
+                                Text("${server.session.kind.displayName} · ${server.session.userName}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            if (server.asksPasswordToSwitch) Icon(Icons.Default.Lock, "Asks for password", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
             } else {
                 Text(state.connectedServer!!, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 if (state.quickConnectCode != null) {
@@ -96,5 +114,8 @@ fun AuthScreen(viewModel: AuthViewModel, onSignedIn: () -> Unit) {
             }
             state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         }
+    }
+    state.asking?.let { server ->
+        ServerPasswordDialog(server, "Switch", title = server.titleAmong(servers), onCheck = { viewModel.switchWithPassword(server, it) }, onDismiss = viewModel::dismissAsking)
     }
 }
