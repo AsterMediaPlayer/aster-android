@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.QueueMusic
+import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
@@ -48,7 +49,7 @@ import com.astermediaplayer.astermediaplayer.ui.theme.SecondaryText
 /** The Music tab's Now Playing panel: the picture, what's playing and its progress, the controls, and what it is. Nothing while nothing plays. */
 @OptIn(UnstableApi::class, androidx.compose.ui.ExperimentalComposeUiApi::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-fun ThemeNowPlayingPanel(deck: ThemeDeck, artwork: String?, modifier: Modifier = Modifier, showDetails: Boolean = true, wide: Boolean = false, onFullScreen: (() -> Unit)? = null, playFocus: FocusRequester? = null) {
+fun ThemeNowPlayingPanel(deck: ThemeDeck, artwork: String?, modifier: Modifier = Modifier, showDetails: Boolean = true, wide: Boolean = false, onFullScreen: (() -> Unit)? = null, playFocus: FocusRequester? = null, onOpenShow: (() -> Unit)? = null) {
     val entry = deck.current ?: return
     val picture: @Composable (Modifier) -> Unit = { m ->
         Box(m.aspectRatio(16f / 9f).clip(RoundedCornerShape(14.dp)).background(Color.Black), contentAlignment = Alignment.Center) {
@@ -99,6 +100,7 @@ fun ThemeNowPlayingPanel(deck: ThemeDeck, artwork: String?, modifier: Modifier =
             IconActionButton(Icons.Default.Stop, "Stop") { deck.stop() }
             // The same one, bigger.
             onFullScreen?.let { IconActionButton(Icons.Default.Fullscreen, "Full Screen", onClick = it) }
+            onOpenShow?.let { IconActionButton(Icons.Default.ChevronRight, "Go to the Show", onClick = it) }
         }
         if (showDetails) Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             for ((label, value) in details(entry)) {
