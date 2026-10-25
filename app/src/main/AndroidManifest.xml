@@ -4,6 +4,7 @@
     <!-- One build for phones and Android TV: a TV has no touchscreen, and the leanback UI is ours, not the library's. -->
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
     <uses-feature android:name="android.software.leanback" android:required="false" />
+    <uses-feature android:name="android.software.live_tv" android:required="false" />
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
@@ -12,6 +13,9 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Aster's channels in the Android TV live guide (see tv/AsterTvInputService). -->
+    <uses-permission android:name="com.android.providers.tv.permission.READ_EPG_DATA" />
+    <uses-permission android:name="com.android.providers.tv.permission.WRITE_EPG_DATA" />
 
     <application
         android:name=".AsterApp"
@@ -52,6 +56,18 @@
                 <action android:name="androidx.media3.session.MediaSessionService" />
             </intent-filter>
         </service>
+
+        <service
+            android:name=".tv.AsterTvInputService"
+            android:exported="true"
+            android:permission="android.permission.BIND_TV_INPUT">
+            <intent-filter>
+                <action android:name="android.media.tv.TvInputService" />
+            </intent-filter>
+            <meta-data android:name="android.media.tv.input" android:resource="@xml/aster_tv_input" />
+        </service>
+
+        <activity android:name=".tv.AsterTvSetupActivity" android:exported="true" android:theme="@style/Theme.AsterMediaPlayer" />
 
         <service
             android:name=".data.downloads.AsterDownloadService"
