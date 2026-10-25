@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.astermediaplayer.astermediaplayer.data.emby.ServerKind
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 
@@ -12,6 +13,8 @@ data class Session(
     val accessToken: String,
     val userId: String,
     val userName: String,
+    /** Jellyfin or Emby, found when the server was reached. */
+    val kind: ServerKind = ServerKind.Jellyfin,
 )
 
 private val Context.dataStore by preferencesDataStore("aster_session")
@@ -21,13 +24,14 @@ class SessionStore(private val context: Context) {
     private val tokenKey = stringPreferencesKey("token")
     private val userIdKey = stringPreferencesKey("user_id")
     private val userNameKey = stringPreferencesKey("user_name")
+    private val kindKey = stringPreferencesKey("server_kind")
 
     suspend fun load(): Session? {
         val prefs = context.dataStore.data.first()
         val server = prefs[serverKey] ?: return null
         val token = prefs[tokenKey]?.let(SecretBox::open) ?: return null
         val userId = prefs[userIdKey] ?: return null
-        return Session(server, token, userId, prefs[userNameKey].orEmpty())
+        return Session(server, token, userId, prefs[userNameKey].orEmpty(), ServerKind.of(prefs[kindKey]))
     }
 
     suspend fun lastServer(): String? = context.dataStore.data.map { it[serverKey] }.first()
@@ -38,6 +42,7 @@ class SessionStore(private val context: Context) {
             it[tokenKey] = SecretBox.seal(session.accessToken)
             it[userIdKey] = session.userId
             it[userNameKey] = session.userName
+            it[kindKey] = session.kind.raw
         }
     }
 

@@ -3,6 +3,9 @@ package com.astermediaplayer.astermediaplayer.data
 import android.content.Context
 import org.jellyfin.sdk.Jellyfin
 import org.jellyfin.sdk.api.client.ApiClient
+import com.astermediaplayer.astermediaplayer.data.emby.ServerApiClient
+import com.astermediaplayer.astermediaplayer.data.emby.EmbyIds
+import com.astermediaplayer.astermediaplayer.data.emby.ServerKind
 import org.jellyfin.sdk.api.client.extensions.artistApi
 import org.jellyfin.sdk.api.client.extensions.audioApi
 import org.jellyfin.sdk.api.client.extensions.instantMixApi
@@ -71,6 +74,20 @@ class AsterRepository(context: Context, private val store: SessionStore) {
     }
 
     private var client: ApiClient? = null
+
+    /** The kind of server reached, which decides the routes and ids the client speaks (see [ServerApiClient]). */
+    var serverKind: ServerKind = ServerKind.Jellyfin
+        private set
+
+    /** An id as the server writes it: on Emby, the number an id the app carries as a UUID stands for. */
+    fun wire(id: UUID): String = wire(id.toString())
+    fun wire(id: String): String = if (serverKind == ServerKind.Emby) EmbyIds.decode(id) else id
+
+    /** The SDK's client for [url], made to speak Emby when the server is one, and to keep its requests off the main thread. */
+    private fun connect(url: String, token: String? = null, kind: ServerKind = serverKind): ApiClient {
+        val base = jellyfin.createApi(baseUrl = url, accessToken = token)
+        return ServerApiClient(base, kind) { session?.userId }
+    }
     var session: Session? = null
         private set
 
@@ -81,7 +98,8 @@ class AsterRepository(context: Context, private val store: SessionStore) {
     /** Restores the saved sign-in. Returns false when there isn't one. */
     suspend fun restore(): Boolean {
         val saved = store.load() ?: return false
-        client = jellyfin.createApi(baseUrl = saved.serverUrl, accessToken = saved.accessToken)
+        serverKind = saved.kind
+        client = connect(saved.serverUrl, saved.accessToken, saved.kind)
         session = saved
         return true
     }
@@ -97,14 +115,15 @@ class AsterRepository(context: Context, private val store: SessionStore) {
         for (candidate in candidates) {
             try {
                 val probe = jellyfin.createApi(baseUrl = candidate)
-                probe.systemApi.getPublicSystemInfo().content
-                client = probe
+                val info = probe.systemApi.getPublicSystemInfo().content
+                serverKind = ServerKind.fromProductName(info.productName)
+                client = connect(candidate, kind = serverKind)
                 return candidate
             } catch (e: Exception) {
                 failure = e
             }
         }
-        throw IllegalStateException("Couldn't reach a Jellyfin server at $trimmed", failure)
+        throw IllegalStateException("Couldn't reach a Jellyfin or Emby server at $trimmed", failure)
     }
 
     suspend fun publicUsers(): List<UserDto> = api.userApi.getPublicUsers().content
@@ -114,8 +133,9 @@ class AsterRepository(context: Context, private val store: SessionStore) {
         finishSignIn(serverUrl, result)
     }
 
+    /** Emby has no Quick Connect. */
     suspend fun quickConnectAvailable(): Boolean =
-        runCatching { api.authenticationApi.getQuickConnectEnabled().content }.getOrDefault(false)
+        serverKind == ServerKind.Jellyfin && runCatching { api.authenticationApi.getQuickConnectEnabled().content }.getOrDefault(false)
 
     suspend fun quickConnectInitiate(): QuickConnectResult = api.authenticationApi.initiateQuickConnect().content
 
@@ -130,9 +150,9 @@ class AsterRepository(context: Context, private val store: SessionStore) {
     private suspend fun finishSignIn(serverUrl: String, result: AuthenticationResult) {
         val token = checkNotNull(result.accessToken) { "The server didn't return an access token" }
         val user = checkNotNull(result.user) { "The server didn't return a user" }
-        val saved = Session(serverUrl, token, user.id.toString(), user.name.orEmpty())
+        val saved = Session(serverUrl, token, user.id.toString(), user.name.orEmpty(), serverKind)
         store.save(saved)
-        client = jellyfin.createApi(baseUrl = serverUrl, accessToken = token)
+        client = connect(serverUrl, token)
         session = saved
     }
 
@@ -384,7 +404,7 @@ class AsterRepository(context: Context, private val store: SessionStore) {
     /** One sheet of a title's trickplay frames (see `TrickplayInfo`); null when the server can't give it. */
     suspend fun trickplaySheet(itemId: UUID, width: Int, index: Int, mediaSourceId: String): ByteArray? = withContext(Dispatchers.IO) {
         runCatching {
-            val url = "${serverUrl.trimEnd('/')}/Videos/$itemId/Trickplay/$width/$index.jpg?MediaSourceId=$mediaSourceId"
+            val url = "${serverUrl.trimEnd('/')}/Videos/${wire(itemId)}/Trickplay/$width/$index.jpg?MediaSourceId=$mediaSourceId"
             http.newCall(Request.Builder().url(url).header("Authorization", authorizationHeader()).build()).execute().use { r ->
                 if (r.isSuccessful) r.body.bytes() else null
             }
@@ -423,7 +443,7 @@ class AsterRepository(context: Context, private val store: SessionStore) {
 
     private suspend fun postDefaults(programId: String, path: String) = withContext(Dispatchers.IO) {
         val base = serverUrl.trimEnd('/')
-        val defaults = http.newCall(Request.Builder().url("$base/LiveTv/Timers/Defaults?programId=$programId").header("Authorization", authorizationHeader()).build())
+        val defaults = http.newCall(Request.Builder().url("$base/LiveTv/Timers/Defaults?programId=${wire(programId)}").header("Authorization", authorizationHeader()).build())
             .execute().use { r -> if (!r.isSuccessful) error("The server couldn't prepare the recording (${r.code}).") else r.body.string() }
         http.newCall(
             Request.Builder().url(base + path).header("Authorization", authorizationHeader())
@@ -589,7 +609,7 @@ class AsterRepository(context: Context, private val store: SessionStore) {
     }
 
     /** Openings and endings from the plugin for a series, season or episode. */
-    suspend fun opEdThemes(itemId: UUID): List<OpEdTheme>? = opEdGet("/OpEd/Items/$itemId/Themes")?.let { json ->
+    suspend fun opEdThemes(itemId: UUID): List<OpEdTheme>? = opEdGet("/OpEd/Items/${wire(itemId)}/Themes")?.let { json ->
         val themes = json.optJSONArray("Themes") ?: return@let emptyList()
         List(themes.length()) { OpEdTheme.fromJson(themes.getJSONObject(it)) }
     }
@@ -888,6 +908,9 @@ class AsterRepository(context: Context, private val store: SessionStore) {
     val accessToken: String? get() = session?.accessToken
 
     fun directStreamUrl(itemId: UUID, mediaSourceId: String, playSessionId: String?, container: String?): String =
+        directStreamUrlRaw(itemId, mediaSourceId, playSessionId, container).also { android.util.Log.i("Aster", "direct stream: ${it.replace(session?.accessToken.orEmpty(), "***")}") }
+
+    private fun directStreamUrlRaw(itemId: UUID, mediaSourceId: String, playSessionId: String?, container: String?): String =
         api.videoApi.getVideoStreamUrl(
             itemId = itemId,
             container = container,
@@ -909,7 +932,7 @@ class AsterRepository(context: Context, private val store: SessionStore) {
      * from its cache. Called in the background, never in the way of playback.
      */
     suspend fun subtitleCues(itemId: UUID, mediaSourceId: String, streamIndex: Int): List<SubtitleCue> = withContext(Dispatchers.IO) {
-        val url = "${serverUrl.trimEnd('/')}/Videos/$itemId/$mediaSourceId/Subtitles/$streamIndex/Stream.js"
+        val url = "${serverUrl.trimEnd('/')}/Videos/${wire(itemId)}/$mediaSourceId/Subtitles/$streamIndex/Stream.js"
         subtitleHttp.newCall(Request.Builder().url(url).header("Authorization", authorizationHeader()).build()).execute().use { response ->
             check(response.isSuccessful) { "The server answered ${response.code} for subtitle track $streamIndex" }
             SubtitleCue.parse(response.body.string())
