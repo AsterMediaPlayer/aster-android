@@ -284,6 +284,13 @@ private fun PlaybackPage(settings: AppSettings, store: SettingsStore, scope: kot
     SChoice("Opening and ending version", ThemeCut.entries.map { it.settingTitle }, ThemeCut.entries.indexOf(settings.themeCut)) { scope.launch { store.setThemeCut(ThemeCut.entries[it]) } }
     SSwitch("Skip intros and credits automatically", settings.autoSkipSegments) { scope.launch { store.setAutoSkipSegments(it) } }
     SSwitch("Play the next episode automatically", settings.autoPlayNext) { scope.launch { store.setAutoPlayNext(it) } }
+    // A phone can lose its signal mid-book; a TV doesn't.
+    if (!LocalIsTv.current) {
+        SGroup("Audiobooks")
+        val choices = listOf(0 to "Off", 15 to "15 minutes", 30 to "30 minutes", 60 to "1 hour", 120 to "2 hours")
+        SChoice("Listen Ahead", choices.map { it.second }, choices.indexOfFirst { it.first == settings.listenAheadMinutes }.coerceAtLeast(0)) { scope.launch { store.setListenAheadMinutes(choices[it].first) } }
+        SNote("Saves what's coming up in an audiobook as it plays, so it carries on through a spot with no signal. It's kept in the cache, and let go once heard. Downloaded books don't need it.")
+    }
 }
 
 @Composable
