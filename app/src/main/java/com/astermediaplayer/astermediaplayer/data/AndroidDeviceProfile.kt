@@ -72,6 +72,10 @@ object AndroidDeviceProfile {
             SubtitleProfile("subrip", SubtitleDeliveryMethod.EXTERNAL),
             SubtitleProfile("vtt", SubtitleDeliveryMethod.EXTERNAL),
             SubtitleProfile("webvtt", SubtitleDeliveryMethod.EXTERNAL),
+            // ASS and SSA stay in the file in a direct play, where libass draws them whole (styles, positions, fonts, vector drawings);
+            // the server's separate copy is plain timed text. Where they can't stay (an HLS transcode) the separate copy is the fallback.
+            SubtitleProfile("ass", SubtitleDeliveryMethod.EMBED),
+            SubtitleProfile("ssa", SubtitleDeliveryMethod.EMBED),
             SubtitleProfile("ass", SubtitleDeliveryMethod.EXTERNAL),
             SubtitleProfile("ssa", SubtitleDeliveryMethod.EXTERNAL),
             SubtitleProfile("pgs", SubtitleDeliveryMethod.EMBED),
