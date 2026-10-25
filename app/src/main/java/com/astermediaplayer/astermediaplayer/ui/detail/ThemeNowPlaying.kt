@@ -9,9 +9,11 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.QueueMusic
+import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.SkipNext
@@ -42,13 +44,10 @@ import com.astermediaplayer.astermediaplayer.ui.theme.SecondaryText
 /** The Music tab's Now Playing panel: the picture, what's playing and its progress, the controls, and what it is. Nothing while nothing plays. */
 @OptIn(UnstableApi::class)
 @Composable
-fun ThemeNowPlayingPanel(deck: ThemeDeck, artwork: String?, modifier: Modifier = Modifier, showDetails: Boolean = true) {
+fun ThemeNowPlayingPanel(deck: ThemeDeck, artwork: String?, modifier: Modifier = Modifier, showDetails: Boolean = true, wide: Boolean = false, onFullScreen: (() -> Unit)? = null) {
     val entry = deck.current ?: return
-    Column(
-        modifier.clip(RoundedCornerShape(24.dp)).background(Color.White.copy(alpha = 0.08f)).padding(20.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
-    ) {
-        Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(14.dp)).background(Color.Black), contentAlignment = Alignment.Center) {
+    val picture: @Composable (Modifier) -> Unit = { m ->
+        Box(m.aspectRatio(16f / 9f).clip(RoundedCornerShape(14.dp)).background(Color.Black), contentAlignment = Alignment.Center) {
             val player = deck.player
             if (deck.hasVideo && player != null) {
                 AndroidView(
@@ -69,14 +68,14 @@ fun ThemeNowPlayingPanel(deck: ThemeDeck, artwork: String?, modifier: Modifier =
             }
             if (deck.loading) CircularProgressIndicator()
         }
-
+    }
+    val info: @Composable () -> Unit = {
         val (title, subtitle) = titles(entry)
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text("Now Playing", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
             Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
             subtitle?.let { Text(it, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis) }
         }
-
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             val fraction = if (deck.durationMs > 0) (deck.elapsedMs.toFloat() / deck.durationMs).coerceIn(0f, 1f) else 0f
             LinearProgressIndicator(progress = { fraction }, Modifier.fillMaxWidth())
@@ -85,14 +84,14 @@ fun ThemeNowPlayingPanel(deck: ThemeDeck, artwork: String?, modifier: Modifier =
                 Text(if (deck.durationMs > 0) time(deck.durationMs) else "–:––", style = MaterialTheme.typography.labelSmall, color = SecondaryText)
             }
         }
-
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
             IconActionButton(Icons.Default.SkipPrevious, "Previous") { deck.previous() }
             IconActionButton(if (deck.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, if (deck.isPlaying) "Pause" else "Play") { deck.togglePlaying() }
             IconActionButton(Icons.Default.SkipNext, "Next") { deck.next() }
             IconActionButton(Icons.Default.Stop, "Stop") { deck.stop() }
+            // The same one, bigger.
+            onFullScreen?.let { IconActionButton(Icons.Default.Fullscreen, "Full Screen", it) }
         }
-
         if (showDetails) Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             for ((label, value) in details(entry)) {
                 Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -101,6 +100,15 @@ fun ThemeNowPlayingPanel(deck: ThemeDeck, artwork: String?, modifier: Modifier =
                 }
             }
         }
+    }
+    val shape = Modifier.clip(RoundedCornerShape(24.dp)).background(Color(0xF21C1C1E))
+    // Wide (a TV, across the page): the picture beside what it is and the controls; narrow: stacked.
+    if (wide) Row(modifier.then(shape).padding(20.dp), horizontalArrangement = Arrangement.spacedBy(24.dp)) {
+        picture(Modifier.width(300.dp))
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp)) { info() }
+    } else Column(modifier.then(shape).padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        picture(Modifier.fillMaxWidth())
+        info()
     }
 }
 
