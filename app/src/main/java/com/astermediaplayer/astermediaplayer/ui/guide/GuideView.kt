@@ -152,6 +152,8 @@ fun GuideView(
     detail: ((GuideChannel, GuideProgram) -> GuideDetail?)? = null,
     /** Extra room at each side, over the page's own. */
     inset: Dp = 0.dp,
+    /** Drawn between the strip of times and the first channel (the Apple TV's group filter). */
+    belowTimes: (@Composable () -> Unit)? = null,
 ) {
     val density = LocalDensity.current
     val scope = rememberCoroutineScope()
@@ -238,6 +240,8 @@ fun GuideView(
                 }
             }
         }
+
+        belowTimes?.invoke()
 
         if (channels.isEmpty()) {
             Column(Modifier.fillMaxSize().padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {

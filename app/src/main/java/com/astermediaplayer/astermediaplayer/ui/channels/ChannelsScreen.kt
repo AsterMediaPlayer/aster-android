@@ -88,7 +88,6 @@ fun ChannelsScreen(onTune: (String) -> Unit, onOpen: (BaseItemDto) -> Unit, modi
             }
             else -> {
                 val groups = remember(guideChannels) { ChannelGroups.names(guideChannels) }
-                if (tv && groups.isNotEmpty()) TvGroupPills(listOf<String?>(null) + groups, group, Modifier.padding(horizontal = Lockup.screenPadding + inset)) { group = it }
                 val rows = remember(guideChannels, group) {
                     guideChannels.filter { group == null || (it.group ?: ChannelGroups.OTHER) == group }.map {
                         GuideChannel(it.id, "${it.number}", it.name, if (it.showsLogo) it.logoUrl(app.repository, 300) else null, group = if (groups.isEmpty()) null else it.group ?: ChannelGroups.OTHER)
@@ -116,6 +115,7 @@ fun ChannelsScreen(onTune: (String) -> Unit, onOpen: (BaseItemDto) -> Unit, modi
                     onChannel = { onTune(it.id) },
                     bottomPadding = 120.dp,
                     inset = inset,
+                    belowTimes = if (tv && groups.isNotEmpty()) ({ TvGroupPills(listOf<String?>(null) + groups, group, Modifier.padding(horizontal = Lockup.screenPadding + inset)) { group = it } }) else null,
                     detail = if (!tv) null else { _, program ->
                         val scheduled = program.payload as? ScheduledProgram
                         val dto = scheduled?.item?.source as? BaseItemDto
