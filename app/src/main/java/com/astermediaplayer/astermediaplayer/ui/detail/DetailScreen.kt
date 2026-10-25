@@ -57,6 +57,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.filled.MusicVideo
+import androidx.compose.material.icons.automirrored.filled.PlaylistAdd
 import androidx.compose.material.icons.automirrored.filled.QueueMusic
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DropdownMenu
@@ -597,6 +598,9 @@ private fun DetailInfo(
     val resumable = (if (isSeries) content.nextEpisode else target)?.let { (it.userData?.playbackPositionTicks ?: 0L) > 0 } == true
     var menu by remember { mutableStateOf(false) }
     val seriesId = item.seriesId
+    var addingIds by remember { mutableStateOf<List<UUID>?>(null) }
+    val scope = rememberCoroutineScope()
+    val context = LocalContext.current
     val menuId = content.discMenuId
     val preferDisc = (LocalContext.current.applicationContext as AsterApp).settings.settings.collectAsStateWithLifecycle(initialValue = AppSettings()).value.preferDiscMenu
 
@@ -650,21 +654,33 @@ private fun DetailInfo(
                 if (!isSeries && item.type != BaseItemKind.SEASON) {
                     IconActionButton(if (item.userData?.played == true) Icons.Default.CheckCircle else Icons.Outlined.CheckCircle, "Watched") { viewModel.togglePlayed() }
                 }
-                if (item.type == BaseItemKind.EPISODE || item.type == BaseItemKind.MOVIE) {
+                if (item.type == BaseItemKind.EPISODE || item.type == BaseItemKind.MOVIE || item.type == BaseItemKind.SERIES || item.type == BaseItemKind.SEASON) {
                     val app = LocalContext.current.applicationContext as AsterApp
                     val downloads = remember { app.downloads }
                     val records by downloads.records.collectAsStateWithLifecycle()
                     val saved = records.firstOrNull { it.id == item.id.toString() }
                     val flow = rememberDownloadFlow()
                     // The Apple TV's menu has only Go to Series (downloads are for the phone), so on a TV there is none to open elsewhere.
-                    if (!tv || (item.type == BaseItemKind.EPISODE && seriesId != null)) Box {
+                    Box {
                         IconActionButton(Icons.Default.MoreHoriz, "More") { menu = true }
                         MenuHost(expanded = menu, onDismiss = { menu = false }) {
                             if (item.type == BaseItemKind.EPISODE && seriesId != null) MenuItem(
                                 "Go to Series", Icons.Default.Tv,
                                 onClick = { menu = false; onGoToSeries(seriesId) },
                             )
-                            if (!tv) when (saved?.state) {
+                            MenuItem("Add to Playlist", Icons.AutoMirrored.Filled.PlaylistAdd, onClick = {
+                                menu = false
+                                scope.launch {
+                                    // A show adds its episodes, a season its own; anything else, itself.
+                                    val ids = when (item.type) {
+                                        BaseItemKind.SERIES -> runCatching { repo.episodes(item.id, null) }.getOrDefault(emptyList()).map { it.id }
+                                        BaseItemKind.SEASON -> content.episodes.map { it.id }
+                                        else -> listOf(item.id)
+                                    }
+                                    if (ids.isEmpty()) android.widget.Toast.makeText(context, "There is nothing to add yet.", android.widget.Toast.LENGTH_SHORT).show() else addingIds = ids
+                                }
+                            })
+                            if (!tv && (item.type == BaseItemKind.EPISODE || item.type == BaseItemKind.MOVIE)) when (saved?.state) {
                                 null -> DropdownMenuItem(
                                     text = { Text("Download") }, leadingIcon = { Icon(Icons.Default.Download, null) },
                                     onClick = { menu = false; flow.download(item) },
@@ -684,6 +700,9 @@ private fun DetailInfo(
                             }
                         }
                         flow.Dialogs()
+                        addingIds?.let { ids ->
+                            PlaylistPicker(ids, onDone = { name -> addingIds = null; android.widget.Toast.makeText(context, "Added to $name.", android.widget.Toast.LENGTH_SHORT).show() }, onDismiss = { addingIds = null })
+                        }
                     }
                 }
                 // On a TV, Watch OP and Watch ED end the action row, as on the Apple TV; elsewhere they have a row of their own.

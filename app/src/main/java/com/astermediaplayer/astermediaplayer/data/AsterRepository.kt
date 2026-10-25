@@ -356,6 +356,21 @@ class AsterRepository(context: Context, private val store: SessionStore) {
             UUID.fromString(if (id.length == 32) "${id.substring(0, 8)}-${id.substring(8, 12)}-${id.substring(12, 16)}-${id.substring(16, 20)}-${id.substring(20)}" else id)
         }
 
+    /** A new private video playlist holding [itemIds], from Add to Playlist. Emby reads the details from the query, not a body. */
+    suspend fun createPlaylist(name: String, itemIds: List<UUID>) {
+        if (serverKind == ServerKind.Emby) {
+            serverRequest("POST", "/Playlists?Name=${android.net.Uri.encode(name)}&Ids=${itemIds.joinToString(",") { wire(it) }}&UserId=${checkNotNull(session).userId}&MediaType=Video")
+        } else {
+            api.playlistApi.createPlaylist(
+                org.jellyfin.sdk.model.api.CreatePlaylistDto(name = name, ids = itemIds, users = emptyList(), userId = userId, mediaType = org.jellyfin.sdk.model.api.MediaType.VIDEO, isPublic = false),
+            )
+        }
+    }
+
+    suspend fun addToPlaylist(playlistId: UUID, itemIds: List<UUID>) {
+        serverRequest("POST", "/Playlists/${wire(playlistId)}/Items?ids=${itemIds.joinToString(",") { wire(it) }}&userId=${checkNotNull(session).userId}")
+    }
+
     /** The version of the server in use, for Account. */
     suspend fun serverVersion(): String? = runCatching { api.systemApi.getPublicSystemInfo().content.version }.getOrNull()
 
