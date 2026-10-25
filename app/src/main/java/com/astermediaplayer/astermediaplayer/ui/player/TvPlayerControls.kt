@@ -57,10 +57,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.astermediaplayer.astermediaplayer.ui.theme.Type
+import java.util.UUID
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.delay
 import kotlin.math.max
 
-private enum class TvMode { Hidden, Transport, Panel }
+private enum class TvMode { Hidden, Transport, Panel, Channels }
 
 private enum class PanelTab(val title: String) { Chapters("Chapters"), Subtitles("Subtitles"), Quality("Quality"), Speed("Speed") }
 
@@ -83,6 +85,8 @@ fun TvPlayerControls(
     viewModel: PlayerViewModel,
     clock: PlayerClock,
     canSeek: Boolean,
+    /** Plays a title from the library on its own, off the channel (the flick's Go to Episode). */
+    onGoTo: (UUID) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val exo = viewModel.player
@@ -92,6 +96,13 @@ fun TvPlayerControls(
     // Counts presses, so each one restarts the fade.
     var activity by remember { mutableIntStateOf(0) }
     val surface = remember { FocusRequester() }
+    val app = androidx.compose.ui.platform.LocalContext.current.applicationContext as com.astermediaplayer.astermediaplayer.AsterApp
+    val playsChannels = state.live || state.channel
+    // The channel row, while it's open.
+    var flick by remember { mutableStateOf<TvFlickModel?>(null) }
+    val liveChannelId by viewModel.channelId.collectAsStateWithLifecycle()
+    val playingPlaylist by viewModel.playingPlaylistChannel.collectAsStateWithLifecycle()
+    val liveChannels by viewModel.channels.collectAsStateWithLifecycle()
     val tabFocus = remember { PanelTab.entries.associateWith { FocusRequester() } }
 
     val tabs = buildList {
@@ -132,6 +143,21 @@ fun TvPlayerControls(
         if (showsSkip) { if (state.skip != null) viewModel.skip() else viewModel.playNextNow() } else togglePlay()
     }
     fun openPanel() { mode = TvMode.Panel; activity++ }
+    fun openChannels() {
+        flick = if (state.live) TvFlickModel.live(liveChannels, app.repository, liveChannelId.toString()) else TvFlickModel.playlists(app.repository, playingPlaylist.orEmpty())
+        mode = TvMode.Channels; activity++
+    }
+    fun closeChannels() { if (mode == TvMode.Channels) mode = TvMode.Hidden }
+    // OK on the row: Go to Episode plays what's on by itself; otherwise the picked channel is tuned (picking the one on just closes).
+    fun changeChannel() {
+        val model = flick ?: return closeChannels()
+        val picked = model.selectedChannel
+        if (model.onGoTo) picked?.now?.itemId?.let(onGoTo)
+        else if (picked != null && picked.id != model.currentId) {
+            if (state.live) viewModel.switchChannel(UUID.fromString(picked.id)) else viewModel.switchPlaylistChannel(picked.id)
+        }
+        closeChannels()
+    }
 
     // A paused picture keeps its timeline, as the system player does.
     LaunchedEffect(clock.playing) { if (!clock.playing) show() }
@@ -139,6 +165,7 @@ fun TvPlayerControls(
         when (mode) {
             TvMode.Transport -> if (clock.playing) { delay(5000); mode = TvMode.Hidden }
             TvMode.Panel -> { delay(8000); mode = if (clock.playing) TvMode.Hidden else TvMode.Transport }
+            TvMode.Channels -> { delay(8000); closeChannels() }
             TvMode.Hidden -> Unit
         }
     }
@@ -154,6 +181,18 @@ fun TvPlayerControls(
             .focusRequester(surface)
             .onKeyEvent { event ->
                 if (mode == TvMode.Panel || event.type != KeyEventType.KeyDown) return@onKeyEvent false
+                if (mode == TvMode.Channels) {
+                    val model = flick
+                    when (event.key) {
+                        Key.DirectionLeft -> { model?.move(-1); activity++ }
+                        Key.DirectionRight -> { model?.move(1); activity++ }
+                        Key.DirectionUp -> { model?.pickGoTo(true); activity++ }
+                        Key.DirectionDown -> if (model?.onGoTo == true) { model.pickGoTo(false); activity++ } else closeChannels()
+                        Key.DirectionCenter, Key.Enter, Key.NumPadEnter -> changeChannel()
+                        else -> return@onKeyEvent false
+                    }
+                    return@onKeyEvent true
+                }
                 when (event.key) {
                     Key.DirectionCenter, Key.Enter, Key.NumPadEnter -> select()
                     Key.MediaPlayPause -> togglePlay()
@@ -161,7 +200,7 @@ fun TvPlayerControls(
                     Key.MediaPause -> { exo.pause(); show() }
                     Key.DirectionLeft, Key.MediaRewind -> jump(-10)
                     Key.DirectionRight, Key.MediaFastForward -> jump(10)
-                    Key.DirectionUp -> show()
+                    Key.DirectionUp -> if (playsChannels) openChannels() else show()
                     Key.DirectionDown -> openPanel()
                     else -> return@onKeyEvent false
                 }
@@ -170,8 +209,9 @@ fun TvPlayerControls(
             .focusable(mode != TvMode.Panel),
     ) {
         val paused = !clock.playing
+        if (mode == TvMode.Channels) flick?.let { TvChannelFlick(it) }
         // Darkens the foot of the picture so white text reads over it, further up in the panel.
-        val shade by animateFloatAsState(if (mode == TvMode.Hidden) 0f else 1f, label = "tvShade")
+        val shade by animateFloatAsState(if (mode == TvMode.Hidden || mode == TvMode.Channels) 0f else 1f, label = "tvShade")
         if (shade > 0f) {
             val start = if (mode == TvMode.Panel || paused) 0.25f else 0.5f
             Box(
@@ -180,7 +220,7 @@ fun TvPlayerControls(
                 ),
             )
         }
-        AnimatedVisibility(mode != TvMode.Hidden, Modifier.align(Alignment.BottomStart), enter = fadeIn(), exit = fadeOut()) {
+        AnimatedVisibility(mode != TvMode.Hidden && mode != TvMode.Channels, Modifier.align(Alignment.BottomStart), enter = fadeIn(), exit = fadeOut()) {
             Column(Modifier.fillMaxWidth().padding(horizontal = 48.dp, vertical = 32.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 if (mode == TvMode.Panel) {
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -227,7 +267,7 @@ fun TvPlayerControls(
                 }
             }
         }
-        if (showsSkip) {
+        if (showsSkip && mode != TvMode.Channels) {
             val skipPrompt = state.skip
             TvPill(
                 skipPrompt?.label ?: "Play Next Episode", Modifier.align(Alignment.BottomEnd).padding(end = 48.dp, bottom = if (mode == TvMode.Transport) 160.dp else 32.dp),

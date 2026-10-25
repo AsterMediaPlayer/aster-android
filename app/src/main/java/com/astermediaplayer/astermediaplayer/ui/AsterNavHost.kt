@@ -328,7 +328,8 @@ fun AsterNavHost(signedIn: Boolean) {
                         }
                     },
                 )
-                PlayerScreen(vm, onBack = { nav.popBackStack() }, onPlayNext = {})
+                // Go to Episode plays what's on by itself, off the channel, as from its show's page.
+                PlayerScreen(vm, onBack = { nav.popBackStack() }, onPlayNext = {}, onGoTo = { id -> nav.navigate(Routes.player(id)) { popUpTo(Routes.CHANNEL) { inclusive = true } } })
             }
         }
         composable(Routes.ALBUM, arguments = listOf(navArgument("id") { type = NavType.StringType })) { entry ->

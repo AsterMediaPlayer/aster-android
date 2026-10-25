@@ -83,6 +83,8 @@ fun PlayerScreen(
     viewModel: PlayerViewModel,
     onBack: () -> Unit,
     onPlayNext: (UUID) -> Unit,
+    /** Plays a title from the library off the channel it was on (the TV channel row's Go to Episode). */
+    onGoTo: (UUID) -> Unit = {},
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
@@ -208,7 +210,7 @@ fun PlayerScreen(
         val shade by animateFloatAsState(if (controlsVisible) 1f else 0f, tween(250), label = "controls")
         if (isTv) {
             // Not while the stall card or an error is up: their buttons take the remote.
-            if (state.error == null && state.qualityOffer == null) TvPlayerControls(state, viewModel, clock, canSeek)
+            if (state.error == null && state.qualityOffer == null) TvPlayerControls(state, viewModel, clock, canSeek, onGoTo)
         } else if (shade > 0f) Box(Modifier.fillMaxSize().alpha(shade)) {
             // Darkens the edges so white text reads over a bright picture.
             Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0f to Color.Black.copy(alpha = 0.6f), 0.35f to Color.Transparent, 0.65f to Color.Transparent, 1f to Color.Black.copy(alpha = 0.7f))))
@@ -287,7 +289,10 @@ fun PlayerScreen(
             CenterButtons(clock.playing, canSkip = canSeek, onSkip = ::skip, onToggle = { if (exo.playWhenReady) exo.pause() else exo.play(); reveal() }, modifier = Modifier.align(Alignment.Center))
         }
 
-        if (state.live) {
+        // The touch dial is for a phone; a TV has the channel row (see TvChannelFlick).
+        if (isTv) {
+            if (state.channel) ChannelBug(viewModel.playingPlaylistChannel.collectAsStateWithLifecycle().value, state.breakClip, state.title)
+        } else if (state.live) {
             val channels by viewModel.channels.collectAsStateWithLifecycle()
             val channelId by viewModel.channelId.collectAsStateWithLifecycle()
             val repo = (LocalContext.current.applicationContext as com.astermediaplayer.astermediaplayer.AsterApp).repository
