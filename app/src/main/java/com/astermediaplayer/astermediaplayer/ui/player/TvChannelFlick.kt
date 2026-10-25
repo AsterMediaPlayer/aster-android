@@ -1,5 +1,8 @@
 package com.astermediaplayer.astermediaplayer.ui.player
 
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.fadeIn
@@ -203,17 +206,18 @@ fun TvChannelFlick(model: TvFlickModel, modifier: Modifier = Modifier) {
     ) {
         Column(
             Modifier.fillMaxWidth().clip(shape).background(Brush.verticalGradient(listOf(Color(0xE61E1B1A), Color(0xE6141212))))
-                .border(BorderStroke(pt(1f), Color.White.copy(alpha = 0.16f)), shape).padding(pt(40f)).animateContentSize(),
+                .border(BorderStroke(pt(1f), Color.White.copy(alpha = 0.16f)), shape).padding(pt(40f)),
             verticalArrangement = Arrangement.spacedBy(pt(30f)),
         ) {
             model.selectedChannel?.let { channel ->
-                AnimatedContent(channel, transitionSpec = { fadeIn() togetherWith fadeOut() }, label = "flickDetail") { picked ->
+                AnimatedContent(channel, transitionSpec = { (fadeIn() togetherWith fadeOut()).using(SizeTransform(clip = false) { _, _ -> snap() }) }, label = "flickDetail") { picked ->
                     FlickDetail(picked, isCurrent = picked.id == model.currentId, isOnGoTo = model.onGoTo)
                 }
             }
             // The group of the channel picked, when channels have groups: it changes as flicking crosses into the next group.
-            model.selectedChannel?.group?.let {
-                Text(it, style = Type.calloutSemibold, color = SecondaryText, modifier = Modifier.fillMaxWidth().padding(bottom = pt(-14f).coerceAtLeast(0.dp)), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+            // Its line is kept for every channel once any has a group, so the pane is the same height whichever is picked.
+            if (model.channels.any { it.group != null }) model.selectedChannel?.let { picked ->
+                Text(picked.group ?: " ", style = Type.calloutSemibold, color = SecondaryText, modifier = Modifier.fillMaxWidth().padding(bottom = pt(-14f).coerceAtLeast(0.dp)), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(pt(24f), Alignment.CenterHorizontally)) {
                 for (offset in -2..2) {
@@ -230,7 +234,8 @@ fun TvChannelFlick(model: TvFlickModel, modifier: Modifier = Modifier) {
 private fun FlickDetail(channel: FlickChannel, isCurrent: Boolean, isOnGoTo: Boolean) {
     val u = Lockup.tvUnit
     fun pt(points: Float) = (points * u).dp
-    Row(Modifier.fillMaxWidth().heightInMin(pt(225f)), horizontalArrangement = Arrangement.spacedBy(pt(36f))) {
+    // Tall enough for a channel with every line, so the pane (anchored at the bottom) keeps its top edge whichever is picked.
+    Row(Modifier.fillMaxWidth().heightInMin(pt(340f)), horizontalArrangement = Arrangement.spacedBy(pt(36f))) {
         channel.now?.imageUrl?.let {
             AsyncImage(model = it, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.width(pt(400f)).height(pt(225f)).clip(RoundedCornerShape(pt(12f))).background(Color.White.copy(alpha = 0.08f)))
         }
@@ -282,7 +287,7 @@ private fun GoToPill(title: String, picked: Boolean) {
 @Composable
 private fun FlickProgress(fraction: Float, modifier: Modifier = Modifier) {
     Box(modifier.clip(CircleShape).background(Color.White.copy(alpha = 0.25f))) {
-        Box(Modifier.fillMaxSize().fillMaxWidth(fraction.coerceIn(0f, 1f)).clip(CircleShape).background(Color.White))
+        Box(Modifier.fillMaxHeight().fillMaxWidth(fraction.coerceIn(0f, 1f)).clip(CircleShape).background(Color.White))
     }
 }
 
