@@ -223,6 +223,8 @@ fun FeaturedBanner(
     val compact = LocalConfiguration.current.screenHeightDp < 500
     val scope = rememberCoroutineScope()
     val chip = LocalTvChip.current
+    // The chip is for pages without a banner in focus: once the banner is gone it shows again, whatever its focus was last.
+    androidx.compose.runtime.DisposableEffect(chip) { onDispose { chip?.value = true } }
     val wholeBanner = remember { BringIntoViewRequester() }
     // The page a remote paged the banner to: it takes focus on its button, which the page it left no longer holds.
     var refocusPage by remember { mutableStateOf(-1) }

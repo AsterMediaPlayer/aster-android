@@ -292,6 +292,7 @@ private fun AudiobookHero(books: List<Audiobook>, onListen: (Audiobook) -> Unit,
     // A remote pages the hero with Left and Right, and the page it lands on takes focus on its button (as on Home).
     var refocusPage by remember { mutableStateOf(-1) }
     val chip = LocalTvChip.current
+    androidx.compose.runtime.DisposableEffect(chip) { onDispose { chip?.value = true } }
     Box(
         Modifier.fillMaxWidth().height(windowHeight).then(
             if (!tv) Modifier else Modifier.onFocusChanged { chip?.value = it.hasFocus }.onKeyEvent { event ->

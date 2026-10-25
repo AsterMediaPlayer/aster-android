@@ -165,7 +165,7 @@ private fun TvSettings(session: Session?, settings: AppSettings, store: Settings
 }
 
 @Composable
-private fun TvGroup(title: String) {
+internal fun TvGroup(title: String) {
     val u = Lockup.tvUnit
     Text(title.uppercase(), style = Type.caption.copy(fontWeight = FontWeight.SemiBold, letterSpacing = 1.sp), color = SecondaryText, modifier = Modifier.padding(top = (26f * u).dp, bottom = (6f * u).dp, start = (8f * u).dp))
 }
@@ -178,7 +178,7 @@ private fun TvNote(text: String) {
 
 /** One row of the list: its title on the left and a value on the right, grey, and white with black text when focused. */
 @Composable
-private fun TvRow(title: String, value: String?, enabled: Boolean = true, destructive: Boolean = false, onClick: (() -> Unit)?) {
+internal fun TvRow(title: String, value: String?, enabled: Boolean = true, destructive: Boolean = false, modifier: Modifier = Modifier, onClick: (() -> Unit)?) {
     val u = Lockup.tvUnit
     var focused by remember { mutableStateOf(false) }
     val tint = when {
@@ -188,7 +188,7 @@ private fun TvRow(title: String, value: String?, enabled: Boolean = true, destru
         else -> Color.White
     }
     Row(
-        Modifier.fillMaxWidth().heightIn(min = (82f * u).dp).then(if (onClick != null) Modifier.tvFocus((14f * u).dp, lift = 1.02f, ring = false).onFocusChanged { focused = it.isFocused } else Modifier)
+        modifier.fillMaxWidth().heightIn(min = (82f * u).dp).then(if (onClick != null) Modifier.tvFocus((14f * u).dp, lift = 1.02f, ring = false).onFocusChanged { focused = it.isFocused } else Modifier)
             .clip(RoundedCornerShape((14f * u).dp)).background(if (focused) Color.White else Color.White.copy(alpha = 0.1f))
             .then(if (onClick != null && enabled) Modifier.clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onClick) else if (onClick != null) Modifier.focusable() else Modifier)
             .padding(horizontal = (28f * u).dp, vertical = (14f * u).dp),
@@ -204,15 +204,15 @@ private fun TvRow(title: String, value: String?, enabled: Boolean = true, destru
 @Composable private fun TvButtonRow(title: String, destructive: Boolean = false, onClick: () -> Unit) = TvRow(title, null, destructive = destructive, onClick = onClick)
 
 @Composable
-private fun TvSwitchRow(title: String, checked: Boolean, enabled: Boolean = true, onChange: (Boolean) -> Unit) =
-    TvRow(title, if (checked) "On" else "Off", enabled = enabled, onClick = { onChange(!checked) })
+internal fun TvSwitchRow(title: String, checked: Boolean, enabled: Boolean = true, modifier: Modifier = Modifier, onChange: (Boolean) -> Unit) =
+    TvRow(title, if (checked) "On" else "Off", enabled = enabled, modifier = modifier, onClick = { onChange(!checked) })
 
 /** A row showing the current choice; OK opens the glass menu of them below it. */
 @Composable
-private fun TvChoiceRow(title: String, options: List<String>, selected: Int, onPick: (Int) -> Unit) {
+internal fun TvChoiceRow(title: String, options: List<String>, selected: Int, modifier: Modifier = Modifier, onPick: (Int) -> Unit) {
     var open by remember { mutableStateOf(false) }
     Box {
-        TvRow(title, options.getOrNull(selected).orEmpty(), onClick = { open = true })
+        TvRow(title, options.getOrNull(selected).orEmpty(), modifier = modifier, onClick = { open = true })
         MenuHost(expanded = open, onDismiss = { open = false }, below = true) {
             options.forEachIndexed { i, name -> MenuItem(name, null, first = i == selected, checked = i == selected) { open = false; onPick(i) } }
         }

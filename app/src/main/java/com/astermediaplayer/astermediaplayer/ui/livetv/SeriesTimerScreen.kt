@@ -1,5 +1,13 @@
 package com.astermediaplayer.astermediaplayer.ui.livetv
 
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.focus.focusRequester
+import com.astermediaplayer.astermediaplayer.ui.settings.TvSwitchRow
+import com.astermediaplayer.astermediaplayer.ui.settings.TvRow
+import com.astermediaplayer.astermediaplayer.ui.settings.TvGroup
+import com.astermediaplayer.astermediaplayer.ui.settings.TvChoiceRow
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -91,8 +99,10 @@ fun SeriesTimerScreen(viewModel: SeriesTimerViewModel, onClose: () -> Unit, modi
     val state by viewModel.state.collectAsStateWithLifecycle()
     val timer = state.timer
     var confirmCancel by remember { mutableStateOf(false) }
+    val tv = com.astermediaplayer.astermediaplayer.ui.theme.LocalIsTv.current
 
-    Column(modifier.fillMaxSize().background(Color.Black).statusBarsPadding()) {
+    if (tv) TvSeriesOptions(viewModel, timer, state.working, state.error, onClose, onCancelSeries = { confirmCancel = true }, modifier)
+    else Column(modifier.fillMaxSize().background(Color.Black).statusBarsPadding()) {
         // No remote Back button: a bar gives a way out.
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             TextButton(onClick = onClose) { Text("Cancel", style = Type.headline.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.Normal)) }
@@ -170,3 +180,52 @@ private fun <T> PickerRow(label: String, options: List<Pair<String, T>>, selecte
         }
     }
 }
+
+/** Series Options on a TV, as the Apple TV's: a form of rows the remote moves through (Back leaves; there's no Cancel button). */
+@Composable
+private fun TvSeriesOptions(
+    viewModel: SeriesTimerViewModel, timer: org.jellyfin.sdk.model.api.SeriesTimerInfoDto?, working: Boolean, error: String?,
+    onClose: () -> Unit, onCancelSeries: () -> Unit, modifier: Modifier,
+) {
+    val u = Lockup.tvUnit
+    val first = remember { androidx.compose.ui.focus.FocusRequester() }
+    // The remote starts on the first row once the options are in (the buttons aren't placed in the frame they arrive in).
+    LaunchedEffect(timer != null) {
+        if (timer == null) return@LaunchedEffect
+        repeat(20) {
+            if (runCatching { first.requestFocus() }.isSuccess) return@LaunchedEffect
+            kotlinx.coroutines.delay(100)
+        }
+    }
+    Column(
+        modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = (90f * u).dp).padding(top = (40f * u).dp, bottom = (80f * u).dp),
+        verticalArrangement = Arrangement.spacedBy((6f * u).dp),
+    ) {
+        Text(timer?.name ?: "Series Recording", style = Type.pageTitle.copy(fontSize = (76f * u).sp, lineHeight = (90f * u).sp))
+        timer?.channelName?.let { Text(it, style = Type.callout, color = SecondaryText, modifier = Modifier.padding(bottom = (12f * u).dp)) }
+        when {
+            timer != null -> {
+                TvGroup("Record")
+                TvSwitchRow("New episodes only", timer.recordNewOnly ?: false, modifier = Modifier.focusRequester(first)) { v -> viewModel.change { copy(recordNewOnly = v) } }
+                TvSwitchRow("On any channel", timer.recordAnyChannel ?: false) { v -> viewModel.change { copy(recordAnyChannel = v) } }
+                TvSwitchRow("At any time", timer.recordAnyTime ?: true) { v -> viewModel.change { copy(recordAnyTime = v) } }
+                TvSwitchRow("Skip episodes already in the library", timer.skipEpisodesInLibrary ?: false) { v -> viewModel.change { copy(skipEpisodesInLibrary = v) } }
+                TvGroup("Keep")
+                TvPicker("Keep up to", keepUpToOptions, timer.keepUpTo ?: 0) { v -> viewModel.change { copy(keepUpTo = v) } }
+                TvPicker("Keep recordings", keepUntilOptions, timer.keepUntil ?: KeepUntil.UNTIL_DELETED) { v -> viewModel.change { copy(keepUntil = v) } }
+                TvGroup("Padding")
+                TvPicker("Start early", paddingOptions, timer.prePaddingSeconds ?: 0) { v -> viewModel.change { copy(prePaddingSeconds = v) } }
+                TvPicker("End late", paddingOptions, timer.postPaddingSeconds ?: 0) { v -> viewModel.change { copy(postPaddingSeconds = v) } }
+                Spacer(Modifier.height((24f * u).dp))
+                TvRow("Save", null, enabled = !working) { viewModel.save(onClose) }
+                TvRow("Cancel Series Recording", null, enabled = !working, destructive = true) { onCancelSeries() }
+            }
+            error != null -> Text(error, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 16.dp))
+            else -> Box(Modifier.fillMaxWidth().padding(top = 40.dp), Alignment.Center) { CircularProgressIndicator() }
+        }
+    }
+}
+
+@Composable
+private fun <T> TvPicker(label: String, options: List<Pair<String, T>>, selected: T, onChange: (T) -> Unit) =
+    TvChoiceRow(label, options.map { it.first }, options.indexOfFirst { it.second == selected }.coerceAtLeast(0)) { onChange(options[it].second) }
