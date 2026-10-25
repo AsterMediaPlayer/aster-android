@@ -473,7 +473,9 @@ fun AsterNavHost(signedIn: Boolean) {
                 ),
                 deepLinks = listOf(navDeepLink { uriPattern = "aster://play/{id}" }),
             ) { entry ->
-                val id = UUID.fromString(entry.arguments!!.getString("id"))
+                // A link may carry the id either way (see parseId); one that isn't an id goes back rather than crashing.
+                val id = parseId(entry.arguments!!.getString("id").orEmpty())
+                if (id == null) { LaunchedEffect(Unit) { nav.popBackStack() }; return@composable }
                 val start = entry.arguments!!.getLong("start")
                 val end = entry.arguments!!.getLong("end")
                 val clip = if (start >= 0 && end > start) ClipRange(start, end, entry.arguments!!.getString("label")?.ifEmpty { null }) else null
