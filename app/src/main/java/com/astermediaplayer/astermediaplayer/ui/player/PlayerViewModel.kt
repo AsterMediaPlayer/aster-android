@@ -103,6 +103,8 @@ data class PlayerUiState(
     val qualityOffer: List<Quality>? = null,
     /** Playback speed, 1 for normal. */
     val speed: Float = 1f,
+    /** The Chromecast playing this, by name; null while it plays on this device. */
+    val castingTo: String? = null,
 )
 
 @OptIn(UnstableApi::class)
@@ -178,7 +180,7 @@ class PlayerViewModel(
     /** Plays a download from the device alone. */
     private val offlineSourceFactory = downloads.offlineMediaSourceFactory().also { if (assParserFactory != null) it.setSubtitleParserFactory(assParserFactory) }
 
-    val player: ExoPlayer = ExoPlayer.Builder(
+    val localPlayer: ExoPlayer = ExoPlayer.Builder(
         context.applicationContext,
         renderersFactory(context).let { if (assHandler != null) AssRenderersFactory(assHandler, it) else it },
     )
@@ -191,6 +193,18 @@ class PlayerViewModel(
         )
         .setHandleAudioBecomingNoisy(true)
         .build()
+
+    /** Chromecast, on a phone with Google Play services; a TV box has none to offer. */
+    val cast: CastSupport? =
+        if (readOnly || context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_LEANBACK)) null else CastSupport.create(context)
+    private var casting = false
+    /** Where the picture was when last seen playing: a Chromecast is gone by the time its session reports closing. */
+    private var lastPositionMs = 0L
+
+    private val _activePlayer = MutableStateFlow<Player>(localPlayer)
+    /** The player that has the picture: this device's, or the Chromecast's while a session is open. */
+    val activePlayer: StateFlow<Player> = _activePlayer.asStateFlow()
+    val player: Player get() = _activePlayer.value
 
     private var item: BaseItemDto? = null
     /** Playing a download from the device: nothing here asks the server. */
@@ -293,9 +307,33 @@ class PlayerViewModel(
         _state.update { it.copy(speed = speed) }
     }
 
-    init {
+    /** Moves playback between this device and the Chromecast, from where it is, with the stream the new screen can play. */
+    private fun setCasting(on: Boolean) {
+        val support = cast ?: return
+        if (on == casting) return
+        val position = if (on) player.currentPosition else lastPositionMs
+        player.removeListener(listener)
+        player.stop()
+        casting = on
+        _activePlayer.value = if (on) support.player else localPlayer
         player.addListener(listener)
-        assHandler?.init(player)
+        _state.update { it.copy(castingTo = if (on) support.deviceName else null) }
+        start(position)
+    }
+
+    init {
+        localPlayer.addListener(listener)
+        assHandler?.init(localPlayer)
+        cast?.let { support ->
+            support.onSessionChanged = ::setCasting
+            if (support.isConnected) {
+                casting = true
+                localPlayer.removeListener(listener)
+                _activePlayer.value = support.player
+                support.player.addListener(listener)
+                _state.update { it.copy(castingTo = support.deviceName) }
+            }
+        }
         viewModelScope.launch {
             Qualities.getOrNull(appSettings.qualityIndex)?.let { q -> _state.update { it.copy(quality = q) } }
             start(null)
@@ -316,13 +354,13 @@ class PlayerViewModel(
                     return@launch
                 }
                 // A downloaded title plays from the device, from where viewing stopped, unless it had all but finished.
-                val saved = if (clip == null && playlistChannelId == null && !forceTranscode) downloads.playable(itemId) else null
+                val saved = if (clip == null && playlistChannelId == null && !forceTranscode && !casting) downloads.playable(itemId) else null
                 if (saved != null) {
                     val runtime = saved.runTimeTicks
                     val resume = positionMs ?: if (fromBeginning || (runtime > 0 && saved.positionTicks > runtime * 95 / 100)) 0L else saved.positionTicks / TICKS_PER_MS
                     offline = saved
                     segments = saved.segments.map { org.jellyfin.sdk.model.api.MediaSegmentDto(id = java.util.UUID.randomUUID(), itemId = itemId, type = if (it.intro) MediaSegmentType.INTRO else MediaSegmentType.OUTRO, startTicks = it.startTicks, endTicks = it.endTicks) }
-                    player.setMediaSource(offlineSourceFactory.createMediaSource(downloads.mediaItem(saved)), resume.coerceAtLeast(0))
+                    localPlayer.setMediaSource(offlineSourceFactory.createMediaSource(downloads.mediaItem(saved)), resume.coerceAtLeast(0))
                     player.prepare()
                     player.playWhenReady = true
                     _state.update { it.copy(title = saved.title, subtitle = saved.subtitle?.takeIf { _ -> saved.isEpisode }, offline = true) }
@@ -347,6 +385,7 @@ class PlayerViewModel(
                     // A burned-in track is made by the server as it encodes, so it can't be a direct play.
                     subtitleStreamIndex = burnedIn ?: if (noBurnIn) -1 else null,
                     forceTranscode = fallback || burnedIn != null,
+                    cast = casting,
                 )
                 scheduledStartMs = null
                 val source = info.mediaSources.firstOrNull() ?: error("This item has no playable media")
@@ -362,12 +401,15 @@ class PlayerViewModel(
                     direct -> repo.directStreamUrl(itemId, source.id!!, info.playSessionId, source.container)
                     source.transcodingUrl != null -> repo.absoluteUrl(source.transcodingUrl!!)
                     else -> error("The server can't stream this item to this device")
-                }
+                }.let { if (casting) repo.withApiKey(it) else it }
                 playMethod = if (direct) PlayMethod.DIRECT_PLAY else PlayMethod.TRANSCODE
 
-                cueTracks = source.mediaStreams.orEmpty()
+                val externalText = source.mediaStreams.orEmpty()
                     .filter { it.type == MediaStreamType.SUBTITLE && it.deliveryMethod == SubtitleDeliveryMethod.EXTERNAL && it.deliveryUrl != null }
+                // A Chromecast draws the text tracks itself, from WebVTT files handed over with the stream, so the app draws none.
+                cueTracks = if (casting) emptyList() else externalText
                 cueTrack = when {
+                    casting -> null
                     // The picture already carries a burned-in track, so none is drawn over it.
                     burnedIn != null -> null
                     subtitleChosen -> cueTrack?.takeIf { t -> cueTracks.any { it.index == t } }
@@ -379,11 +421,23 @@ class PlayerViewModel(
                         .joinToString { "#${it.index} ${it.codec} ${it.language} ${it.deliveryMethod} default=${it.isDefault}" } +
                         " | server default=${source.defaultSubtitleStreamIndex} | drawn by the app=${cueTracks.size}",
                 )
-                player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().setTrackTypeDisabled(C.TRACK_TYPE_TEXT, burnedIn != null || cueTrack != null).build()
+                val castDefault = if (casting && burnedIn == null && !noBurnIn) externalText.firstOrNull { it.index == source.defaultSubtitleStreamIndex }?.index else null
+                player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+                    .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, if (casting) castDefault == null else burnedIn != null || cueTrack != null).build()
                 player.setMediaItem(
                     MediaItem.Builder()
                         .setUri(url)
-                        .setMediaMetadata(androidx.media3.common.MediaMetadata.Builder().setTitle(dto.name).build())
+                        .setMediaMetadata(androidx.media3.common.MediaMetadata.Builder().setTitle(dto.name).setSubtitle(if (dto.type == BaseItemKind.EPISODE) dto.seriesName else null).build())
+                        .setSubtitleConfigurations(
+                            if (!casting) emptyList() else externalText.map {
+                                MediaItem.SubtitleConfiguration.Builder(android.net.Uri.parse(repo.withApiKey(repo.absoluteUrl(it.deliveryUrl!!.replace(Regex("/Stream\\.[A-Za-z0-9]+"), "/Stream.vtt")))))
+                                    .setMimeType(androidx.media3.common.MimeTypes.TEXT_VTT)
+                                    .setLanguage(it.language)
+                                    .setLabel(it.displayTitle ?: it.title ?: it.language)
+                                    .setSelectionFlags(if (it.index == castDefault) C.SELECTION_FLAG_DEFAULT else 0)
+                                    .build()
+                            },
+                        )
                         .build(),
                     resumeMs.coerceAtLeast(0),
                 )
@@ -621,6 +675,7 @@ class PlayerViewModel(
             var sinceReport = 0
             while (true) {
                 delay(500)
+                if (player.playbackState == Player.STATE_READY) lastPositionMs = player.currentPosition
                 updateSkipPrompt()
                 updateUpNext()
                 updateStall()
@@ -750,7 +805,8 @@ class PlayerViewModel(
         reportStopped()
         tickJob?.cancel()
         player.removeListener(listener)
-        player.release()
+        cast?.release()
+        localPlayer.release()
         assHandler?.release()
     }
 

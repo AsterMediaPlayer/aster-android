@@ -1,5 +1,9 @@
 <resources>
-    <style name="Theme.AsterMediaPlayer" parent="android:Theme.Material.NoActionBar">
+    <style name="Theme.AsterMediaPlayer" parent="Theme.AppCompat.NoActionBar">
+        <!-- The Cast device dialog is styled from these AppCompat colours, and fails on a theme that has none. -->
+        <item name="colorPrimary">#1C1C1E</item>
+        <item name="colorPrimaryDark">#000000</item>
+        <item name="colorAccent">#0A84FF</item>
         <item name="android:windowBackground">@color/aster_background</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>

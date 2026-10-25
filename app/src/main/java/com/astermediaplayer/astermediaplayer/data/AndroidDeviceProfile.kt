@@ -115,4 +115,43 @@ object AndroidDeviceProfile {
             ) + if (allowHevc) listOf(CodecProfile(CodecType.VIDEO, listOf(notAnamorphic) + size, emptyList(), "hevc", null, null)) else emptyList(),
         )
     }
+
+    /**
+     * What a Chromecast can play from the Default Media Receiver: H.264 in MP4 with AAC, AC3 or MP3 straight from the server,
+     * and anything else as an H.264/AAC HLS transcode. Text subtitles go over as separate tracks, which the player asks the
+     * server for as WebVTT (it converts any text format to the one named in the URL); picture formats can't, so they are
+     * left to the server to burn in.
+     */
+    fun cast(maxBitrate: Int): DeviceProfile = build(maxBitrate).copy(
+        name = "Aster Chromecast",
+        directPlayProfiles = listOf(
+            DirectPlayProfile(container = "mp4,m4v", type = DlnaProfileType.VIDEO, videoCodec = "h264", audioCodec = "aac,mp3,ac3,eac3"),
+            DirectPlayProfile(container = "mp3,aac,flac,m4a,m4b", type = DlnaProfileType.AUDIO),
+        ),
+        transcodingProfiles = listOf(
+            TranscodingProfile(
+                container = "ts", type = DlnaProfileType.VIDEO, videoCodec = "h264", audioCodec = "aac",
+                protocol = MediaStreamProtocol.HLS, context = EncodingContext.STREAMING, maxAudioChannels = "2", minSegments = 1, breakOnNonKeyFrames = true, conditions = emptyList(),
+            ),
+        ),
+        subtitleProfiles = listOf(
+            SubtitleProfile("vtt", SubtitleDeliveryMethod.EXTERNAL),
+            SubtitleProfile("webvtt", SubtitleDeliveryMethod.EXTERNAL),
+            SubtitleProfile("srt", SubtitleDeliveryMethod.EXTERNAL),
+            SubtitleProfile("subrip", SubtitleDeliveryMethod.EXTERNAL),
+            SubtitleProfile("ass", SubtitleDeliveryMethod.EXTERNAL),
+            SubtitleProfile("ssa", SubtitleDeliveryMethod.EXTERNAL),
+        ),
+        codecProfiles = listOf(
+            CodecProfile(
+                CodecType.VIDEO,
+                listOf(
+                    ProfileCondition(ProfileConditionType.LESS_THAN_EQUAL, ProfileConditionValue.VIDEO_LEVEL, "42", true),
+                    ProfileCondition(ProfileConditionType.LESS_THAN_EQUAL, ProfileConditionValue.WIDTH, "1920", true),
+                    ProfileCondition(ProfileConditionType.NOT_EQUALS, ProfileConditionValue.IS_ANAMORPHIC, "true", true),
+                ),
+                emptyList(), "h264", null, null,
+            ),
+        ),
+    )
 }
