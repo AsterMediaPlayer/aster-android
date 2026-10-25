@@ -39,6 +39,8 @@ data class AppSettings(
     val preferDiscMenu: Boolean = false,
     /** Menu music and button sounds. */
     val discMenuSounds: Boolean = true,
+    /** Minutes of an audiobook saved ahead of the listener on a phone, so a spot with no signal doesn't stop it; 0 for off. */
+    val listenAheadMinutes: Int = 30,
 )
 
 private val Context.settingsDataStore by preferencesDataStore("aster_settings")
@@ -61,6 +63,7 @@ class SettingsStore(private val context: Context) {
     private val downloadCellularKey = booleanPreferencesKey("download_cellular")
     private val preferDiscMenuKey = booleanPreferencesKey("prefer_disc_menu")
     private val discMenuSoundsKey = booleanPreferencesKey("disc_menu_sounds")
+    private val listenAheadKey = intPreferencesKey("listen_ahead_minutes")
 
     val settings: Flow<AppSettings> = context.settingsDataStore.data.map {
         AppSettings(
@@ -82,6 +85,7 @@ class SettingsStore(private val context: Context) {
             downloadCellular = it[downloadCellularKey] ?: false,
             preferDiscMenu = it[preferDiscMenuKey] ?: false,
             discMenuSounds = it[discMenuSoundsKey] ?: true,
+            listenAheadMinutes = it[listenAheadKey] ?: 30,
         )
     }
 
@@ -131,4 +135,5 @@ class SettingsStore(private val context: Context) {
     suspend fun setDownloadCellular(on: Boolean) = context.settingsDataStore.edit { it[downloadCellularKey] = on }
     suspend fun setPreferDiscMenu(on: Boolean) = context.settingsDataStore.edit { it[preferDiscMenuKey] = on }
     suspend fun setDiscMenuSounds(on: Boolean) = context.settingsDataStore.edit { it[discMenuSoundsKey] = on }
+    suspend fun setListenAheadMinutes(minutes: Int) = context.settingsDataStore.edit { it[listenAheadKey] = minutes }
 }

@@ -99,10 +99,23 @@ class AudiobookPlayer(private val context: Context, private val repo: AsterRepos
 
     private fun rateFor(id: UUID): Float = rates.getFloat(id.toString(), 1f)
 
+    /** Saves the next stretch of the book as it plays, on a phone; a TV is rarely out of signal. */
+    private val listenAhead: ListenAhead? by lazy {
+        if (com.astermediaplayer.astermediaplayer.ui.theme.isTelevision(context)) null
+        else ListenAhead(context) {
+            DefaultHttpDataSource.Factory().setDefaultRequestProperties(repo.session?.accessToken?.let { mapOf("X-Emby-Token" to it) }.orEmpty()).createDataSource()
+        }
+    }
+
     private fun ensurePlayer(): ExoPlayer = player ?: ExoPlayer.Builder(context)
         .setMediaSourceFactory(
+            // Saved downloads first, then what's been saved ahead, then the server.
             DefaultMediaSourceFactory(
-                (context.applicationContext as com.astermediaplayer.astermediaplayer.AsterApp).downloads.cacheDataSourceFactory,
+                androidx.media3.datasource.cache.CacheDataSource.Factory()
+                    .setCache((context.applicationContext as com.astermediaplayer.astermediaplayer.AsterApp).downloads.cache)
+                    .setUpstreamDataSourceFactory(listenAhead?.dataSourceFactory ?: (context.applicationContext as com.astermediaplayer.astermediaplayer.AsterApp).downloads.cacheDataSourceFactory)
+                    .setCacheWriteDataSinkFactory(null)
+                    .setFlags(androidx.media3.datasource.cache.CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR),
             ),
         )
         .setSeekBackIncrementMs(SKIP_BACK_SECONDS * 1000)
@@ -189,6 +202,7 @@ class AudiobookPlayer(private val context: Context, private val repo: AsterRepos
         exo.playWhenReady = true
         startTicking()
         report(paused = false, start = true)
+        keepAhead()
     }
 
     // MARK: Transport
@@ -253,6 +267,7 @@ class AudiobookPlayer(private val context: Context, private val repo: AsterRepos
         if (_state.value.book == null) return
         reportStopped()
         tick?.cancel()
+        listenAhead?.release()
         player?.let { it.stop(); it.clearMediaItems() }
         context.stopService(Intent(context, PlaybackService::class.java))
         _state.value = AudiobookState()
@@ -260,6 +275,7 @@ class AudiobookPlayer(private val context: Context, private val repo: AsterRepos
     }
 
     private fun bookEnded() {
+        listenAhead?.release()
         reportStopped(played = true)
         player?.pause()
         _state.update { it.copy(isPlaying = false, position = it.duration) }
@@ -278,8 +294,21 @@ class AudiobookPlayer(private val context: Context, private val repo: AsterRepos
         }
     }
 
+    /** Tells listen-ahead where the listener is; a downloaded book plays from its download and never needs it. */
+    private fun keepAhead() {
+        val ahead = listenAhead ?: return
+        val book = _state.value.book ?: return
+        val exo = player ?: return
+        if (downloads.isBookSaved(book.id)) { ahead.release(); return }
+        scope.launch {
+            val minutes = (context.applicationContext as com.astermediaplayer.astermediaplayer.AsterApp).settings.current().listenAheadMinutes
+            ahead.update(book.id.toString(), book.parts.map { ListenAhead.Part(repo.audioStreamUrl(it.id), (it.runTimeTicks ?: 0L) / 10_000_000.0) }, exo.currentMediaItemIndex, exo.currentPosition / 1000.0, minutes)
+        }
+    }
+
     private fun refreshPosition() {
         val exo = player ?: return
+        if (exo.isPlaying) keepAhead()
         _state.update { it.copy(position = exo.currentPosition / 1000.0, partIndex = exo.currentMediaItemIndex, duration = exo.durationSeconds(it)) }
     }
 
