@@ -1117,6 +1117,11 @@ class AsterRepository(context: Context, private val store: SessionStore) {
         )
 
     suspend fun segments(itemId: UUID): List<MediaSegmentDto> = runCatching {
+        // Emby marks them as chapters, which the SDK's chapter model drops, so the item is read raw.
+        if (serverKind == ServerKind.Emby) {
+            val item = org.json.JSONObject(serverRequest("GET", "/Users/${checkNotNull(session).userId}/Items/${wire(itemId)}?Fields=Chapters"))
+            return@runCatching com.astermediaplayer.astermediaplayer.data.emby.EmbyMarkers.segments(item, itemId)
+        }
         api.mediaSegmentApi.getItemSegments(
             itemId, listOf(MediaSegmentType.INTRO, MediaSegmentType.OUTRO),
         ).content.items
