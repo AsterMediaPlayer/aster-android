@@ -439,8 +439,10 @@ class PlayerViewModel(
                             },
                         )
                         .build(),
-                    resumeMs.coerceAtLeast(0),
+                    // A Chromecast refuses a stream that starts part-way in, but takes a seek once it's playing.
+                    if (casting) 0L else resumeMs.coerceAtLeast(0),
                 )
+                if (casting && resumeMs > 0) seekWhenReady(resumeMs)
                 player.prepare()
                 player.playWhenReady = true
                 startCues()
@@ -667,6 +669,18 @@ class PlayerViewModel(
 
     fun skip() {
         _state.value.skip?.let { player.seekTo(it.targetMs) }
+    }
+
+    /** Seeks to [positionMs] the first time the player is ready, then lets go. */
+    private fun seekWhenReady(positionMs: Long) {
+        val target = player
+        target.addListener(object : Player.Listener {
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                if (playbackState != Player.STATE_READY) return
+                target.removeListener(this)
+                target.seekTo(positionMs)
+            }
+        })
     }
 
     private fun startTicking() {
