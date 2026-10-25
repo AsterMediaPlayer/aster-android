@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material.icons.filled.Album
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Replay
 import androidx.compose.material.icons.filled.Tv
@@ -178,6 +179,8 @@ data class DetailContent(
     /** What the Watch OP and Watch ED buttons play: on a series page the selected season's, on an episode page the ones that play in it. */
     val watchOpening: OpeningEnding? = null,
     val watchEnding: OpeningEnding? = null,
+    /** The item whose disc menu the Disc Menu button opens (the page's own, or for a show the selected season's); null when there is none. */
+    val discMenuId: UUID? = null,
 )
 
 class DetailViewModel(private val repo: AsterRepository, private val itemId: UUID) : ViewModel() {
@@ -235,7 +238,18 @@ class DetailViewModel(private val repo: AsterRepository, private val itemId: UUI
             }
             else -> DetailContent(item, playTarget = item)
         }
-        Load.Ready(content.copy(similar = similar.await(), extras = extras.await()))
+        Load.Ready(content.copy(similar = similar.await(), extras = extras.await(), discMenuId = discMenuFor(item, content.selectedSeason)))
+    }
+
+    /**
+     * The page's disc menu: its own (a movie's, show's or season's), or for a show without one, the menu of the season it's
+     * showing, which is where a one-season show's menu is often bound.
+     */
+    private suspend fun discMenuFor(item: BaseItemDto, season: UUID?): UUID? {
+        if (item.type != BaseItemKind.MOVIE && item.type != BaseItemKind.SERIES && item.type != BaseItemKind.SEASON) return null
+        if (repo.discMenu(item.id) != null) return item.id
+        if (item.type == BaseItemKind.SERIES && season != null && repo.discMenu(season) != null) return season
+        return null
     }
 
     private var episodeThemes: List<OpEdTheme>? = null
@@ -339,6 +353,11 @@ class DetailViewModel(private val repo: AsterRepository, private val itemId: UUI
         viewModelScope.launch {
             val episodes = runCatching { repo.episodes(itemId, seasonId) }.getOrDefault(emptyList())
             _state.update { s -> (s as? Load.Ready)?.let { Load.Ready(it.value.copy(episodes = episodes)) } ?: s }
+            // A show's menu can be its season's: follow the season picked.
+            if (current.item.type == BaseItemKind.SERIES && current.discMenuId != itemId) {
+                val menu = discMenuFor(current.item, seasonId)
+                _state.update { s -> (s as? Load.Ready)?.let { Load.Ready(it.value.copy(discMenuId = menu)) } ?: s }
+            }
             val updated = (_state.value as? Load.Ready)?.value ?: return@launch
             if (updated.openingsEndings.isNotEmpty()) {
                 val (opening, ending) = watchThemes(updated, anime = true)
@@ -375,6 +394,7 @@ fun DetailScreen(
     onBack: () -> Unit,
     onPlay: (UUID) -> Unit,
     onPlayFromBeginning: (UUID) -> Unit,
+    onDiscMenu: (UUID) -> Unit,
     onGoToSeries: (UUID) -> Unit,
     onItem: (BaseItemDto) -> Unit,
     onPlayTheme: (OpeningEnding) -> Unit,
@@ -384,7 +404,7 @@ fun DetailScreen(
         when (val s = state) {
             Load.Loading -> LoadingBox()
             is Load.Failed -> ErrorBox(s.message, viewModel::load)
-            is Load.Ready -> DetailBody(s.value, viewModel, onPlay, onPlayFromBeginning, onGoToSeries, onItem, onPlayTheme)
+            is Load.Ready -> DetailBody(s.value, viewModel, onPlay, onPlayFromBeginning, onDiscMenu, onGoToSeries, onItem, onPlayTheme)
         }
         // Over the art, so a dark round button like the Apple apps' back button; a TV has Back on its remote.
         if (!LocalIsTv.current) IconButton(
@@ -404,6 +424,7 @@ private fun DetailBody(
     viewModel: DetailViewModel,
     onPlay: (UUID) -> Unit,
     onPlayFromBeginning: (UUID) -> Unit,
+    onDiscMenu: (UUID) -> Unit,
     onGoToSeries: (UUID) -> Unit,
     onItem: (BaseItemDto) -> Unit,
     onPlayTheme: (OpeningEnding) -> Unit,
@@ -488,11 +509,11 @@ private fun DetailBody(
                 Box(Modifier.fillMaxWidth().height(screenHeight)) {
                     DetailTitle(item, repo, Modifier.align(Alignment.BottomStart).navigationBarsPadding().padding(start = 24.dp, bottom = 24.dp))
                 }
-                DetailInfo(content, viewModel, onPlay, onPlayFromBeginning, onGoToSeries, onPlayTheme, showTitle = false, playFocus = playFocus) { playCenterPx = it }
+                DetailInfo(content, viewModel, onPlay, onPlayFromBeginning, onDiscMenu, onGoToSeries, onPlayTheme, showTitle = false, playFocus = playFocus) { playCenterPx = it }
             } else {
                 // A TV's header is 780 points tall, as on the Apple TV: the info sits at its foot over the art, the page's tabs below.
                 Column(Modifier.fillMaxWidth().heightIn(min = if (isTv) (780f * Lockup.tvUnit).dp else DetailMetrics.headerMinHeight), verticalArrangement = Arrangement.Bottom) {
-                    DetailInfo(content, viewModel, onPlay, onPlayFromBeginning, onGoToSeries, onPlayTheme, showTitle = true, playFocus = playFocus) { playCenterPx = it }
+                    DetailInfo(content, viewModel, onPlay, onPlayFromBeginning, onDiscMenu, onGoToSeries, onPlayTheme, showTitle = true, playFocus = playFocus) { playCenterPx = it }
                 }
             }
             // On a TV the sections sit straight on the shaded backdrop, 36 points apart, as on the Apple TV.
@@ -561,6 +582,7 @@ private fun DetailInfo(
     viewModel: DetailViewModel,
     onPlay: (UUID) -> Unit,
     onPlayFromBeginning: (UUID) -> Unit,
+    onDiscMenu: (UUID) -> Unit,
     onGoToSeries: (UUID) -> Unit,
     onPlayTheme: (OpeningEnding) -> Unit,
     showTitle: Boolean,
@@ -574,6 +596,8 @@ private fun DetailInfo(
     val resumable = (if (isSeries) content.nextEpisode else target)?.let { (it.userData?.playbackPositionTicks ?: 0L) > 0 } == true
     var menu by remember { mutableStateOf(false) }
     val seriesId = item.seriesId
+    val menuId = content.discMenuId
+    val preferDisc = (LocalContext.current.applicationContext as AsterApp).settings.settings.collectAsStateWithLifecycle(initialValue = AppSettings()).value.preferDiscMenu
 
     val tv = LocalIsTv.current
     val u = Lockup.tvUnit
@@ -617,9 +641,10 @@ private fun DetailInfo(
                         },
                         Icons.Default.PlayArrow, prominent = true,
                         modifier = Modifier.focusRequester(playFocus).onGloballyPositioned { onPlayCenter(it.boundsInRoot().center.x) },
-                    ) { onPlay(target.id) }
+                    ) { if (preferDisc && menuId != null) onDiscMenu(menuId) else onPlay(target.id) }
                     if (resumable) ActionButton("From Beginning", Icons.Default.Replay) { onPlayFromBeginning(target.id) }
                 }
+                if (menuId != null) ActionButton("Disc Menu", Icons.Default.Album) { onDiscMenu(menuId) }
                 IconActionButton(if (item.userData?.isFavorite == true) Icons.Default.Favorite else Icons.Default.FavoriteBorder, "Favorite") { viewModel.toggleFavorite() }
                 if (!isSeries && item.type != BaseItemKind.SEASON) {
                     IconActionButton(if (item.userData?.played == true) Icons.Default.CheckCircle else Icons.Outlined.CheckCircle, "Watched") { viewModel.togglePlayed() }

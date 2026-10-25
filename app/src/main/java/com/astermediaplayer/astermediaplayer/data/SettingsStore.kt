@@ -35,6 +35,10 @@ data class AppSettings(
     val downloadHevc: Boolean = false,
     val downloadSubtitles: Boolean = true,
     val downloadCellular: Boolean = false,
+    /** Titles with a disc menu start at it when Play is pressed, like putting in the disc. */
+    val preferDiscMenu: Boolean = false,
+    /** Menu music and button sounds. */
+    val discMenuSounds: Boolean = true,
 )
 
 private val Context.settingsDataStore by preferencesDataStore("aster_settings")
@@ -55,6 +59,8 @@ class SettingsStore(private val context: Context) {
     private val downloadHevcKey = booleanPreferencesKey("download_hevc")
     private val downloadSubtitlesKey = booleanPreferencesKey("download_subtitles")
     private val downloadCellularKey = booleanPreferencesKey("download_cellular")
+    private val preferDiscMenuKey = booleanPreferencesKey("prefer_disc_menu")
+    private val discMenuSoundsKey = booleanPreferencesKey("disc_menu_sounds")
 
     val settings: Flow<AppSettings> = context.settingsDataStore.data.map {
         AppSettings(
@@ -74,6 +80,8 @@ class SettingsStore(private val context: Context) {
             downloadHevc = it[downloadHevcKey] ?: false,
             downloadSubtitles = it[downloadSubtitlesKey] ?: true,
             downloadCellular = it[downloadCellularKey] ?: false,
+            preferDiscMenu = it[preferDiscMenuKey] ?: false,
+            discMenuSounds = it[discMenuSoundsKey] ?: true,
         )
     }
 
@@ -94,4 +102,6 @@ class SettingsStore(private val context: Context) {
     suspend fun setDownloadHevc(on: Boolean) = context.settingsDataStore.edit { it[downloadHevcKey] = on }
     suspend fun setDownloadSubtitles(on: Boolean) = context.settingsDataStore.edit { it[downloadSubtitlesKey] = on }
     suspend fun setDownloadCellular(on: Boolean) = context.settingsDataStore.edit { it[downloadCellularKey] = on }
+    suspend fun setPreferDiscMenu(on: Boolean) = context.settingsDataStore.edit { it[preferDiscMenuKey] = on }
+    suspend fun setDiscMenuSounds(on: Boolean) = context.settingsDataStore.edit { it[discMenuSoundsKey] = on }
 }

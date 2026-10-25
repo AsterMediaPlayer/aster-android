@@ -694,6 +694,41 @@ class AsterRepository(context: Context, private val store: SessionStore) {
     fun videoStreamUrl(itemId: UUID): String =
         api.videoApi.getVideoStreamUrl(itemId = itemId, static = true, mediaSourceId = itemId.toString())
 
+    // MARK: Disc menus (the Aster Disc plugin)
+
+    /** The resolved disc menu for a movie, series or season; null when the server has none (a 404 is "nothing to show", never an error). */
+    suspend fun discMenu(itemId: UUID): com.astermediaplayer.astermediaplayer.data.disc.DiscMenuDocument? {
+        if (serverKind != ServerKind.Jellyfin) return null
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                val request = Request.Builder().url(serverUrl.trimEnd('/') + "/DiscMenus/${wire(itemId)}/Menu")
+                    .header("Authorization", authorizationHeader()).build()
+                http.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) return@use null
+                    com.astermediaplayer.astermediaplayer.data.disc.DiscMenuDocument.parse(response.body.string())
+                }
+            }.onFailure { android.util.Log.w("Aster", "Disc menu $itemId failed: $it") }.getOrNull()
+        }
+    }
+
+    /** A picture or sound a menu ships with (`asset:folder/file`); the route needs no sign-in. */
+    fun discAssetUrl(segments: List<String>): String =
+        serverUrl.trimEnd('/') + "/DiscMenus/Assets/" + segments.joinToString("/") { android.net.Uri.encode(it) }
+
+    fun discFanartUrl(itemId: UUID, fanartId: String): String = withToken("${serverUrl.trimEnd('/')}/DiscMenus/Fanart/${wire(itemId)}/$fanartId")
+
+    fun chapterImageUrl(itemId: UUID, index: Int, stamp: Long?): String =
+        withToken("${serverUrl.trimEnd('/')}/Items/${wire(itemId)}/Images/Chapter/$index?maxWidth=480" + (stamp?.let { "&tag=$it" } ?: ""))
+
+    /** A backdrop or other picture of an item at full width, for a menu's background. */
+    fun itemImageUrl(itemId: UUID, type: String, index: Int): String =
+        withToken("${serverUrl.trimEnd('/')}/Items/${wire(itemId)}/Images/$type/$index?maxWidth=1920")
+
+    private fun withToken(url: String): String {
+        val token = android.net.Uri.encode(checkNotNull(session).accessToken)
+        return url + (if ('?' in url) "&" else "?") + "ApiKey=$token"
+    }
+
     // MARK: OP/ED plugin
 
     private val http = OkHttpClient()
