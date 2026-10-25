@@ -1,5 +1,9 @@
 package com.astermediaplayer.astermediaplayer.ui.livetv
 
+import androidx.compose.foundation.layout.width
+import androidx.compose.ui.platform.LocalConfiguration
+import com.astermediaplayer.astermediaplayer.ui.theme.tvFocus
+import com.astermediaplayer.astermediaplayer.ui.theme.LocalIsTv
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -65,6 +69,8 @@ fun LiveTvScreen(onPlay: (UUID) -> Unit, onProgram: (BaseItemDto) -> Unit, onSer
     val repo = app.repository
     val scope = rememberCoroutineScope()
     var section by rememberSaveable { mutableStateOf(LiveSection.OnNow) }
+    // Read here: the lazy list below is no place for a composable call.
+    val screenWidthDp = LocalConfiguration.current.screenWidthDp
     var channels by remember { mutableStateOf<List<BaseItemDto>>(emptyList()) }
     var onNow by remember { mutableStateOf<List<BaseItemDto>>(emptyList()) }
     var movies by remember { mutableStateOf<List<BaseItemDto>>(emptyList()) }
@@ -161,11 +167,15 @@ fun LiveTvScreen(onPlay: (UUID) -> Unit, onProgram: (BaseItemDto) -> Unit, onSer
                         }
                     }
                     LiveSection.Channels -> {
-                        val rows = channels.chunked(2)
+                        // A TV fills the row with the Apple TV's 280-point tiles; a phone has two across.
+                        val tv = Lockup.onTv
+                        val tile = (280f * Lockup.tvUnit).dp
+                        val perRow = if (!tv) 2 else maxOf(1, ((screenWidthDp.dp - Lockup.screenPadding * 2 + Lockup.gridSpacing) / (tile + Lockup.gridSpacing)).toInt())
+                        val rows = channels.chunked(perRow)
                         items(rows.size) { i ->
-                            Row(Modifier.padding(horizontal = Lockup.screenPadding), horizontalArrangement = Arrangement.spacedBy(Lockup.shelfSpacing)) {
-                                rows[i].forEach { channel -> ChannelTile(channel, Modifier.weight(1f), onClick = { onPlay(channel.id) }, onFavorite = { favorite(channel.id) }) }
-                                if (rows[i].size == 1) Spacer(Modifier.weight(1f))
+                            Row(Modifier.padding(horizontal = Lockup.screenPadding).padding(bottom = if (tv) Lockup.gridRowSpacing else 0.dp), horizontalArrangement = Arrangement.spacedBy(if (tv) Lockup.gridSpacing else Lockup.shelfSpacing)) {
+                                rows[i].forEach { channel -> ChannelTile(channel, if (tv) Modifier.width(tile) else Modifier.weight(1f), onClick = { onPlay(channel.id) }, onFavorite = { favorite(channel.id) }) }
+                                if (!tv && rows[i].size == 1) Spacer(Modifier.weight(1f))
                             }
                         }
                     }
@@ -293,7 +303,7 @@ private fun ProgramCard(program: BaseItemDto, onClick: () -> Unit) {
 private fun ChannelTile(channel: BaseItemDto, modifier: Modifier, onClick: () -> Unit, onFavorite: () -> Unit) {
     val repo = (LocalContext.current.applicationContext as AsterApp).repository
     val now = channel.currentProgram
-    Column(modifier.combinedClickable(onClick = onClick, onLongClick = onFavorite), verticalArrangement = Arrangement.spacedBy(Lockup.cardLabelSpacing)) {
+    Column(modifier.tvFocus(Lockup.cornerRadius, lift = 1.08f, ring = false, pictureAspect = Lockup.LANDSCAPE_ASPECT).combinedClickable(onClick = onClick, onLongClick = onFavorite), verticalArrangement = Arrangement.spacedBy(Lockup.cardLabelSpacing)) {
         Box(Modifier.fillMaxWidth().aspectRatio(Lockup.LANDSCAPE_ASPECT).clip(RoundedCornerShape(Lockup.cornerRadius)).background(Color(0xFF1C1C1E)), contentAlignment = Alignment.Center) {
             AsyncImage(model = repo.channelLogoUrl(channel, 300), contentDescription = channel.name, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize().padding(16.dp))
             if (channel.userData?.isFavorite == true) Icon(Icons.Default.Favorite, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.align(Alignment.TopEnd).padding(8.dp).size(16.dp))
