@@ -87,6 +87,33 @@ class SettingsStore(private val context: Context) {
 
     suspend fun current(): AppSettings = settings.first()
 
+    /**
+     * The settings that follow the user from device to device, by their name on the server (the Apple apps' names, so the
+     * two kinds of app share them): matters of taste. Quality, downloads and the like stay on the device.
+     */
+    private val synced: List<Pair<String, androidx.datastore.preferences.core.Preferences.Key<Boolean>>> = listOf(
+        "autoplayNext" to autoPlayNextKey,
+        "autoSkipIntro" to autoSkipKey,
+        "styledSubtitles" to styledSubtitlesKey,
+        "preferDiscMenu" to preferDiscMenuKey,
+        "discMenuSounds" to discMenuSoundsKey,
+        "themeMusic" to themeMusicKey,
+        "themeVideos" to themeVideosKey,
+        "openingSound" to openingSoundKey,
+    )
+
+    /** The synced settings that have been set on this device, as the server stores them ("true" or "false"); one never set isn't here. */
+    val syncedValues: Flow<Map<String, String>> = context.settingsDataStore.data.map { prefs ->
+        buildMap { for ((name, key) in synced) prefs[key]?.let { put(name, it.toString()) } }
+    }
+
+    /** Takes the server's values for the synced settings, leaving the rest alone. */
+    suspend fun applySynced(values: Map<String, String>) {
+        context.settingsDataStore.edit { prefs ->
+            for ((name, key) in synced) values[name]?.toBooleanStrictOrNull()?.let { prefs[key] = it }
+        }
+    }
+
     suspend fun setQualityIndex(index: Int) = context.settingsDataStore.edit { it[qualityKey] = index }
     suspend fun setAutoSkipSegments(on: Boolean) = context.settingsDataStore.edit { it[autoSkipKey] = on }
     suspend fun setAutoPlayNext(on: Boolean) = context.settingsDataStore.edit { it[autoPlayNextKey] = on }

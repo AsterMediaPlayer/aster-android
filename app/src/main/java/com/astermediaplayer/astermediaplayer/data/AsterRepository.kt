@@ -107,6 +107,8 @@ class AsterRepository(context: Context, private val store: SessionStore) {
 
     val api: ApiClient get() = checkNotNull(client) { "Not signed in" }
     val userId: UUID get() = UUID.fromString(checkNotNull(session).userId)
+    /** The signed-in user's id as the server writes it, for routes the SDK has no call for. */
+    val userIdForServer: String get() = checkNotNull(session).userId
     val serverUrl: String get() = checkNotNull(session).serverUrl
 
     /** Restores the saved sign-in. Returns false when there isn't one. */

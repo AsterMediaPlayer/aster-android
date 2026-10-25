@@ -107,6 +107,9 @@ private sealed interface SettingsPage {
 fun SettingsScreen(session: Session?, store: SettingsStore, servers: ServerActions, onSignOut: () -> Unit, modifier: Modifier = Modifier) {
     val settings by store.settings.collectAsStateWithLifecycle(initialValue = AppSettings())
     val scope = rememberCoroutineScope()
+    // The settings that follow the user are fetched as Settings opens, so a change made on another device shows here.
+    val appForSync = LocalContext.current.applicationContext as com.astermediaplayer.astermediaplayer.AsterApp
+    LaunchedEffect(session?.serverUrl, session?.userId) { if (session != null) appForSync.settingsSync.pull() }
     val stack = remember { mutableStateListOf<SettingsPage>(SettingsPage.Root) }
     val page = stack.last()
     fun open(next: SettingsPage) { stack.add(next) }

@@ -98,4 +98,10 @@ class EmbyDecodeTest {
         }
         assertTrue(failures.joinToString("\n"), failures.isEmpty())
     }
+
+    /** A server with a playlist has a "Playlists" library, whose collection type the SDK's enum doesn't list. */
+    @Test fun viewsWithAPlaylistsLibrary() {
+        val views = decode<BaseItemDtoQueryResult>("views-with-playlists.json")
+        assertEquals(listOf("Shows", "Playlists"), views.items.map { it.name })
+    }
 }
