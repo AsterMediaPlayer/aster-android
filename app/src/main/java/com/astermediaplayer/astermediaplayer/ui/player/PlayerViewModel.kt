@@ -213,7 +213,16 @@ class PlayerViewModel(
 
         override fun onIsPlayingChanged(isPlaying: Boolean) = reportProgress()
 
-        override fun onTracksChanged(tracks: androidx.media3.common.Tracks) = refreshSubtitles()
+        override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
+            val text = tracks.groups.filter { it.type == C.TRACK_TYPE_TEXT }.flatMap { g -> (0 until g.length).map { g.getTrackFormat(it).sampleMimeType to (g.isTrackSupported(it) to g.isTrackSelected(it)) } }
+            android.util.Log.d("Aster", "Text tracks (mime, supported, selected): $text")
+            refreshSubtitles()
+        }
+        // What the player decodes for the picture-based tracks (PGS, VobSub), for checking they are being drawn.
+        override fun onCues(cueGroup: androidx.media3.common.text.CueGroup) {
+            val pictures = cueGroup.cues.count { it.bitmap != null }
+            if (pictures > 0) android.util.Log.d("Aster", "Picture subtitle: $pictures cue(s) at ${cueGroup.presentationTimeUs / 1000} ms, first ${cueGroup.cues.first { it.bitmap != null }.bitmap!!.let { "${it.width}x${it.height}" }}")
+        }
         override fun onTrackSelectionParametersChanged(parameters: androidx.media3.common.TrackSelectionParameters) = refreshSubtitles()
 
         override fun onPositionDiscontinuity(
