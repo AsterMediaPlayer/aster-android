@@ -721,7 +721,10 @@ class AsterRepository(context: Context, private val store: SessionStore) {
     suspend fun search(term: String, limit: Int = 60): List<BaseItemDto> {
         val hints = api.searchApi.getSearchHints(
             searchTerm = term, userId = userId, limit = limit,
-            includeItemTypes = listOf(BaseItemKind.MOVIE, BaseItemKind.SERIES, BaseItemKind.EPISODE),
+            includeItemTypes = listOf(
+                BaseItemKind.MOVIE, BaseItemKind.SERIES, BaseItemKind.EPISODE,
+                BaseItemKind.MUSIC_ALBUM, BaseItemKind.MUSIC_ARTIST, BaseItemKind.AUDIO, BaseItemKind.PLAYLIST,
+            ),
         ).content.searchHints
         // Hints are thin; fetch the full items so cards have images and user data.
         if (hints.isEmpty()) return emptyList()

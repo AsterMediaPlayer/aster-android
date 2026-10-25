@@ -585,7 +585,7 @@ private fun MainTabs(
                     BackButton { back() }
                 }
                 MoreDestination.Search -> Box(modifier) {
-                    SearchScreen(search, onItem = onItem, modifier = Modifier.statusBarsPadding().padding(top = 56.dp))
+                    SearchScreen(search, onItem = onItem, onAlbum = onAlbum, onArtist = onArtist, modifier = Modifier.statusBarsPadding().padding(top = if (isTv) 0.dp else 56.dp))
                     BackButton { back() }
                 }
                 MoreDestination.Settings -> Box(modifier) {
