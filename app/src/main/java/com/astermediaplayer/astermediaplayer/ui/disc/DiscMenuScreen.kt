@@ -33,6 +33,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
@@ -164,7 +165,8 @@ fun DiscMenuScreen(controller: DiscMenuController, onPlay: (DiscPlay) -> Unit, o
             ) { shown -> DiscScreenView(shown.screen, controller, style, shown.generation) }
         }
         if (!LocalIsTv.current) {
-            IconButton(onClick = { controller.back() }, Modifier.padding(16.dp).align(Alignment.TopStart)) {
+            // Below the status bar, which the page draws under.
+            IconButton(onClick = { controller.back() }, Modifier.align(Alignment.TopStart).statusBarsPadding().padding(8.dp)) {
                 Icon(if (controller.canGoBack) Icons.AutoMirrored.Filled.ArrowBack else Icons.Default.Close, if (controller.canGoBack) "Back" else "Close", tint = Color.White)
             }
         }

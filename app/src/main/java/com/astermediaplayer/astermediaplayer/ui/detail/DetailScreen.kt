@@ -891,7 +891,11 @@ private fun MusicSection(content: DetailContent, onPlayTheme: (OpeningEnding) ->
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(24.dp)) {
-        if (unflagged.isNotEmpty() || publishedIds.isNotEmpty()) Row(Modifier.padding(horizontal = Lockup.screenPadding), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+        // A phone can't fit all three across, so the row scrolls sideways; a TV's fits.
+        if (unflagged.isNotEmpty() || publishedIds.isNotEmpty()) Row(
+            (if (tv) Modifier else Modifier.horizontalScroll(rememberScrollState())).padding(horizontal = Lockup.screenPadding),
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
             if (unflagged.isNotEmpty()) {
                 LabeledPill("Play All", Icons.Default.PlayArrow, prominent = true) { start(unflagged.first()) }
                 LabeledPill("Shuffle", Icons.Default.Shuffle) { val order = unflagged.shuffled(); start(order.first(), order) }

@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -63,8 +64,9 @@ fun PlaylistPicker(itemIds: List<UUID>, onDone: (String) -> Unit, onDismiss: () 
         if (trimmed.isNotEmpty() && !working) { naming = false; attempt(trimmed) { repo.createPlaylist(trimmed, itemIds) } }
     }
 
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Box(Modifier.fillMaxSize().background(Color(0xFF0F0F0F))) {
+    // Edge to edge, with its own safe-area padding, so the page doesn't show above and below it.
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
+        Box(Modifier.fillMaxSize().background(Color(0xFF0F0F0F)).safeDrawingPadding()) {
             Column(Modifier.fillMaxSize().padding(horizontal = 48.dp, vertical = 32.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 Text("Add to Playlist", style = MaterialTheme.typography.headlineMedium)
                 Text("${itemIds.size} item${if (itemIds.size == 1) "" else "s"}", color = MaterialTheme.colorScheme.onSurfaceVariant)
