@@ -1,5 +1,8 @@
 package com.astermediaplayer.astermediaplayer.ui
 
+import com.astermediaplayer.astermediaplayer.ui.detail.ThemeNowPlayingPanel
+import androidx.navigation.compose.currentBackStackEntryAsState
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.foundation.focusGroup
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.material.icons.filled.Layers
@@ -252,8 +255,32 @@ fun AsterNavHost(signedIn: Boolean) {
         )
     }
     val locked by repo.locked.collectAsStateWithLifecycle()
+    val isTv = LocalIsTv.current
+    val deck = app.themeDeck
+    val route = nav.currentBackStackEntryAsState().value?.destination?.route.orEmpty()
+    // A video, a disc menu or a theme taking over the screen ends the songs playing under the page.
+    LaunchedEffect(route) { if (route.startsWith("player") || route.startsWith("disc") || route.startsWith("theme") || route.startsWith("channel/") || route == Routes.AUTH) deck.stop() }
+    val miniFocus = remember { androidx.compose.ui.focus.FocusRequester() }
+    val firstRequest = remember { deck.focusRequest }
+    LaunchedEffect(deck.focusRequest) { if (deck.focusRequest != firstRequest) runCatching { miniFocus.requestFocus() } }
+    // Holding Select from anywhere brings focus to the slim Now Playing panel, as holding Play/Pause does on the Apple TV.
+    var holdHandled by remember { mutableStateOf(false) }
 
-    Box(Modifier.fillMaxSize()) {
+    Box(
+        Modifier.fillMaxSize().onPreviewKeyEvent { e ->
+            if (!isTv || !deck.isActive || e.key != androidx.compose.ui.input.key.Key.DirectionCenter) false
+            else when (e.type) {
+                androidx.compose.ui.input.key.KeyEventType.KeyDown ->
+                    if (e.nativeKeyEvent.repeatCount > 0) {
+                        if (!holdHandled) { holdHandled = true; deck.requestPanelFocus() }
+                        true
+                    } else false
+                // The release after a hold is part of the hold, not a press on whatever the panel's focus has moved to.
+                androidx.compose.ui.input.key.KeyEventType.KeyUp -> if (holdHandled) { holdHandled = false; true } else false
+                else -> false
+            }
+        },
+    ) {
         NavHost(nav, startDestination = if (signedIn) Routes.MAIN else Routes.AUTH, modifier = Modifier.fillMaxSize()) {
             composable(Routes.AUTH) {
                 val vm: AuthViewModel = viewModel(factory = viewModelFactory { initializer { AuthViewModel(repo, app::resetForServerChange) } })
@@ -459,6 +486,16 @@ fun AsterNavHost(signedIn: Boolean) {
                     },
                 )
             }
+        }
+        // The slim Now Playing panel, over the browsing pages (a show's own page carries its own).
+        val browsing = route.startsWith("main") || route.startsWith("library/") || route.startsWith("audiobook") || route.startsWith("album") || route.startsWith("artist")
+        if (isTv && deck.isActive && browsing) {
+            ThemeNowPlayingPanel(
+                deck, null,
+                Modifier.align(Alignment.TopEnd).padding(top = 20.dp, end = 40.dp).width(300.dp),
+                showDetails = false, playFocus = miniFocus,
+                onOpenShow = deck.showItem?.let { show -> { nav.navigate(Routes.detail(show.id)) } },
+            )
         }
         if (presented) {
             androidx.activity.compose.BackHandler { app.audiobooks.setPresented(false) }

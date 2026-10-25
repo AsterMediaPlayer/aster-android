@@ -550,7 +550,8 @@ private fun DetailBody(
         // The Now Playing panel floats at the top right while the Music tab plays something, over the page (the Apple TV's).
         val deck = app.themeDeck
         // Asked for by a card pressed: once the panel has settled in, focus goes to its Play/Pause.
-        LaunchedEffect(deck.focusRequest) { if (deck.focusRequest > 0) { delay(350); runCatching { panelPlayFocus.requestFocus() } } }
+        val firstRequest = remember { deck.focusRequest }
+        LaunchedEffect(deck.focusRequest) { if (deck.focusRequest != firstRequest) { delay(350); runCatching { panelPlayFocus.requestFocus() } } }
         if (isTv && deck.isActive) {
             val artwork = remember(item.id) { repo.imageUrl(item, ImageType.PRIMARY, 640) ?: repo.imageUrl(item, ImageType.BACKDROP, 640) }
             ThemeNowPlayingPanel(
@@ -845,8 +846,10 @@ private fun MusicSection(content: DetailContent, onPlayTheme: (OpeningEnding) ->
     val tv = LocalIsTv.current
     val settings by app.settings.settings.collectAsStateWithLifecycle(initialValue = AppSettings())
     // Away from the page it goes quiet; the full-screen buttons (Watch OP, Watch ED) start their own player.
-    DisposableEffect(content.item.id) { onDispose { deck.stop() } }
-    val lifecycleOwner = LocalLifecycleOwner.current
+    // On a TV it plays on while browsing (the slim panel follows); on a phone the panel is part of this tab, so it stops with it.
+    DisposableEffect(content.item.id) { onDispose { if (!tv) deck.stop() } }
+    // The app going to the background, not this page leaving (its own lifecycle stops then, and the songs play on).
+    val lifecycleOwner = (LocalContext.current as androidx.activity.ComponentActivity)
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_STOP) deck.pause() }
         lifecycleOwner.lifecycle.addObserver(observer)
