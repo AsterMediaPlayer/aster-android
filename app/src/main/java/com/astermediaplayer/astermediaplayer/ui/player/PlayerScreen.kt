@@ -28,6 +28,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
+import com.astermediaplayer.astermediaplayer.ui.theme.LocalIsTv
 import com.astermediaplayer.astermediaplayer.ui.theme.Type
 import kotlinx.coroutines.delay
 import kotlin.math.max
@@ -86,6 +87,8 @@ fun PlayerScreen(
     val state by viewModel.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val activity = context as? Activity
+    // A TV has a remote, not a touch screen: its own controls replace the tap-and-drag ones below.
+    val isTv = LocalIsTv.current
     var qualityMenu by remember { mutableStateOf(false) }
     var chapterMenu by remember { mutableStateOf(false) }
     var subtitleMenu by remember { mutableStateOf(false) }
@@ -176,7 +179,7 @@ fun PlayerScreen(
         )
 
         // A tap on the picture shows or hides the controls; a double-tap on either side skips 10 seconds; a pinch fills the screen or fits it.
-        Box(
+        if (!isTv) Box(
             Modifier.fillMaxSize().pinchToFill { fills = it; reveal() }.pointerInput(canSeek) {
                 detectTapGestures(
                     onTap = { if (controlsVisible && clock.playing) visible = false else reveal() },
@@ -203,7 +206,10 @@ fun PlayerScreen(
         }
 
         val shade by animateFloatAsState(if (controlsVisible) 1f else 0f, tween(250), label = "controls")
-        if (shade > 0f) Box(Modifier.fillMaxSize().alpha(shade)) {
+        if (isTv) {
+            // Not while the stall card or an error is up: their buttons take the remote.
+            if (state.error == null && state.qualityOffer == null) TvPlayerControls(state, viewModel, clock, canSeek)
+        } else if (shade > 0f) Box(Modifier.fillMaxSize().alpha(shade)) {
             // Darkens the edges so white text reads over a bright picture.
             Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0f to Color.Black.copy(alpha = 0.6f), 0.35f to Color.Transparent, 0.65f to Color.Transparent, 1f to Color.Black.copy(alpha = 0.7f))))
             Column(Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 12.dp)) {
@@ -318,7 +324,7 @@ fun PlayerScreen(
                 offerFresh = false
             }
         }
-        if (offerKey != null && (offerFresh || controlsVisible)) {
+        if (!isTv && offerKey != null && (offerFresh || controlsVisible)) {
             val skipPrompt = state.skip
             Button(
                 onClick = if (skipPrompt != null) viewModel::skip else viewModel::playNextNow,

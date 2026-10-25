@@ -54,6 +54,25 @@ import com.astermediaplayer.astermediaplayer.ui.theme.DetailMetrics
 import com.astermediaplayer.astermediaplayer.ui.theme.Lockup
 import com.astermediaplayer.astermediaplayer.ui.theme.SecondaryText
 import com.astermediaplayer.astermediaplayer.ui.theme.Type
+import com.astermediaplayer.astermediaplayer.ui.theme.tvFocus
+import com.astermediaplayer.astermediaplayer.ui.theme.LocalIsTv
+import com.astermediaplayer.astermediaplayer.ui.theme.LocalTvChip
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.focus.FocusDirection
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -97,6 +116,15 @@ import androidx.navigation.navDeepLink
 import androidx.navigation.compose.rememberNavController
 import androidx.compose.runtime.rememberCoroutineScope
 import com.astermediaplayer.astermediaplayer.AsterApp
+import androidx.compose.material.icons.filled.Inventory2
+import androidx.compose.material.icons.filled.LocalLibrary
+import androidx.compose.material.icons.filled.DesktopMac
+import androidx.compose.material.icons.filled.Theaters
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.foundation.border
 import com.astermediaplayer.astermediaplayer.data.OpeningEnding
 import com.astermediaplayer.astermediaplayer.ui.anime.AnimeScreen
 import com.astermediaplayer.astermediaplayer.ui.anime.AnimeViewModel
@@ -128,6 +156,8 @@ import java.util.UUID
 /** A round back button over a page's art, like the title page's. */
 @Composable
 internal fun BackButton(onClick: () -> Unit) {
+    // The remote's Back key does this, so a TV shows no button to steer to.
+    if (LocalIsTv.current) return
     IconButton(
         onClick = onClick,
         modifier = Modifier.statusBarsPadding().padding(start = Lockup.screenPadding, top = 4.dp).size(DetailMetrics.backButtonSize).clip(CircleShape).background(Color.Black.copy(alpha = 0.35f)),
@@ -397,6 +427,12 @@ private data class BarItem(val label: String, val icon: ImageVector, val tab: Ta
 /** The destinations that move into the bar from More, in the Apple apps' tab order, as far as the width allows. */
 private val PromotedOrder = listOf(MoreDestination.Music, MoreDestination.Audiobooks, MoreDestination.Upcoming)
 
+/** Google TV's side menu lists every destination in this order; Downloads is a phone's. */
+private val TvDestinations = listOf(
+    MoreDestination.Music, MoreDestination.Audiobooks, MoreDestination.Upcoming, MoreDestination.LiveTv,
+    MoreDestination.Channels, MoreDestination.Library, MoreDestination.Settings, MoreDestination.Search,
+)
+
 /** About what a tab takes in the side-on bar, in dp: icon, gap, label and padding. */
 private fun barItemWidth(label: String) = 20 + 6 + (label.length * 6.5f).toInt() + 20
 
@@ -460,11 +496,19 @@ private fun MainTabs(
 
     // A phone on its side has room for more tabs, as the Apple apps' bar does: as many as fit, then More.
     val config = LocalConfiguration.current
+    val isTv = LocalIsTv.current
     val landscape = !wide && config.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
-    val promoted = if (landscape) promotedFor(tabs, PromotedOrder.filter { it != MoreDestination.Upcoming || hasUpcoming }, config.screenWidthDp) else emptyList()
-    val barItems = if (landscape) {
+    val promoted = when {
+        isTv -> TvDestinations.filter { it != MoreDestination.Upcoming || hasUpcoming }
+        landscape -> promotedFor(tabs, PromotedOrder.filter { it != MoreDestination.Upcoming || hasUpcoming }, config.screenWidthDp)
+        else -> emptyList()
+    }
+    var menuOpen by rememberSaveable { mutableStateOf(false) }
+    val chip = remember { mutableStateOf(true) }
+    val focusManager = LocalFocusManager.current
+    val barItems = if (isTv || landscape) {
         tabs.filter { it != Tab.More }.map { BarItem(it.label, it.icon, it) } +
-            promoted.map { BarItem(it.label, it.icon, Tab.More, it) } + BarItem(Tab.More.label, Tab.More.icon, Tab.More)
+            promoted.map { BarItem(it.label, it.icon, Tab.More, it) } + if (isTv) emptyList() else listOf(BarItem(Tab.More.label, Tab.More.icon, Tab.More))
     } else tabs.map { BarItem(it.label, it.icon, it) }
     fun isSelected(item: BarItem) = when {
         item.destination != null -> current == Tab.More && more == item.destination
@@ -473,6 +517,8 @@ private fun MainTabs(
     }
     fun pick(item: BarItem) {
         if (item.destination != null) { selected = tabs.indexOf(Tab.More); more = item.destination } else select(item.tab)
+        menuOpen = false
+        chip.value = true
     }
     // Back from a page under More goes to the list; from one with a place in the bar, Home.
     fun back() { if (more in promoted) select(Tab.Home) else more = null }
@@ -498,6 +544,9 @@ private fun MainTabs(
     }
 
     androidx.activity.compose.BackHandler(enabled = current == Tab.More && more != null) { back() }
+    // On a TV Back opens the side menu, and closes it again; from Home with the menu open it leaves the app.
+    androidx.activity.compose.BackHandler(enabled = isTv && !menuOpen) { menuOpen = true }
+    androidx.activity.compose.BackHandler(enabled = isTv && menuOpen && current != Tab.Home) { menuOpen = false }
     val content: @Composable (Modifier) -> Unit = { modifier ->
         when (current) {
             Tab.Home -> HomeScreen(home, onItem = onItem, onPlay = onPlay, modifier = modifier)
@@ -546,7 +595,23 @@ private fun MainTabs(
         }
     }
 
-    if (wide) {
+    if (isTv) {
+        // Left, with nothing further left to go to, pulls the menu out.
+        Box(
+            Modifier.fillMaxSize().onKeyEvent { event ->
+                // Left, or Up, with nothing further that way to go to, pulls the menu out.
+                val direction = when (event.key) { Key.DirectionLeft -> FocusDirection.Left; Key.DirectionUp -> FocusDirection.Up; else -> null }
+                if (direction == null || menuOpen) false
+                else { if (event.type == KeyEventType.KeyDown && !focusManager.moveFocus(direction)) menuOpen = true; true }
+            },
+        ) {
+            CompositionLocalProvider(LocalTvChip provides chip) { content(Modifier.fillMaxSize()) }
+            val here = barItems.firstOrNull(::isSelected)
+            if (here != null) AnimatedVisibility(!menuOpen && chip.value, Modifier.align(Alignment.TopStart)) { TvMenuChip(here) }
+            if (menuOpen) TvMenu(barItems, ::isSelected, ::pick, onClose = { menuOpen = false })
+            AudiobookBar(Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(horizontal = 16.dp, vertical = 8.dp))
+        }
+    } else if (wide) {
         Row(Modifier.fillMaxSize()) {
             NavigationRail {
                 tabs.forEach { tab ->
@@ -568,6 +633,78 @@ private fun MainTabs(
             ) {
                 AudiobookBar()
                 FloatingTabBar(items = barItems, isSelected = ::isSelected, onPick = ::pick, sideOn = landscape)
+            }
+        }
+    }
+}
+
+/** Google TV's "‹ Home" chip over the top left of a page: where you are, and a way into the menu. */
+@Composable
+private fun TvMenuChip(here: BarItem, modifier: Modifier = Modifier) {
+    fun pt(points: Float) = (points * Lockup.tvUnit).dp
+    Row(
+        modifier.padding(start = pt(22f), top = pt(51f)),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(pt(4f)),
+    ) {
+        // Not focusable: Up (or Left) at the edge of the page is what opens the menu, so nothing here takes the remote.
+        Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, null, tint = Color.White, modifier = Modifier.size(pt(30f)))
+        Row(
+            Modifier.height(pt(56f)).clip(CircleShape).background(Color.Black.copy(alpha = 0.45f)).padding(start = pt(8f), end = pt(21f)),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(pt(17f)),
+        ) {
+            Icon(tvMenuIcon(here), null, tint = Color.White, modifier = Modifier.size(pt(29f)))
+            Text(here.label, style = Type.headline.copy(fontSize = (27f * Lockup.tvUnit).sp, lineHeight = (34f * Lockup.tvUnit).sp), color = Color.White, maxLines = 1)
+        }
+    }
+}
+
+/** The Apple TV menu's icons are SF Symbols; these are the nearest Material ones, on a TV only. */
+private fun tvMenuIcon(item: BarItem): ImageVector = when (item.destination ?: item.tab) {
+    Tab.Movies -> Icons.Default.Theaters
+    Tab.Shows -> Icons.Default.DesktopMac
+    MoreDestination.Audiobooks -> Icons.Default.LocalLibrary
+    MoreDestination.Library -> Icons.Default.Inventory2
+    else -> item.icon
+}
+
+/**
+ * The side menu, drawn to the Apple TV app's measurements (its screenshot, in points on a 1920x1080 screen): a tall rounded
+ * glass panel 36 in from the edge, a 76-pitch row of pills in it, and the focused one a white pill. The page behind is dimmed.
+ * The remote starts on the current page; Right, or Back, hands focus back to the page.
+ */
+@Composable
+private fun TvMenu(items: List<BarItem>, isSelected: (BarItem) -> Boolean, onPick: (BarItem) -> Unit, onClose: () -> Unit) {
+    val u = Lockup.tvUnit
+    fun pt(points: Float) = (points * u).dp
+    val current = remember { FocusRequester() }
+    LaunchedEffect(Unit) { runCatching { current.requestFocus() } }
+    val shape = RoundedCornerShape(pt(46f))
+    Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.45f))) {
+        Column(
+            Modifier.align(Alignment.TopStart).padding(start = pt(36f), top = pt(36f), bottom = pt(37f)).fillMaxHeight().width(pt(355f))
+                .clip(shape)
+                .background(Brush.verticalGradient(listOf(Color(0xF71E1612), Color(0xF717120F))))
+                .background(Color.White.copy(alpha = 0.07f))
+                .border(pt(1f), Color.White.copy(alpha = 0.16f), shape)
+                .verticalScroll(rememberScrollState()).padding(horizontal = pt(13f), vertical = pt(14f))
+                .onKeyEvent { if (it.key == Key.DirectionRight) { if (it.type == KeyEventType.KeyDown) onClose(); true } else false },
+            verticalArrangement = Arrangement.spacedBy(pt(1f)),
+        ) {
+            items.forEach { item ->
+                var focused by remember { mutableStateOf(false) }
+                val tint = if (focused) Color.Black else Color.White
+                val label = if (item.destination == MoreDestination.Channels) "Channels (Beta)" else item.label
+                Row(
+                    Modifier.fillMaxWidth().height(pt(75f)).then(if (isSelected(item)) Modifier.focusRequester(current) else Modifier)
+                        .onFocusChanged { focused = it.isFocused }
+                        .clip(CircleShape).background(if (focused) Color.White else Color.Transparent)
+                        .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onPick(item) }
+                        .padding(start = pt(22f)),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(tvMenuIcon(item), null, tint = tint, modifier = Modifier.size(pt(30f)))
+                    Text(label, style = Type.callout.copy(fontSize = (23.5f * u).sp, lineHeight = (30f * u).sp), color = tint, maxLines = 1, modifier = Modifier.padding(start = pt(18f)))
+                }
             }
         }
     }
@@ -607,7 +744,7 @@ private fun FloatingTabBar(items: List<BarItem>, isSelected: (BarItem) -> Boolea
         items.forEach { item ->
             val active = isSelected(item)
             val tint = if (active) MaterialTheme.colorScheme.primary else Color.White
-            val pill = Modifier.clip(RoundedCornerShape(30.dp)).background(if (active) Color.Black.copy(alpha = 0.45f) else Color.Transparent).clickable { onPick(item) }
+            val pill = Modifier.tvFocus(30.dp, lift = 1.08f).clip(RoundedCornerShape(30.dp)).background(if (active) Color.Black.copy(alpha = 0.45f) else Color.Transparent).clickable { onPick(item) }
             if (sideOn) {
                 Row(
                     pill.padding(horizontal = 10.dp, vertical = 6.dp),

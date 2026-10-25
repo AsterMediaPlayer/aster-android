@@ -24,6 +24,8 @@ import com.astermediaplayer.astermediaplayer.ui.components.ErrorBox
 import com.astermediaplayer.astermediaplayer.ui.components.Load
 import com.astermediaplayer.astermediaplayer.ui.components.LoadingBox
 import com.astermediaplayer.astermediaplayer.ui.components.Shelf
+import com.astermediaplayer.astermediaplayer.ui.theme.LocalIsTv
+import com.astermediaplayer.astermediaplayer.ui.theme.Lockup
 import com.astermediaplayer.astermediaplayer.ui.components.userMessage
 import com.astermediaplayer.astermediaplayer.ui.home.FeaturedBanner
 import com.astermediaplayer.astermediaplayer.ui.home.TabBarClearance
@@ -100,7 +102,7 @@ fun AnimeScreen(
     when (val s = state) {
         Load.Loading -> LoadingBox(modifier)
         is Load.Failed -> ErrorBox(s.message, viewModel::load, modifier)
-        is Load.Ready -> Column(modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(bottom = TabBarClearance), verticalArrangement = Arrangement.spacedBy(20.dp)) {
+        is Load.Ready -> Column(modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(bottom = TabBarClearance), verticalArrangement = Arrangement.spacedBy(if (LocalIsTv.current) Lockup.sectionSpacing else 20.dp)) {
             if (s.value.featured.isNotEmpty()) {
                 FeaturedBanner(s.value.featured, onItem, onPlay)
             } else {

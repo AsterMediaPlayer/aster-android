@@ -8,6 +8,7 @@ import coil3.disk.DiskCache
 import coil3.disk.directory
 import coil3.memory.MemoryCache
 import coil3.request.crossfade
+import com.astermediaplayer.astermediaplayer.ui.theme.isTelevision
 import com.astermediaplayer.astermediaplayer.data.AsterRepository
 import com.astermediaplayer.astermediaplayer.data.SessionStore
 import com.astermediaplayer.astermediaplayer.data.SettingsStore
@@ -34,7 +35,8 @@ class AsterApp : Application(), SingletonImageLoader.Factory {
     }
 
     override fun newImageLoader(context: PlatformContext): ImageLoader = ImageLoader.Builder(context)
-        .crossfade(true)
+        // A fade on every image is a lot of frames for a TV's CPU, which has a screen of them arriving at once.
+        .crossfade(!isTelevision(context))
         .memoryCache { MemoryCache.Builder().maxSizePercent(context, 0.20).build() }
         .diskCache { DiskCache.Builder().directory(cacheDir.resolve("images")).maxSizeBytes(250L * 1024 * 1024).build() }
         .build()

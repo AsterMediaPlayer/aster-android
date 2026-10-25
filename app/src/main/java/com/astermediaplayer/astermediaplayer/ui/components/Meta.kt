@@ -13,6 +13,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -26,16 +27,16 @@ import org.jellyfin.sdk.model.api.MediaStreamType
 
 /** Years, what's unwatched, rating, runtime and genres, then the 4K or HD badge and the star rating. */
 @Composable
-fun MetaLine(item: BaseItemDto, showsUnwatched: Boolean = false, modifier: Modifier = Modifier) {
+fun MetaLine(item: BaseItemDto, showsUnwatched: Boolean = false, modifier: Modifier = Modifier, style: TextStyle = Type.callout) {
     Row(modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
         // Inter sets digits and the separators wider than San Francisco, so this line is tracked a little tighter to
         // wrap where the Apple apps' does.
-        Text(metaLine(item, showsUnwatched), style = Type.callout.copy(letterSpacing = (-0.2).sp), color = SecondaryText, modifier = Modifier.weight(1f, fill = false))
+        Text(metaLine(item, showsUnwatched), style = style.copy(letterSpacing = (-0.2).sp), color = SecondaryText, modifier = Modifier.weight(1f, fill = false))
         videoBadge(item)?.let { Badge(it) }
         item.communityRating?.let {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 Icon(Icons.Default.Star, null, tint = SecondaryText, modifier = Modifier.size(12.dp))
-                Text("%.1f".format(it), style = Type.callout, color = SecondaryText)
+                Text("%.1f".format(it), style = style, color = SecondaryText)
             }
         }
     }

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The Android TV home screen's 16:9 banner: the app icon's artwork centred on the app's background. -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:drawable="@color/aster_background" />
+    <item
+        android:drawable="@drawable/ic_launcher_art"
+        android:gravity="center"
+        android:height="120dp"
+        android:width="120dp" />
+</layer-list>

@@ -8,10 +8,15 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.Dp
 import com.astermediaplayer.astermediaplayer.ui.theme.Lockup
 import com.astermediaplayer.astermediaplayer.ui.theme.SecondaryText
+import com.astermediaplayer.astermediaplayer.ui.theme.LocalIsTv
 import com.astermediaplayer.astermediaplayer.ui.theme.Type
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.runtime.remember
+import com.astermediaplayer.astermediaplayer.ui.theme.tvFocus
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.foundation.layout.Arrangement
@@ -46,6 +51,11 @@ import com.astermediaplayer.astermediaplayer.AsterApp
 import org.jellyfin.sdk.model.api.BaseItemDto
 import org.jellyfin.sdk.model.api.BaseItemKind
 import org.jellyfin.sdk.model.api.ImageType
+
+/** A card's tap. On a TV the focus draws the card's own lift and shadow, so the default highlight over the whole card (label too) is off. */
+@Composable
+private fun Modifier.cardClickable(onClick: () -> Unit): Modifier =
+    if (LocalIsTv.current) clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onClick) else clickable(onClick = onClick)
 
 @Composable
 private fun repo() = (LocalContext.current.applicationContext as AsterApp).repository
@@ -100,7 +110,7 @@ private fun CardLabel(title: String, subtitle: String?, width: Dp) {
 @Composable
 fun PosterCard(item: BaseItemDto, onClick: () -> Unit, modifier: Modifier = Modifier) {
     val url = repo().imageUrl(item, ImageType.PRIMARY, 400)
-    Column(modifier.width(Lockup.posterWidth).clickable(onClick = onClick), verticalArrangement = Arrangement.spacedBy(Lockup.cardLabelSpacing)) {
+    Column(modifier.width(Lockup.posterWidth).tvFocus(Lockup.cornerRadius, lift = 1.08f, ring = false, pictureAspect = Lockup.POSTER_ASPECT).cardClickable(onClick), verticalArrangement = Arrangement.spacedBy(Lockup.cardLabelSpacing)) {
         Box(Modifier.fillMaxWidth().aspectRatio(Lockup.POSTER_ASPECT).clip(RoundedCornerShape(Lockup.cornerRadius))) {
             AsyncImage(model = url, contentDescription = item.name, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
             item.progress()?.let { ProgressBar(it, Modifier.align(Alignment.BottomCenter).padding(horizontal = 12.dp).padding(bottom = 10.dp)) }
@@ -123,7 +133,7 @@ fun LandscapeCard(
     } else {
         repo.imageUrl(item, ImageType.BACKDROP, 600) ?: repo.imageUrl(item, ImageType.PRIMARY, 600)
     }
-    Column(modifier.width(Lockup.landscapeWidth).clickable(onClick = onClick), verticalArrangement = Arrangement.spacedBy(Lockup.cardLabelSpacing)) {
+    Column(modifier.width(Lockup.landscapeWidth).tvFocus(Lockup.cornerRadius, lift = 1.08f, ring = false, pictureAspect = Lockup.LANDSCAPE_ASPECT).cardClickable(onClick), verticalArrangement = Arrangement.spacedBy(Lockup.cardLabelSpacing)) {
         Box(Modifier.fillMaxWidth().aspectRatio(Lockup.LANDSCAPE_ASPECT).clip(RoundedCornerShape(Lockup.cornerRadius))) {
             AsyncImage(model = url, contentDescription = item.name, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
             item.progress()?.let { ProgressBar(it, Modifier.align(Alignment.BottomCenter).padding(horizontal = 14.dp).padding(bottom = 12.dp)) }
@@ -148,7 +158,8 @@ fun Shelf(
     onItem: (BaseItemDto) -> Unit,
 ) {
     if (items.isEmpty()) return
-    Column(modifier, verticalArrangement = Arrangement.spacedBy(Lockup.shelfTitleSpacing)) {
+    // Each shelf is its own layer, so a focus ring moving in one redraws that shelf and not the whole page.
+    Column(modifier.graphicsLayer(), verticalArrangement = Arrangement.spacedBy(Lockup.shelfTitleSpacing)) {
         Text(title, style = Type.title3, modifier = Modifier.padding(horizontal = Lockup.screenPadding))
         LazyRow(
             state = listState,

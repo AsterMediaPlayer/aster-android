@@ -5,6 +5,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.LineBreak
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.isSpecified
 import androidx.compose.ui.unit.sp
 
 /**
@@ -12,26 +13,51 @@ import androidx.compose.ui.unit.sp
  * so a screen here lines up with the same screen there. Change them together.
  */
 object Lockup {
-    val landscapeWidth = 175.dp
+    var landscapeWidth = 175.dp; private set
     /** A landscape card's height is its width times 9/16. */
     const val LANDSCAPE_ASPECT = 16f / 9f
-    val posterWidth = 110.dp
+    var posterWidth = 110.dp; private set
     const val POSTER_ASPECT = 2f / 3f
-    val cornerRadius = 10.dp
-    val screenPadding = 16.dp
-    val shelfSpacing = 12.dp
-    val shelfVerticalPadding = 8.dp
+    var cornerRadius = 10.dp; private set
+    var screenPadding = 16.dp; private set
+    var shelfSpacing = 12.dp; private set
+    var shelfVerticalPadding = 8.dp; private set
     /** Between a shelf's title and its row. */
-    val shelfTitleSpacing = 12.dp
+    var shelfTitleSpacing = 12.dp; private set
     /** Between a card and the text under it, and between that text's two lines. */
-    val cardLabelSpacing = 10.dp
-    val cardTextSpacing = 2.dp
-    val personPhotoSize = 80.dp
-    val personWidth = 96.dp
-    val personSpacing = 12.dp
-    val personLabelSpacing = 6.dp
-    val pageBottomPadding = 24.dp
-    val sectionSpacing = 16.dp
+    var cardLabelSpacing = 10.dp; private set
+    var cardTextSpacing = 2.dp; private set
+    var personPhotoSize = 80.dp; private set
+    var personWidth = 96.dp; private set
+    var personSpacing = 12.dp; private set
+    var personLabelSpacing = 6.dp; private set
+    var pageBottomPadding = 24.dp; private set
+    var sectionSpacing = 16.dp; private set
+    /** The dp one Apple TV point comes to on this screen (1 off a TV); see [useTv]. */
+    var tvUnit = 1f; private set
+
+    /**
+     * The Apple TV's numbers (the tvOS branch of `Lockup`, in points on its 1920x1080 screen) for a TV. [unit] is the dp one
+     * of those points comes to on this screen, so a card is as many pixels wide here as there. Set once, before anything draws.
+     */
+    fun useTv(unit: Float) {
+        tvUnit = unit
+        landscapeWidth = (400 * unit).dp
+        posterWidth = (240 * unit).dp
+        cornerRadius = (14 * unit).dp
+        screenPadding = (80 * unit).dp
+        shelfSpacing = (36 * unit).dp
+        shelfVerticalPadding = (30 * unit).dp
+        shelfTitleSpacing = (10 * unit).dp
+        cardLabelSpacing = (14 * unit).dp
+        cardTextSpacing = (6 * unit).dp
+        personPhotoSize = (200 * unit).dp
+        personWidth = (220 * unit).dp
+        personSpacing = (28 * unit).dp
+        personLabelSpacing = (10 * unit).dp
+        pageBottomPadding = (80 * unit).dp
+        sectionSpacing = (30 * unit).dp
+    }
 }
 
 /** The title page's own measurements. */
@@ -70,16 +96,30 @@ object DetailMetrics {
  * "Watch OP" at 17sp 76.9, the tab control's "Episodes" 55.5).
  */
 object Type {
-    val callout = TextStyle(fontFamily = SfText, lineBreak = LineBreak.Simple, fontSize = 16.sp, lineHeight = 21.sp, letterSpacing = (-0.04).sp)
-    val calloutMedium = callout.copy(fontWeight = FontWeight.Medium)
-    val calloutSemibold = callout.copy(fontWeight = FontWeight.SemiBold)
-    val headline = TextStyle(fontFamily = SfText, lineBreak = LineBreak.Simple, fontSize = 17.sp, lineHeight = 22.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-0.19).sp)
-    val title3 = TextStyle(fontFamily = SfDisplay, lineBreak = LineBreak.Simple, fontSize = 20.sp, lineHeight = 25.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.3.sp)
-    val caption = TextStyle(fontFamily = SfText, lineBreak = LineBreak.Simple, fontSize = 12.sp, lineHeight = 16.sp)
-    val caption2Bold = TextStyle(fontFamily = SfText, lineBreak = LineBreak.Simple, fontSize = 11.sp, lineHeight = 13.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.1.sp)
-    val segmented = TextStyle(fontFamily = SfText, lineBreak = LineBreak.Simple, fontSize = 14.sp, lineHeight = 18.sp, fontWeight = FontWeight.Medium, letterSpacing = (-0.26).sp)
+    var callout = TextStyle(fontFamily = SfText, lineBreak = LineBreak.Simple, fontSize = 16.sp, lineHeight = 21.sp, letterSpacing = (-0.04).sp); private set
+    var calloutMedium = callout.copy(fontWeight = FontWeight.Medium); private set
+    var calloutSemibold = callout.copy(fontWeight = FontWeight.SemiBold); private set
+    var headline = TextStyle(fontFamily = SfText, lineBreak = LineBreak.Simple, fontSize = 17.sp, lineHeight = 22.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-0.19).sp); private set
+    var title3 = TextStyle(fontFamily = SfDisplay, lineBreak = LineBreak.Simple, fontSize = 20.sp, lineHeight = 25.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.3.sp); private set
+    var caption = TextStyle(fontFamily = SfText, lineBreak = LineBreak.Simple, fontSize = 12.sp, lineHeight = 16.sp); private set
+    var caption2Bold = TextStyle(fontFamily = SfText, lineBreak = LineBreak.Simple, fontSize = 11.sp, lineHeight = 13.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.1.sp); private set
+    var segmented = TextStyle(fontFamily = SfText, lineBreak = LineBreak.Simple, fontSize = 14.sp, lineHeight = 18.sp, fontWeight = FontWeight.Medium, letterSpacing = (-0.26).sp); private set
     /** A title with no clear-art logo. */
-    val pageTitle = TextStyle(fontFamily = SfDisplay, lineBreak = LineBreak.Simple, fontSize = 30.sp, lineHeight = 36.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.0.sp)
+    var pageTitle = TextStyle(fontFamily = SfDisplay, lineBreak = LineBreak.Simple, fontSize = 30.sp, lineHeight = 36.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.0.sp); private set
+
+    /** The same styles at the Apple TV's sizes (tvOS's text styles, in points), for a TV. [unit] is the sp one point comes to; see [Lockup.useTv]. */
+    fun useTv(unit: Float) {
+        fun TextStyle.tv(size: Int, line: Int) = copy(fontSize = (size * unit).sp, lineHeight = (line * unit).sp, letterSpacing = if (letterSpacing.isSpecified) letterSpacing * (size / fontSize.value) else letterSpacing)
+        callout = callout.tv(31, 40)
+        calloutMedium = calloutMedium.tv(31, 40)
+        calloutSemibold = calloutSemibold.tv(31, 40)
+        headline = headline.tv(34, 44)
+        title3 = title3.tv(46, 56)
+        caption = caption.tv(26, 32)
+        caption2Bold = caption2Bold.tv(22, 28)
+        segmented = segmented.tv(28, 34)
+        pageTitle = pageTitle.tv(64, 76)
+    }
 }
 
 /** `.secondary` on a dark page. */

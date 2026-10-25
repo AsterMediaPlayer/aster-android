@@ -18,8 +18,11 @@ private val Dark = darkColorScheme(
     onSurfaceVariant = Color(0xFF8E8E93),
 )
 
+/** The Apple TV's page: dark grey, not black, under the banner. */
+private val TvDark = Dark.copy(background = Color(0xFF1C1C1E), surface = Color(0xFF1C1C1E), surfaceVariant = Color(0xFF2C2C2E), surfaceContainer = Color(0xFF2C2C2E))
+
 @Composable
 fun AsterTheme(content: @Composable () -> Unit) {
     // Aster is dark everywhere, like the Apple apps.
-    MaterialTheme(colorScheme = Dark, typography = remember { asterTypography() }, content = content)
+    MaterialTheme(colorScheme = if (LocalIsTv.current) TvDark else Dark, typography = remember { asterTypography() }, content = content)
 }

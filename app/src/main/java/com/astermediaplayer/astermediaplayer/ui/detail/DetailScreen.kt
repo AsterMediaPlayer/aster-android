@@ -25,6 +25,11 @@ import com.astermediaplayer.astermediaplayer.ui.components.MetaLine
 import com.astermediaplayer.astermediaplayer.ui.components.episodeCode
 import com.astermediaplayer.astermediaplayer.ui.components.remainingText
 import com.astermediaplayer.astermediaplayer.ui.theme.ButtonGrey
+import com.astermediaplayer.astermediaplayer.ui.theme.LocalIsTv
+import com.astermediaplayer.astermediaplayer.ui.theme.tvFocus
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import com.astermediaplayer.astermediaplayer.ui.theme.DetailMetrics
 import com.astermediaplayer.astermediaplayer.ui.theme.Lockup
 import com.astermediaplayer.astermediaplayer.ui.theme.SecondaryText
@@ -369,8 +374,8 @@ fun DetailScreen(
             is Load.Failed -> ErrorBox(s.message, viewModel::load)
             is Load.Ready -> DetailBody(s.value, viewModel, onPlay, onPlayFromBeginning, onGoToSeries, onItem, onPlayTheme)
         }
-        // Over the art, so a dark round button like the Apple apps' back button.
-        IconButton(
+        // Over the art, so a dark round button like the Apple apps' back button; a TV has Back on its remote.
+        if (!LocalIsTv.current) IconButton(
             onClick = onBack,
             modifier = Modifier.statusBarsPadding().padding(start = Lockup.screenPadding, top = 4.dp)
                 .size(DetailMetrics.backButtonSize).clip(CircleShape).background(Color.Black.copy(alpha = 0.35f)),
@@ -432,6 +437,10 @@ private fun DetailBody(
     var selectedTab by rememberSaveable { mutableStateOf(DetailTab.Episodes.name) }
     val tab = tabs.firstOrNull { it.name == selectedTab } ?: tabs.first()
     val scroll = rememberScrollState()
+    val isTv = LocalIsTv.current
+    // On a TV the remote starts on Play, which is on the first screen.
+    val playFocus = remember { FocusRequester() }
+    if (isTv) LaunchedEffect(item.id) { runCatching { playFocus.requestFocus() } }
     // The Play button's middle across the screen, which the episode strip lines the next episode up under.
     var playCenterPx by remember { mutableStateOf<Float?>(null) }
 
@@ -454,15 +463,16 @@ private fun DetailBody(
         )
 
         Column(Modifier.fillMaxSize().verticalScroll(scroll)) {
-            if (landscape) {
+            if (landscape && !isTv) {
                 // Only the title shows over the art; the info is a scroll away.
                 Box(Modifier.fillMaxWidth().height(screenHeight)) {
                     DetailTitle(item, repo, Modifier.align(Alignment.BottomStart).navigationBarsPadding().padding(start = 24.dp, bottom = 24.dp))
                 }
-                DetailInfo(content, viewModel, onPlay, onPlayFromBeginning, onGoToSeries, onPlayTheme, showTitle = false) { playCenterPx = it }
+                DetailInfo(content, viewModel, onPlay, onPlayFromBeginning, onGoToSeries, onPlayTheme, showTitle = false, playFocus = playFocus) { playCenterPx = it }
             } else {
-                Column(Modifier.fillMaxWidth().heightIn(min = DetailMetrics.headerMinHeight), verticalArrangement = Arrangement.Bottom) {
-                    DetailInfo(content, viewModel, onPlay, onPlayFromBeginning, onGoToSeries, onPlayTheme, showTitle = true) { playCenterPx = it }
+                // A TV's header is the whole first screen, as on the Apple TV: the info sits at its foot over the art.
+                Column(Modifier.fillMaxWidth().heightIn(min = if (isTv) screenHeight else DetailMetrics.headerMinHeight), verticalArrangement = Arrangement.Bottom) {
+                    DetailInfo(content, viewModel, onPlay, onPlayFromBeginning, onGoToSeries, onPlayTheme, showTitle = true, playFocus = playFocus) { playCenterPx = it }
                 }
             }
             Column(
@@ -528,6 +538,7 @@ private fun DetailInfo(
     onGoToSeries: (UUID) -> Unit,
     onPlayTheme: (OpeningEnding) -> Unit,
     showTitle: Boolean,
+    playFocus: FocusRequester,
     onPlayCenter: (Float) -> Unit,
 ) {
     val repo = (LocalContext.current.applicationContext as AsterApp).repository
@@ -561,7 +572,8 @@ private fun DetailInfo(
         Column(Modifier.padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(DetailMetrics.actionRowSpacing)) {
             // A phone can't fit every action across, so the row scrolls sideways.
             Row(
-                Modifier.horizontalScroll(rememberScrollState()),
+                // A TV's focus ring sits outside the buttons, which the scrolling row would clip.
+                Modifier.horizontalScroll(rememberScrollState()).then(if (LocalIsTv.current) Modifier.padding(8.dp) else Modifier),
                 horizontalArrangement = Arrangement.spacedBy(DetailMetrics.actionSpacing), verticalAlignment = Alignment.CenterVertically,
             ) {
                 if (target != null) {
@@ -571,7 +583,7 @@ private fun DetailInfo(
                             else -> if (resumable) "Resume" else "Play"
                         },
                         Icons.Default.PlayArrow, prominent = true,
-                        modifier = Modifier.onGloballyPositioned { onPlayCenter(it.boundsInRoot().center.x) },
+                        modifier = Modifier.focusRequester(playFocus).onGloballyPositioned { onPlayCenter(it.boundsInRoot().center.x) },
                     ) { onPlay(target.id) }
                     if (resumable) ActionButton("From Beginning", Icons.Default.Replay) { onPlayFromBeginning(target.id) }
                 }
@@ -631,7 +643,7 @@ private fun DetailInfo(
 @Composable
 internal fun ActionButton(title: String, icon: ImageVector, modifier: Modifier = Modifier, prominent: Boolean = false, onClick: () -> Unit) {
     Row(
-        modifier.height(DetailMetrics.buttonHeight).clip(CircleShape).background(if (prominent) Color.White else ButtonGrey)
+        modifier.height(DetailMetrics.buttonHeight).tvFocus(DetailMetrics.buttonHeight / 2).clip(CircleShape).background(if (prominent) Color.White else ButtonGrey)
             .clickable(onClick = onClick).padding(horizontal = DetailMetrics.buttonHorizontalPadding),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
@@ -645,7 +657,7 @@ internal fun ActionButton(title: String, icon: ImageVector, modifier: Modifier =
 @Composable
 internal fun IconActionButton(icon: ImageVector, description: String, onClick: () -> Unit) {
     Box(
-        Modifier.size(DetailMetrics.iconButtonWidth, DetailMetrics.buttonHeight).clip(CircleShape).background(ButtonGrey).clickable(onClick = onClick),
+        Modifier.size(DetailMetrics.iconButtonWidth, DetailMetrics.buttonHeight).tvFocus(DetailMetrics.buttonHeight / 2).clip(CircleShape).background(ButtonGrey).clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) { Icon(icon, description, tint = Color.White, modifier = Modifier.size(20.dp)) }
 }
@@ -658,12 +670,14 @@ private fun SegmentedControl(labels: List<String>, selected: Int, onSelect: (Int
             .height(DetailMetrics.segmentedHeight).clip(CircleShape).background(Color.White.copy(alpha = 0.19f)).padding(2.dp),
     ) {
         labels.forEachIndexed { index, label ->
+            // Focused from a remote it lights white: the track clips a ring.
+            var focused by remember { mutableStateOf(false) }
             Box(
-                Modifier.weight(1f).fillMaxHeight().clip(CircleShape)
-                    .background(if (index == selected) Color.White.copy(alpha = 0.21f) else Color.Transparent)
+                Modifier.weight(1f).fillMaxHeight().onFocusChanged { focused = it.isFocused }.clip(CircleShape)
+                    .background(if (focused) Color.White.copy(alpha = 0.85f) else if (index == selected) Color.White.copy(alpha = 0.21f) else Color.Transparent)
                     .clickable { onSelect(index) },
                 contentAlignment = Alignment.Center,
-            ) { Text(label, style = Type.segmented, color = Color.White, maxLines = 1) }
+            ) { Text(label, style = Type.segmented, color = if (focused) Color.Black else Color.White, maxLines = 1) }
         }
     }
 }
@@ -680,7 +694,7 @@ private fun EpisodesSection(content: DetailContent, viewModel: DetailViewModel, 
                     val active = season.id == content.selectedSeason
                     // The Apple apps' bordered buttons: white tint (black text) when picked, grey tint otherwise.
                     Box(
-                        Modifier.height(DetailMetrics.seasonPillHeight).clip(CircleShape)
+                        Modifier.height(DetailMetrics.seasonPillHeight).tvFocus(DetailMetrics.seasonPillHeight / 2).clip(CircleShape)
                             .background((if (active) Color.White else ButtonGrey).copy(alpha = 0.25f))
                             .clickable { viewModel.selectSeason(season.id) }.padding(horizontal = DetailMetrics.seasonPillHorizontalPadding),
                         contentAlignment = Alignment.Center,
@@ -827,7 +841,7 @@ private fun ThemeCard(oe: OpeningEnding, onClick: () -> Unit) {
         is OpeningEnding.Chapter -> oe.clip.title to "%d:%02d".format(oe.clip.seconds / 60, oe.clip.seconds % 60)
     }
     Row(
-        Modifier.width(240.dp).clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceVariant)
+        Modifier.width(240.dp).tvFocus(12.dp).clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceVariant)
             .clickable(enabled = playable, onClick = onClick).padding(14.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically,
     ) {
