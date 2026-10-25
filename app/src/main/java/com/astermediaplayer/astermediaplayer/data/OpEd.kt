@@ -196,6 +196,11 @@ object OpeningsEndings {
     }
 
     private fun mark(name: String?): Mark? {
+        // Emby's intro detection writes "Intro Start" and "Intro End" chapters: the start is a definite opening, ending where the
+        // "Intro End" chapter begins, and the end itself is nothing.
+        val lower = name?.lowercase()?.trim()
+        if (lower == "intro start") return Mark(opening = true, definite = true)
+        if (lower == "intro end") return null
         val first = name?.lowercase()?.split(Regex("[^\\p{L}]+"))?.firstOrNull { it.isNotEmpty() } ?: return null
         return when (first) {
             in openingWords -> Mark(opening = true, definite = true)

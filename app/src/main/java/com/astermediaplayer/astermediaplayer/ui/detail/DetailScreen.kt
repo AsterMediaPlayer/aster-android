@@ -140,6 +140,7 @@ import com.astermediaplayer.astermediaplayer.data.OpEdTheme
 import com.astermediaplayer.astermediaplayer.data.OpeningEnding
 import com.astermediaplayer.astermediaplayer.data.OpeningsEndings
 import com.astermediaplayer.astermediaplayer.data.isAnime
+import com.astermediaplayer.astermediaplayer.data.isAnimeTitle
 import com.astermediaplayer.astermediaplayer.ui.components.ErrorBox
 import com.astermediaplayer.astermediaplayer.ui.components.Load
 import com.astermediaplayer.astermediaplayer.ui.components.LoadingBox
@@ -256,8 +257,8 @@ class DetailViewModel(private val repo: AsterRepository, private val itemId: UUI
     private val seasonThemes = mutableMapOf<UUID, List<OpEdTheme>>()
 
     private suspend fun isAnime(item: BaseItemDto): Boolean = when (item.type) {
-        BaseItemKind.SERIES -> item.isAnime()
-        BaseItemKind.EPISODE -> item.seriesId?.let { runCatching { repo.item(it).isAnime() }.getOrDefault(false) } == true
+        BaseItemKind.SERIES -> repo.isAnimeTitle(item)
+        BaseItemKind.EPISODE -> item.seriesId?.let { runCatching { repo.isAnimeTitle(repo.item(it)) }.getOrDefault(false) } == true
         else -> false
     }
 

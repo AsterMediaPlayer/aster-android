@@ -1140,6 +1140,15 @@ class AsterRepository(context: Context, private val store: SessionStore) {
     }
 }
 
+/**
+ * Whether a title is anime. Jellyfin's Shoko match is the sign; Emby has no Shoko, writes the provider ids in its own case
+ * ("anidb"), and often has only the genre.
+ */
+fun AsterRepository.isAnimeTitle(item: BaseItemDto): Boolean =
+    item.isAnime() || (serverKind == ServerKind.Emby &&
+        (item.providerIds?.keys?.any { it.lowercase() in setOf("anidb", "anilist", "myanimelist") } == true ||
+            item.genres?.any { it.equals("Anime", ignoreCase = true) } == true))
+
 /** Matched by Shoko, which also records the AniDB id: how the app tells anime from other shows and films. */
 fun BaseItemDto.isAnime(): Boolean = providerIds?.keys?.any { it == "AniDB" || it.startsWith("Shoko") } == true
 
