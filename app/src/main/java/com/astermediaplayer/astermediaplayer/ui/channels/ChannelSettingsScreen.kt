@@ -30,6 +30,12 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import com.astermediaplayer.astermediaplayer.AsterApp
 import com.astermediaplayer.astermediaplayer.data.channels.BugCorner
+import com.astermediaplayer.astermediaplayer.data.channels.BumperPlacement
+import com.astermediaplayer.astermediaplayer.data.channels.BreakKind
+import com.astermediaplayer.astermediaplayer.data.channels.ChannelBreaks
+import com.astermediaplayer.astermediaplayer.data.channels.ChannelContent
+import com.astermediaplayer.astermediaplayer.ui.detail.MenuHost
+import com.astermediaplayer.astermediaplayer.ui.detail.MenuItem
 import com.astermediaplayer.astermediaplayer.data.channels.ChannelLineup
 import com.astermediaplayer.astermediaplayer.data.channels.ChannelMode
 import com.astermediaplayer.astermediaplayer.data.channels.ChannelReshuffle
@@ -42,7 +48,10 @@ import com.astermediaplayer.astermediaplayer.ui.theme.Lockup
 import com.astermediaplayer.astermediaplayer.ui.theme.SecondaryText
 import com.astermediaplayer.astermediaplayer.ui.theme.Type
 import com.astermediaplayer.astermediaplayer.data.channels.ChannelTagParsing
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import java.util.UUID
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -62,6 +71,18 @@ class ChannelSettingsViewModel(private val app: AsterApp) : ViewModel() {
         val admin: Boolean = false,
         /** A save the server refused: the page turns read-only. */
         val refused: Boolean = false,
+        /** What a channel can be filled from or limited to, by name. */
+        val genres: List<String> = emptyList(),
+        val libraries: List<String> = emptyList(),
+        val networks: List<String> = emptyList(),
+        val collections: List<String> = emptyList(),
+        val ratings: List<String> = emptyList(),
+        val users: List<String> = emptyList(),
+        val series: List<Pair<UUID, String>> = emptyList(),
+        /** New Channel is making one. */
+        val creating: Boolean = false,
+        /** The playlist New Channel just made: the page opens it. */
+        val created: String? = null,
     )
 
     private val _state = MutableStateFlow(State())
@@ -75,11 +96,63 @@ class ChannelSettingsViewModel(private val app: AsterApp) : ViewModel() {
                 val admin = app.repository.isAdministrator()
                 val playlists = app.repository.videoPlaylists()
                 _state.update { it.copy(playlists = playlists, admin = admin, loaded = true, error = null) }
+                loadChoices()
             } catch (e: Exception) {
                 _state.update { it.copy(loaded = true, error = e.message ?: "Couldn't load") }
             }
         }
     }
+
+    /** The lists the pickers offer; one that fails to load is just empty. */
+    private suspend fun loadChoices() = coroutineScope {
+        val repo = app.repository
+        val genres = async { runCatching { repo.videoGenres() }.getOrDefault(emptyList()) }
+        val views = async { runCatching { repo.views() }.getOrDefault(emptyList()) }
+        val studios = async { runCatching { repo.videoStudios() }.getOrDefault(emptyList()) }
+        val boxSets = async { runCatching { repo.collections() }.getOrDefault(emptyList()) }
+        val ratings = async { runCatching { repo.videoRatings() }.getOrDefault(emptyList()) }
+        val users = async { repo.userNames() }
+        val series = async { runCatching { repo.seriesList() }.getOrDefault(emptyList()) }
+        // Video libraries only: a genre channel plays movies and episodes.
+        val skipped = setOf("music", "books", "livetv", "playlists", "boxsets", "musicvideos")
+        _state.update {
+            it.copy(
+                genres = genres.await().mapNotNull { g -> g.name }, networks = studios.await().mapNotNull { s -> s.name },
+                libraries = views.await().filter { v -> v.collectionType?.serialName?.lowercase() !in skipped }.mapNotNull { v -> v.name },
+                // Empty collections (book series often are, to video) are left out.
+                collections = boxSets.await().filter { c -> (c.childCount ?: 1) > 0 }.mapNotNull { c -> c.name },
+                ratings = ratings.await(), users = users.await(), series = series.await().mapNotNull { s -> s.name?.let { n -> s.id to n } },
+            )
+        }
+    }
+
+    /** New Channel: a playlist of a show's episodes, or an empty one filled from a genre, network or collection, numbered next. */
+    fun create(source: NewChannelSource, name: String, seriesId: UUID? = null) {
+        val current = _state.value
+        if (!current.admin || current.refused || current.creating) return
+        _state.update { it.copy(creating = true) }
+        viewModelScope.launch {
+            try {
+                var tags = ChannelTags(isChannel = true, number = (numbers(current.playlists).values.maxOrNull() ?: 0) + 1)
+                tags = when (source) {
+                    NewChannelSource.Show -> tags.copy(showsLogo = true)
+                    NewChannelSource.Genre -> tags.copy(genres = listOf(name))
+                    NewChannelSource.Network -> tags.copy(networks = listOf(name))
+                    NewChannelSource.Collection -> tags.copy(collections = listOf(name))
+                }
+                val episodes = if (seriesId != null) app.repository.seriesEpisodes(seriesId).map { it.id } else emptyList()
+                val id = app.repository.createVideoPlaylist(name, episodes)
+                app.repository.setTags(id, tags.applied(emptyList()))
+                val playlists = app.repository.videoPlaylists()
+                _state.update { it.copy(playlists = playlists, creating = false, created = id.toString().replace("-", "")) }
+                app.channels.load(app.repository.session?.userName, force = true)
+            } catch (e: Exception) {
+                _state.update { it.copy(creating = false, error = e.message ?: "Couldn't make the channel") }
+            }
+        }
+    }
+
+    fun opened() = _state.update { it.copy(created = null) }
 
     /** Applies [change] to a playlist's channel tags and saves them; the page shows the change at once and undoes it if the save fails. */
     fun update(playlist: BaseItemDto, change: (ChannelTags) -> ChannelTags) {
@@ -153,7 +226,9 @@ fun ChannelSettingsScreen(viewModel: ChannelSettingsViewModel, only: String?, mo
     val u = Lockup.tvUnit
     val canEdit = state.admin && !state.refused
     var expanded by remember(only) { mutableStateOf(if (only != null) setOf(only) else emptySet<String>()) }
+    // Which of a channel's folded sections are open, as "plays|<id>" or "advanced|<id>".
     var folded by remember { mutableStateOf(setOf<String>()) }
+    LaunchedEffect(state.created) { state.created?.let { expanded = expanded + it; viewModel.opened() } }
     val first = remember { FocusRequester() }
     LaunchedEffect(state.loaded) {
         if (!state.loaded) return@LaunchedEffect
@@ -185,6 +260,7 @@ fun ChannelSettingsScreen(viewModel: ChannelSettingsViewModel, only: String?, mo
                 if (!state.admin) Note("Only your server's administrator can set up channels. Ask them to, here or in Jellyfin.")
                 else if (state.refused) Note("The server wouldn't save that, so channels are read-only now.")
                 if (only != null && shownChannels.isEmpty()) Note("This playlist isn't a channel any more. Turn it back on in Edit Channels.")
+                if (only == null && canEdit) NewChannel(state, viewModel)
                 shownChannels.forEachIndexed { index, (playlist, tags) ->
                     val id = playlist.plainId()
                     val open = id in expanded
@@ -194,7 +270,7 @@ fun ChannelSettingsScreen(viewModel: ChannelSettingsViewModel, only: String?, mo
                         onClick = { expanded = if (open) expanded - id else expanded + id },
                     )
                     Note(summary(playlist, tags))
-                    if (open) ChannelSettingsRows(viewModel, playlist, tags, channels.mapNotNull { it.second.group }, numbers[id] ?: 0, canEdit, id in folded) { folded = if (id in folded) folded - id else folded + id }
+                    if (open) ChannelSettingsRows(viewModel, state, playlist, tags, channels.mapNotNull { it.second.group }, numbers[id] ?: 0, canEdit, folded.filter { it.endsWith("|$id") }.map { it.substringBefore("|") }.toSet()) { key -> val k = "$key|$id"; folded = if (k in folded) folded - k else folded + k }
                 }
                 if (only == null && others.isNotEmpty()) {
                     TvGroup(if (channels.isEmpty()) "Video Playlists" else "More Playlists")
@@ -236,14 +312,29 @@ private fun summary(playlist: BaseItemDto, tags: ChannelTags): String {
     if (tags.showsLogo) parts += "Logo"
     if (tags.showsBug) parts += "Bug"
     if (tags.users.isNotEmpty()) parts += "Only " + tags.users.joinToString(", ")
+    if (tags.hasBreaks) parts += if (tags.breaks.align > 0) "Breaks, " + alignTitle(tags.breaks.align).lowercase() else "Breaks"
     return parts.joinToString(" · ")
 }
 
-/** An open channel's settings: the essentials, then the rest folded away until asked for. */
+/** "On the Half Hour", "On the Hour", "Every 15 Minutes". */
+private fun alignTitle(minutes: Int) = when (minutes) { 30 -> "On the Half Hour"; 60 -> "On the Hour"; else -> "Every $minutes Minutes" }
+
+/** "Any Year", "1980s", "1985–1999" or "1994". */
+private fun yearsTitle(years: IntRange?) = when {
+    years == null -> "Any Year"
+    years.count() == 1 -> "${years.first}"
+    years.first % 10 == 0 && years.count() == 10 -> "${years.first}s"
+    else -> "${years.first}–${years.last}"
+}
+
+private val yearChoices: List<IntRange?> = listOf(null) + (1950..2020 step 10).map { it..it + 9 }
+private val commercialChoices = listOf(0, 1, 2, 3, 4, 5, 6, 8, 10, 15, 20, 30)
+
+/** An open channel's settings: the essentials, what it plays, then the rest folded away until asked for. */
 @Composable
 private fun ChannelSettingsRows(
-    viewModel: ChannelSettingsViewModel, playlist: BaseItemDto, tags: ChannelTags, groups: List<String>, number: Int,
-    canEdit: Boolean, advancedOpen: Boolean, toggleAdvanced: () -> Unit,
+    viewModel: ChannelSettingsViewModel, state: ChannelSettingsViewModel.State, playlist: BaseItemDto, tags: ChannelTags, groups: List<String>, number: Int,
+    canEdit: Boolean, open: Set<String>, toggle: (String) -> Unit,
 ) {
     fun change(edit: (ChannelTags) -> ChannelTags) = viewModel.update(playlist, edit)
     var naming by remember { mutableStateOf<String?>(null) }
@@ -255,11 +346,38 @@ private fun ChannelSettingsRows(
     TvRow("New Group", null, enabled = canEdit) { naming = "group" }
     val numberOptions = (1..maxOf(99, number)).toList()
     TvChoiceRowIf(canEdit, "Number", numberOptions.map { "$it" }, ((tags.number ?: number) - 1).coerceIn(0, numberOptions.lastIndex)) { i -> change { it.copy(number = numberOptions[i]) } }
+
+    TvRow("What It Plays", (tags.genres + tags.networks + tags.collections).joinToString(", ").ifEmpty { "Just the Playlist" }, onClick = { toggle("plays") })
+    if ("plays" in open) {
+        TvMultiRow(canEdit, "Genres", state.genres, tags.genres, "None") { v -> change { it.copy(genres = v) } }
+        TvMultiRow(canEdit, "Networks", state.networks, tags.networks, "None") { v -> change { it.copy(networks = v) } }
+        TvMultiRow(canEdit, "Collections", state.collections, tags.collections, "None") { v -> change { it.copy(collections = v) } }
+        if (tags.hasSources) {
+            TvChoiceRowIf(canEdit, "Content", ChannelContent.entries.map { it.title }, ChannelContent.entries.indexOf(tags.content)) { i -> change { it.copy(content = ChannelContent.entries[i]) } }
+            if (tags.genres.isNotEmpty() || tags.networks.isNotEmpty()) TvMultiRow(canEdit, "Libraries", state.libraries, tags.libraries, "All") { v -> change { it.copy(libraries = v) } }
+            val years = withCurrent(yearChoices, tags.years)
+            TvChoiceRowIf(canEdit, "Years", years.map(::yearsTitle), years.indexOf(tags.years)) { i -> change { it.copy(years = years[i]) } }
+            TvMultiRow(canEdit, "Ratings", state.ratings, tags.ratings, "Any") { v -> change { it.copy(ratings = v) } }
+        }
+    }
     TvChoiceRowIf(canEdit, "Mode", ChannelMode.entries.map { it.title }, ChannelMode.entries.indexOf(tags.mode)) { i -> change { it.copy(mode = ChannelMode.entries[i]) } }
     TvSwitchRow("Playlist Picture as Logo", tags.showsLogo, enabled = canEdit) { on -> change { it.copy(showsLogo = on) } }
     TvSwitchRow("Logo in the Corner While Playing", tags.showsBug, enabled = canEdit) { on -> change { it.copy(showsBug = on) } }
-    TvRow("Advanced", if (advancedOpen) "Hide" else "Show", onClick = toggleAdvanced)
-    if (advancedOpen) {
+
+    // Breaks: the filler playlists (tagged aster:filler) whose clips play between programmes.
+    val fillers = state.playlists.filter { ChannelTagParsing.isFillerPlaylist(it.tags) }.mapNotNull { it.name }
+    val fillerOptions = fillers + tags.fillerPlaylists.filter { n -> fillers.none { it.equals(n, ignoreCase = true) } }
+    if (fillerOptions.isNotEmpty()) TvMultiRow(canEdit, "Breaks", fillerOptions, tags.fillerPlaylists, "Off") { names ->
+        change { t ->
+            val turningOn = t.fillerPlaylists.isEmpty() && names.isNotEmpty()
+            val next = t.copy(fillerPlaylists = names)
+            // Lined up on the half hour, best effort: how a channel with breaks usually wants to run.
+            if (turningOn && t.breaks.align == 0) next.copy(breaks = next.breaks.copy(align = 30, exactAlign = false)) else next
+        }
+    }
+
+    TvRow("Advanced", if ("advanced" in open) "Hide" else "Show", onClick = { toggle("advanced") })
+    if ("advanced" in open) {
         if (tags.mode == ChannelMode.Blocks) {
             val options = withCurrent(blockChoices, tags.blocks)
             TvChoiceRowIf(canEdit, "Episodes in a Row", options.map(::blocksTitle), options.indexOf(tags.blocks)) { i -> change { it.copy(blocks = options[i]) } }
@@ -281,6 +399,34 @@ private fun ChannelSettingsRows(
             val size = withCurrent(bugSizeChoices, tags.bugSize, sort = true)
             TvChoiceRowIf(canEdit, "Logo Size", size.map { "$it%" }, size.indexOf(tags.bugSize)) { i -> change { it.copy(bugSize = size[i]) } }
         }
+        if (tags.fillerPlaylists.isNotEmpty()) {
+            TvMultiRow(canEdit, "Filler Types", BreakKind.entries.map { it.title }, BreakKind.entries.filter { it in tags.fillerTypes }.map { it.title }, "All") { titles ->
+                val kinds = BreakKind.entries.filter { it.title in titles }.toSet()
+                change { it.copy(fillerTypes = kinds.ifEmpty { BreakKind.entries.toSet() }) }
+            }
+        }
+        if (tags.hasBreaks) {
+            val b = tags.breaks
+            fun breaks(edit: (ChannelBreaks) -> ChannelBreaks) = change { it.copy(breaks = edit(it.breaks)) }
+            val counts = (0..ChannelTags.MOST_PROMOS).toList()
+            if (BreakKind.Bumpers in tags.fillerTypes) TvChoiceRowIf(canEdit, "Bumpers", BumperPlacement.entries.map { it.title }, BumperPlacement.entries.indexOf(b.bumpersAt)) { i -> breaks { it.copy(bumpersAt = BumperPlacement.entries[i]) } }
+            if (BreakKind.Commercials in tags.fillerTypes) {
+                val minutes = withCurrent(commercialChoices, b.minutes, sort = true)
+                TvChoiceRowIf(canEdit, "Commercial Time", minutes.map { if (it == 0) "None" else lengthTitle(it) }, minutes.indexOf(b.minutes)) { i -> breaks { it.copy(minutes = minutes[i]) } }
+            }
+            if (BreakKind.Promos in tags.fillerTypes) TvChoiceRowIf(canEdit, "Promos per Break", counts.map { "$it" }, b.promoCount) { i -> breaks { it.copy(promoCount = counts[i]) } }
+            if (BreakKind.Trailers in tags.fillerTypes) TvChoiceRowIf(canEdit, "Trailers per Break", counts.map { "$it" }, b.trailerCount) { i -> breaks { it.copy(trailerCount = counts[i]) } }
+            val aligns = listOf(0) + ChannelTags.ALIGNMENTS
+            TvChoiceRowIf(canEdit, "Line Up", aligns.map { if (it == 0) "Off" else alignTitle(it) }, aligns.indexOf(b.align)) { i -> breaks { it.copy(align = aligns[i]) } }
+            if (b.align > 0) TvChoiceRowIf(canEdit, "Fit", listOf("Best Effort", "Exact"), if (b.exactAlign) 1 else 0) { i -> breaks { it.copy(exactAlign = i == 1) } }
+            if (b.align == 0) {
+                if (BreakKind.Interstitials in tags.fillerTypes) TvChoiceRowIf(canEdit, "Interstitials per Break", counts.map { "$it" }, b.interstitialCount) { i -> breaks { it.copy(interstitialCount = counts[i]) } }
+                val gaps = (1..ChannelTags.LONGEST_BREAK_GAP).toList()
+                TvChoiceRowIf(canEdit, "Break After", gaps.map { if (it == 1) "Every Programme" else "Every $it Programmes" }, (b.every - 1).coerceIn(0, gaps.lastIndex)) { i -> breaks { it.copy(every = gaps[i]) } }
+            }
+        }
+        val users = state.users + tags.users.filter { n -> state.users.none { it.equals(n, ignoreCase = true) } }
+        if (users.isNotEmpty()) TvMultiRow(canEdit, "Users", users, tags.users, "Everyone") { v -> change { it.copy(users = v) } }
         Note("Every setting is a tag on the playlist in Jellyfin, so you can change it there too.")
     }
     naming?.let { field ->
@@ -295,6 +441,57 @@ private fun ChannelSettingsRows(
                 if (field == "name") change { it.copy(name = value) } else if (value != null) change { it.copy(group = value) }
             },
         )
+    }
+}
+
+/** What New Channel can make a channel from. */
+enum class NewChannelSource(val title: String) {
+    Show("From a Show"), Genre("From a Genre"), Network("From a Network"), Collection("From a Collection"),
+}
+
+/** New Channel: what to make it from, then which one; picking it makes the channel and opens it here. */
+@Composable
+private fun NewChannel(state: ChannelSettingsViewModel.State, viewModel: ChannelSettingsViewModel) {
+    TvGroup("New Channel")
+    NewChannelSource.entries.forEach { source ->
+        val names = when (source) {
+            NewChannelSource.Show -> state.series.map { it.second }
+            NewChannelSource.Genre -> state.genres
+            NewChannelSource.Network -> state.networks
+            NewChannelSource.Collection -> state.collections
+        }
+        var open by remember { mutableStateOf(false) }
+        Box {
+            TvRow(source.title, if (state.creating) "Making…" else null, enabled = !state.creating && names.isNotEmpty(), onClick = { open = true })
+            MenuHost(expanded = open, onDismiss = { open = false }, below = true) {
+                names.forEachIndexed { i, name ->
+                    MenuItem(name, null, first = i == 0) {
+                        open = false
+                        viewModel.create(source, name, if (source == NewChannelSource.Show) state.series[i].first else null)
+                    }
+                }
+            }
+        }
+    }
+    Note("A show plays its episodes in order; a genre, network or collection plays every movie and show in it. Each is shared with everyone on your server.")
+}
+
+/** A row of several choices: OK opens the menu, each press checks or unchecks one and the menu stays open. */
+@Composable
+private fun TvMultiRow(canEdit: Boolean, title: String, options: List<String>, selection: List<String>, none: String, onChange: (List<String>) -> Unit) {
+    val value = selection.joinToString(", ").ifEmpty { none }
+    if (!canEdit || options.isEmpty()) { TvRow(title, value, enabled = false) {}; return }
+    var open by remember { mutableStateOf(false) }
+    Box {
+        TvRow(title, value, onClick = { open = true })
+        MenuHost(expanded = open, onDismiss = { open = false }, below = true) {
+            options.forEachIndexed { i, name ->
+                val on = selection.any { it.equals(name, ignoreCase = true) }
+                MenuItem(name, null, first = i == 0, checked = on) {
+                    onChange(if (on) selection.filterNot { it.equals(name, ignoreCase = true) } else options.filter { o -> o == name || selection.any { it.equals(o, ignoreCase = true) } })
+                }
+            }
+        }
     }
 }
 

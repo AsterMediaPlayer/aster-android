@@ -198,6 +198,36 @@ class AsterRepository(context: Context, private val store: SessionStore) {
         }.awaitAll().flatten().sortedByDescending { it.dateCreated }.take(limit)
     }
 
+    /** The official ratings of the server's movies and shows, the most used first, for a channel's rating filter. */
+    suspend fun videoRatings(): List<String> = allItems(
+        GetItemsRequest(
+            userId = userId, recursive = true, includeItemTypes = listOf(BaseItemKind.MOVIE, BaseItemKind.SERIES),
+            enableImages = false, enableUserData = false,
+        ),
+    ).mapNotNull { it.officialRating?.takeIf(String::isNotEmpty) }.groupingBy { it }.eachCount().entries
+        .sortedWith(compareBy({ -it.value }, { it.key })).map { it.key }
+
+    /** Every show on the server, by name, for New Channel's From a Show. */
+    suspend fun seriesList(): List<BaseItemDto> = allItems(
+        GetItemsRequest(
+            userId = userId, recursive = true, includeItemTypes = listOf(BaseItemKind.SERIES), sortBy = listOf(ItemSortBy.SORT_NAME),
+            enableImages = false, enableUserData = false,
+        ),
+    )
+
+    /** The server's user names, for restricting a channel to some of them; only an administrator may list them. */
+    suspend fun userNames(): List<String> =
+        runCatching { api.userApi.getUsers().content.mapNotNull { it.name } }.getOrDefault(emptyList()).sortedWith(String.CASE_INSENSITIVE_ORDER)
+
+    /** A new public video playlist holding [itemIds], as a channel's playlist; its id. */
+    suspend fun createVideoPlaylist(name: String, itemIds: List<UUID>): UUID =
+        api.playlistApi.createPlaylist(
+            org.jellyfin.sdk.model.api.CreatePlaylistDto(name = name, ids = itemIds, users = emptyList(), userId = userId, mediaType = org.jellyfin.sdk.model.api.MediaType.VIDEO, isPublic = true),
+        ).content.id.let { id ->
+            // The server answers with 32 hex digits, no dashes.
+            UUID.fromString(if (id.length == 32) "${id.substring(0, 8)}-${id.substring(8, 12)}-${id.substring(12, 16)}-${id.substring(16, 20)}-${id.substring(20)}" else id)
+        }
+
     /** Whether this account is the server's administrator, who alone can change the tags that make a playlist a channel. */
     suspend fun isAdministrator(): Boolean =
         runCatching { api.userApi.getCurrentUser().content.policy?.isAdministrator == true }.getOrDefault(false)
