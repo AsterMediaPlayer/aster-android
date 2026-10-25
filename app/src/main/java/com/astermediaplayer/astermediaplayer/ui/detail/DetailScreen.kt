@@ -660,9 +660,14 @@ private fun DetailInfo(
                         flow.Dialogs()
                     }
                 }
+                // On a TV, Watch OP and Watch ED end the action row, as on the Apple TV; elsewhere they have a row of their own.
+                if (tv) {
+                    content.watchOpening?.let { ActionButton("Watch OP", Icons.Default.MusicVideo) { onPlayTheme(it) } }
+                    content.watchEnding?.let { ActionButton("Watch ED", Icons.AutoMirrored.Filled.QueueMusic) { onPlayTheme(it) } }
+                }
                 if (!isSeries) remainingText(item)?.let { Text(it, style = Type.callout, color = SecondaryText, maxLines = 1) }
             }
-            if (content.watchOpening != null || content.watchEnding != null) {
+            if (!tv && (content.watchOpening != null || content.watchEnding != null)) {
                 Row(horizontalArrangement = Arrangement.spacedBy(DetailMetrics.themeButtonSpacing)) {
                     content.watchOpening?.let { ActionButton("Watch OP", Icons.Default.MusicVideo) { onPlayTheme(it) } }
                     content.watchEnding?.let { ActionButton("Watch ED", Icons.AutoMirrored.Filled.QueueMusic) { onPlayTheme(it) } }
