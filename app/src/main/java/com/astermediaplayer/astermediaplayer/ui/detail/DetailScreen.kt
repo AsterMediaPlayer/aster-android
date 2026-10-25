@@ -817,13 +817,38 @@ private fun EpisodeStrip(season: List<BaseItemDto>, currentId: UUID, playCenterP
     Shelf("Episodes", episodes, landscape = true, onItem = { onPlay(it.id) }, listState = state, showSeriesTitle = false)
 }
 
-/** An anime title's openings and endings, as a list of cards. */
+/**
+ * An anime title's openings and endings: a list of cards, and beside it (a TV) or above it (a phone) a Now Playing panel
+ * once one plays. A card plays in the panel, then the rest follow it; the panel stops with the page.
+ */
 @Composable
 private fun MusicSection(content: DetailContent, onPlayTheme: (OpeningEnding) -> Unit) {
+    val app = LocalContext.current.applicationContext as AsterApp
+    val deck = app.themeDeck
+    val tv = LocalIsTv.current
+    // Away from the page it goes quiet; the full-screen buttons (Watch OP, Watch ED) start their own player.
+    DisposableEffect(content.item.id) { onDispose { deck.stop() } }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_STOP) deck.pause() }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    val artwork = remember(content.item.id) { app.repository.imageUrl(content.item, ImageType.PRIMARY, 640) ?: app.repository.imageUrl(content.item, ImageType.BACKDROP, 640) }
+    val cards: @Composable (Modifier) -> Unit = { modifier ->
+        Column(modifier, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            content.openingsEndings.forEach { oe -> ThemeCard(oe, onClick = { deck.play(oe, content.openingsEndings, content.item) }) }
+        }
+    }
     Column(verticalArrangement = Arrangement.spacedBy(Lockup.shelfTitleSpacing)) {
         Text("Openings & Endings", style = Type.title3, modifier = Modifier.padding(horizontal = Lockup.screenPadding))
-        Column(Modifier.padding(horizontal = Lockup.screenPadding), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            content.openingsEndings.forEach { oe -> ThemeCard(oe, onClick = { onPlayTheme(oe) }) }
+        if (tv) Row(Modifier.padding(start = Lockup.screenPadding, end = Lockup.screenPadding, bottom = 48.dp), horizontalArrangement = Arrangement.spacedBy(32.dp)) {
+            cards(Modifier.width(560.dp))
+            // The screen is short: the facts under the controls are left for a phone.
+            if (deck.isActive) ThemeNowPlayingPanel(deck, artwork, Modifier.width(460.dp), showDetails = false)
+        } else Column(Modifier.padding(horizontal = Lockup.screenPadding), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            if (deck.isActive) ThemeNowPlayingPanel(deck, artwork, Modifier.fillMaxWidth())
+            cards(Modifier)
         }
     }
 }
@@ -927,7 +952,7 @@ private fun ThemeCard(oe: OpeningEnding, onClick: () -> Unit) {
         is OpeningEnding.Chapter -> oe.clip.title to "%d:%02d".format(oe.clip.seconds / 60, oe.clip.seconds % 60)
     }
     Row(
-        Modifier.width(240.dp).tvFocus(12.dp).clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceVariant)
+        Modifier.widthIn(min = 240.dp).fillMaxWidth().tvFocus(12.dp).clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceVariant)
             .clickable(enabled = playable, onClick = onClick).padding(14.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically,
     ) {

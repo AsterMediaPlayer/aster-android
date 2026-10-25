@@ -128,13 +128,14 @@ class ThemePlayer(private val context: Context, private val repo: AsterRepositor
         startFallbackVideo(id, stream.url, themeKey, sound, loop = stream.start..stream.end)
     }
 
-    private class ClipStream(val url: String, val start: Long, val end: Long)
+    /** An episode's stream for a chapter clip, and the stretch of it to play, in the stream's own time. */
+    class ClipStream(val url: String, val start: Long, val end: Long)
 
     /**
      * Episodes are mostly MKV, so the server's stream (usually a cheap remux) is used unless the file plays as is.
      * A direct stream loops between the clip's own times; a transcode starts at the clip, so it loops from zero.
      */
-    private suspend fun clipStream(clip: ThemeClip): ClipStream? {
+    suspend fun clipStream(clip: ThemeClip): ClipStream? {
         val info = runCatching {
             repo.playbackInfo(clip.episode.id, clip.startMs * 10_000L, CLIP_BITRATE, subtitleStreamIndex = -1)
         }.getOrNull() ?: return null
@@ -228,7 +229,8 @@ class ThemePlayer(private val context: Context, private val repo: AsterRepositor
 
     // MARK: Players
 
-    private fun newPlayer(): ExoPlayer = ExoPlayer.Builder(context, PlayerViewModel.renderersFactory(context))
+    /** A player that signs its requests like the app's others. */
+    fun newPlayer(): ExoPlayer = ExoPlayer.Builder(context, PlayerViewModel.renderersFactory(context))
         .setMediaSourceFactory(
             DefaultMediaSourceFactory(
                 DefaultHttpDataSource.Factory().setDefaultRequestProperties(mapOf("X-Emby-Token" to repo.session!!.accessToken)),
