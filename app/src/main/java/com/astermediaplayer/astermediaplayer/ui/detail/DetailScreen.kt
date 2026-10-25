@@ -944,15 +944,16 @@ private fun TvTabBar(labels: List<String>, selected: Int, onSelect: (Int) -> Uni
 
 /** A menu over its button: Material's drop-down, or on a TV the Apple TV's glass panel above the button. */
 @Composable
-private fun MenuHost(expanded: Boolean, onDismiss: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
+internal fun MenuHost(expanded: Boolean, onDismiss: () -> Unit, below: Boolean = false, content: @Composable ColumnScope.() -> Unit) {
     if (!LocalIsTv.current) { DropdownMenu(expanded = expanded, onDismissRequest = onDismiss, content = content); return }
     if (!expanded) return
     val u = Lockup.tvUnit
     val gap = (12f * u * LocalDensity.current.density).toInt()
-    val above = remember(gap) {
+    val above = remember(gap, below) {
         object : PopupPositionProvider {
             override fun calculatePosition(anchorBounds: IntRect, windowSize: IntSize, layoutDirection: LayoutDirection, popupContentSize: IntSize) =
-                IntOffset(anchorBounds.left, (anchorBounds.top - popupContentSize.height - gap).coerceAtLeast(0))
+                if (below) IntOffset(anchorBounds.left.coerceAtMost(windowSize.width - popupContentSize.width), anchorBounds.bottom + gap)
+                else IntOffset(anchorBounds.left, (anchorBounds.top - popupContentSize.height - gap).coerceAtLeast(0))
         }
     }
     val shape = RoundedCornerShape((50f * u).dp)
@@ -970,8 +971,8 @@ private fun MenuHost(expanded: Boolean, onDismiss: () -> Unit, content: @Composa
 
 /** One entry of a [MenuHost]; on a TV a row that turns into a white pill when focused, the first one taking the remote. */
 @Composable
-private fun ColumnScope.MenuItem(text: String, icon: ImageVector, first: Boolean = true, onClick: () -> Unit) {
-    if (!LocalIsTv.current) { DropdownMenuItem(text = { Text(text) }, leadingIcon = { Icon(icon, null) }, onClick = onClick); return }
+internal fun ColumnScope.MenuItem(text: String, icon: ImageVector?, first: Boolean = true, checked: Boolean = false, onClick: () -> Unit) {
+    if (!LocalIsTv.current) { DropdownMenuItem(text = { Text(if (checked) "✓ $text" else text) }, leadingIcon = icon?.let { { Icon(it, null) } }, onClick = onClick); return }
     val u = Lockup.tvUnit
     var focused by remember { mutableStateOf(false) }
     val focus = remember { FocusRequester() }
@@ -984,7 +985,7 @@ private fun ColumnScope.MenuItem(text: String, icon: ImageVector, first: Boolean
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy((14f * u).dp),
     ) {
         val tint = if (focused) Color.Black else Color.White
-        Icon(icon, null, tint = tint, modifier = Modifier.size((38f * u).dp))
+        Box(Modifier.size((38f * u).dp)) { if (icon != null) Icon(icon, null, tint = tint, modifier = Modifier.fillMaxSize()) else if (checked) Icon(Icons.Default.Check, null, tint = tint, modifier = Modifier.fillMaxSize()) }
         Text(text, style = Type.callout.copy(fontSize = (25f * u).sp, lineHeight = (32f * u).sp), color = tint, maxLines = 1)
     }
 }

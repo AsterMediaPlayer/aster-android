@@ -1,5 +1,26 @@
 package com.astermediaplayer.astermediaplayer.ui.library
 
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.Key
+import kotlinx.coroutines.delay
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import com.astermediaplayer.astermediaplayer.ui.detail.MenuItem
+import com.astermediaplayer.astermediaplayer.ui.detail.MenuHost
+import com.astermediaplayer.astermediaplayer.ui.theme.tvFocus
+import com.astermediaplayer.astermediaplayer.ui.theme.LocalIsTv
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
@@ -198,7 +219,9 @@ private sealed interface Row {
     data object Recent : Row
     data object AllTitles : Row
     data class Letter(val key: String) : Row
-    data class Titles(val id: String, val items: List<BaseItemDto>, val last: Boolean) : Row
+    data class Titles(val id: String, val items: List<BaseItemDto>, val last: Boolean, val letter: String? = null) : Row
+    /** A TV's row of letters to jump to, above the grid. */
+    data object LetterBar : Row
     data object Spinner : Row
 }
 
@@ -217,18 +240,27 @@ fun TypeScreen(
 
     BoxWithConstraints(modifier.fillMaxSize()) {
         // Titles per row: the grid's columns are 110 wide with 12 between, in the room the index strip leaves.
-        val room = maxWidth - Lockup.screenPadding * 2 - if (indexed) INDEX_ROOM else 0.dp
-        val perRow = maxOf(1, ((room + Lockup.shelfSpacing) / (Lockup.posterWidth + Lockup.shelfSpacing)).toInt())
+        val tv = LocalIsTv.current
+        // A TV's letters sit above the grid and in its margin, so the grid keeps the whole width.
+        val room = maxWidth - Lockup.screenPadding * 2 - if (indexed && !tv) INDEX_ROOM else 0.dp
+        val perRow = maxOf(1, ((room + Lockup.gridSpacing) / (Lockup.posterWidth + Lockup.gridSpacing)).toInt())
+        // The row whose first card takes focus once a letter has been jumped to.
+        var focusRow by remember { mutableStateOf<String?>(null) }
+        val rowFocus = remember { FocusRequester() }
+        // Down from the hero lands on the first new title, not on the sort button above it (as the Apple TV's hero does).
+        val recentFirst = remember { FocusRequester() }
+        LaunchedEffect(focusRow) { if (focusRow != null) { delay(350); runCatching { rowFocus.requestFocus() }; focusRow = null } }
 
         val rows = buildList<Row> {
             add(Row.Hero); add(Row.Header)
             if (state.recent.isNotEmpty()) add(Row.Recent)
             add(Row.AllTitles)
+            if (indexed && tv) add(Row.LetterBar)
             if (indexed) {
                 state.sections.forEach { section ->
-                    add(Row.Letter(section.key))
+                    if (!tv) add(Row.Letter(section.key))
                     val chunks = section.items.chunked(perRow)
-                    chunks.forEachIndexed { i, chunk -> add(Row.Titles("${section.key}-$i", chunk, last = false)) }
+                    chunks.forEachIndexed { i, chunk -> add(Row.Titles("${section.key}-$i", chunk, last = false, letter = if (tv && i == 0) section.key else null)) }
                 }
             } else {
                 state.items.chunked(perRow).forEachIndexed { i, chunk -> add(Row.Titles("row-$i", chunk, last = false)) }
@@ -244,29 +276,64 @@ fun TypeScreen(
             LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
                 itemsIndexed(rows, key = { _, row -> rowKey(row) }) { index, row ->
                     when (row) {
-                        Row.Hero -> if (hasHero) FeaturedBanner(state.featured, onItem, onPlay)
+                        Row.Hero -> if (hasHero) Box(
+                            // Down from the hero's button: the shelf below isn't built while the hero fills the screen, so the page scrolls
+                            // to it first and then its first card takes focus (the Apple TV does the same).
+                            if (tv && state.recent.isNotEmpty()) Modifier.onKeyEvent { event ->
+                                if (event.key == Key.DirectionDown && event.type == KeyEventType.KeyDown) {
+                                    scope.launch { listState.animateScrollToItem(rows.indexOfFirst { it == Row.Header }.coerceAtLeast(0)); delay(250); runCatching { recentFirst.requestFocus() } }
+                                    true
+                                } else false
+                            } else Modifier,
+                        ) { FeaturedBanner(state.featured, onItem, onPlay) }
                         Row.Header -> Row(
                             Modifier.fillMaxWidth().then(if (hasHero) Modifier else Modifier.statusBarsPadding())
                                 .padding(horizontal = Lockup.screenPadding).padding(top = if (hasHero) 20.dp else Lockup.screenPadding / 2),
                             verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.SpaceBetween,
                         ) {
-                            Text(viewModel.title, style = Type.pageTitle.copy(fontSize = 34.sp, lineHeight = 41.sp, letterSpacing = 1.0.sp))
+                            Text(viewModel.title, style = if (tv) Type.pageTitle.copy(fontSize = (76f * Lockup.tvUnit).sp, lineHeight = (90f * Lockup.tvUnit).sp) else Type.pageTitle.copy(fontSize = 34.sp, lineHeight = 41.sp, letterSpacing = 1.0.sp))
                             SortMenu(state.sort, viewModel::setSort)
                         }
-                        Row.Recent -> Shelf("Recently Added", state.recent, landscape = true, onItem = onItem)
+                        Row.Recent -> Shelf(
+                            "Recently Added", state.recent, landscape = true, firstCardFocus = if (tv) recentFirst else null, onItem = onItem,
+                            // Down from here goes to the grid's first title, past the letters (the Apple TV does the same: the grid is lazy, so
+                            // the focus engine can't reach its first row by itself).
+                            modifier = if (tv) Modifier.onKeyEvent { event ->
+                                if (event.key == Key.DirectionDown && event.type == KeyEventType.KeyDown) {
+                                    val all = rows.indexOfFirst { it == Row.AllTitles }
+                                    val first = rows.firstOrNull { it is Row.Titles } as? Row.Titles
+                                    if (all >= 0 && first != null) { scope.launch { listState.animateScrollToItem(all); focusRow = first.id }; true } else false
+                                } else false
+                            } else Modifier,
+                        )
                         Row.AllTitles -> Text(
                             "All ${viewModel.title}", style = Type.title3,
-                            modifier = Modifier.padding(horizontal = Lockup.screenPadding).padding(top = 20.dp, bottom = 40.dp),
+                            modifier = Modifier.padding(horizontal = Lockup.screenPadding).padding(top = 20.dp, bottom = if (tv) 0.dp else 40.dp),
                         )
                         is Row.Letter -> Text(
                             row.key, style = Type.title3.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.Bold), color = SecondaryText,
                             modifier = Modifier.fillMaxWidth().padding(horizontal = Lockup.screenPadding).padding(top = 12.dp, bottom = 20.dp),
                         )
+                        Row.LetterBar -> TvLetterBar(state.sections.map { it.key }) { key ->
+                            val target = rows.indexOfFirst { it is Row.Titles && it.letter == key }
+                            if (target >= 0) scope.launch { listState.scrollToItem(target); focusRow = (rows[target] as Row.Titles).id }
+                        }
                         is Row.Titles -> {
-                            Row(
-                                Modifier.fillMaxWidth().padding(horizontal = Lockup.screenPadding).padding(bottom = 20.dp),
-                                horizontalArrangement = Arrangement.spacedBy(Lockup.shelfSpacing),
-                            ) { row.items.forEach { PosterCard(it, { onItem(it) }) } }
+                            Box(Modifier.fillMaxWidth().padding(bottom = Lockup.gridRowSpacing)) {
+                                Row(
+                                    Modifier.fillMaxWidth().padding(horizontal = Lockup.screenPadding),
+                                    horizontalArrangement = Arrangement.spacedBy(Lockup.gridSpacing),
+                                ) {
+                                    row.items.forEachIndexed { i, item ->
+                                        PosterCard(item, { onItem(item) }, if (i == 0 && row.id == focusRow) Modifier.focusRequester(rowFocus) else Modifier)
+                                    }
+                                }
+                                // The Apple TV puts a section's letter in the margin beside its first row.
+                                row.letter?.let {
+                                    Text(it, style = Type.title3.copy(fontWeight = FontWeight.Bold), color = SecondaryText, textAlign = TextAlign.Center,
+                                        modifier = Modifier.width(Lockup.screenPadding).padding(top = 8.dp))
+                                }
+                            }
                             if (!indexed && index >= rows.size - 3) viewModel.loadMore()
                         }
                         Row.Spinner -> Box(Modifier.fillMaxWidth().padding(Lockup.pageBottomPadding), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
@@ -274,7 +341,7 @@ fun TypeScreen(
                 }
                 item { Spacer(Modifier.height(TabBarClearance)) }
             }
-            if (indexed) {
+            if (indexed && !tv) {
                 IndexBar(
                     keys = state.sections.map { it.key },
                     modifier = Modifier.align(Alignment.CenterEnd).padding(end = 4.dp),
@@ -291,13 +358,57 @@ internal val INDEX_ROOM = 28.dp
 
 private fun rowKey(row: Row): String = when (row) {
     Row.Hero -> "hero"; Row.Header -> "header"; Row.Recent -> "recent"; Row.AllTitles -> "all"
-    is Row.Letter -> "letter-${row.key}"; is Row.Titles -> "titles-${row.id}"; Row.Spinner -> "spinner"
+    is Row.Letter -> "letter-${row.key}"; is Row.Titles -> "titles-${row.id}"; Row.Spinner -> "spinner"; Row.LetterBar -> "letterbar"
+}
+
+/** The Apple TV's row of letters above a grid: capsule buttons a remote can reach, each jumping to its section. */
+@Composable
+internal fun TvLetterBar(keys: List<String>, jump: (String) -> Unit) {
+    val u = Lockup.tvUnit
+    LazyRow(
+        contentPadding = PaddingValues(horizontal = Lockup.screenPadding, vertical = (14f * u).dp),
+        horizontalArrangement = Arrangement.spacedBy((12f * u).dp),
+    ) {
+        items(keys) { key ->
+            var focused by remember { mutableStateOf(false) }
+            Box(
+                Modifier.height((62f * u).dp).widthIn(min = (96f * u).dp).tvFocus((31f * u).dp, lift = 1.1f, ring = false).onFocusChanged { focused = it.isFocused }
+                    .clip(CircleShape).background(if (focused) Color.White else Color.White.copy(alpha = 0.12f))
+                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { jump(key) },
+                contentAlignment = Alignment.Center,
+            ) { Text(key, style = Type.calloutSemibold, color = if (focused) Color.Black else Color.White) }
+        }
+    }
 }
 
 /** The sort picker next to the title: the current choice in the accent colour, with a menu of the others. */
 @Composable
 internal fun SortMenu(sort: LibrarySort, onSort: (LibrarySort) -> Unit) {
     var open by remember { mutableStateOf(false) }
+    if (LocalIsTv.current) {
+        // The Apple TV's menu picker: a button with the current choice, opening a glass panel of the others below it.
+        val u = Lockup.tvUnit
+        var focused by remember { mutableStateOf(false) }
+        Box {
+            Row(
+                Modifier.height((68f * u).dp).tvFocus((34f * u).dp, lift = 1.1f, ring = false).onFocusChanged { focused = it.isFocused }
+                    .clip(CircleShape).background(if (focused) Color.White else Color.White.copy(alpha = 0.12f))
+                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { open = true }
+                    .padding(horizontal = (30f * u).dp),
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy((10f * u).dp),
+            ) {
+                val tint = if (focused) Color.Black else Color.White
+                Text(sort.label, style = Type.callout, color = tint, maxLines = 1)
+                Icon(Icons.Default.UnfoldMore, null, tint = tint, modifier = Modifier.size((34f * u).dp))
+            }
+            MenuHost(expanded = open, onDismiss = { open = false }, below = true) {
+                LibrarySort.entries.forEach { option ->
+                    MenuItem(option.label, null, first = option == sort, checked = option == sort) { open = false; onSort(option) }
+                }
+            }
+        }
+        return
+    }
     Box {
         Row(Modifier.clip(CircleShape).clickable { open = true }.padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(sort.label, style = Type.callout, color = MaterialTheme.colorScheme.primary)

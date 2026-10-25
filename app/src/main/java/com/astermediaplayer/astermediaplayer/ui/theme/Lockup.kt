@@ -33,6 +33,9 @@ object Lockup {
     var personLabelSpacing = 6.dp; private set
     var pageBottomPadding = 24.dp; private set
     var sectionSpacing = 16.dp; private set
+    /** Between the cards of a library grid, and between its rows. */
+    var gridSpacing = 12.dp; private set
+    var gridRowSpacing = 20.dp; private set
     /** The dp one Apple TV point comes to on this screen (1 off a TV); see [useTv]. */
     var tvUnit = 1f; private set
     /** True once [useTv] has run: this is a TV, where some wording follows the Apple TV's. */
@@ -60,6 +63,8 @@ object Lockup {
         personLabelSpacing = (10 * unit).dp
         pageBottomPadding = (80 * unit).dp
         sectionSpacing = (30 * unit).dp
+        gridSpacing = (40 * unit).dp
+        gridRowSpacing = (48 * unit).dp
     }
 }
 
