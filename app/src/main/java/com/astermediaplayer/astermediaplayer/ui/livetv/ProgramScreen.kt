@@ -1,5 +1,10 @@
 package com.astermediaplayer.astermediaplayer.ui.livetv
 
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.FocusRequester
+import com.astermediaplayer.astermediaplayer.ui.theme.LocalIsTv
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -131,6 +136,17 @@ fun ProgramScreen(viewModel: ProgramViewModel, onClose: () -> Unit, onWatch: (UU
     val repo = (LocalContext.current.applicationContext as AsterApp).repository
     val state by viewModel.state.collectAsStateWithLifecycle()
     val program = state.program
+    val tv = LocalIsTv.current
+    // On a TV the remote starts on the page's main action (Watch), and Back closes the page: no close button to land on.
+    val firstAction = remember { FocusRequester() }
+    // The buttons aren't placed in the frame the programme arrives in, so a request then finds nothing to focus: try again until it takes.
+    if (tv) LaunchedEffect(program != null) {
+        if (program == null) return@LaunchedEffect
+        repeat(20) {
+            if (runCatching { firstAction.requestFocus() }.isSuccess) return@LaunchedEffect
+            kotlinx.coroutines.delay(100)
+        }
+    }
 
     Box(modifier.fillMaxSize().background(Color(0xFF141414))) {
         if (program == null) {
@@ -175,8 +191,8 @@ fun ProgramScreen(viewModel: ProgramViewModel, onClose: () -> Unit, onWatch: (UU
                 Column(Modifier.padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
                         // Watch (on now) and Watch Channel (later) are never both shown.
-                        if (airing && channelId != null) ActionButton("Watch", Icons.Default.PlayArrow, prominent = true) { onWatch(channelId) }
-                        if (!airing && channelId != null) ActionButton("Watch Channel", Icons.Default.Tv) { onWatch(channelId) }
+                        if (airing && channelId != null) ActionButton("Watch", Icons.Default.PlayArrow, Modifier.focusRequester(firstAction), prominent = true) { onWatch(channelId) }
+                        if (!airing && channelId != null) ActionButton("Watch Channel", Icons.Default.Tv, Modifier.focusRequester(firstAction)) { onWatch(channelId) }
                         if (future) {
                             val timer = program.timerId
                             if (timer != null) ActionButton("Cancel Recording", Icons.Default.Cancel) { if (!state.working) viewModel.cancelRecording(timer) }
@@ -196,7 +212,7 @@ fun ProgramScreen(viewModel: ProgramViewModel, onClose: () -> Unit, onWatch: (UU
             }
         }
         // There's no remote Back button: the page has a way to close.
-        IconButton(
+        if (!tv) IconButton(
             onClick = onClose,
             modifier = Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(Lockup.screenPadding).size(32.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.2f)),
         ) { Icon(Icons.Default.Close, "Close", tint = Color.White, modifier = Modifier.size(18.dp)) }
