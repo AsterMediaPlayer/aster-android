@@ -1,5 +1,19 @@
 package com.astermediaplayer.astermediaplayer.ui.audiobooks
 
+import kotlinx.coroutines.launch
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.foundation.layout.BoxScope
+import com.astermediaplayer.astermediaplayer.ui.theme.tvFocus
+import com.astermediaplayer.astermediaplayer.ui.theme.LocalTvChip
+import com.astermediaplayer.astermediaplayer.ui.theme.LocalIsTv
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -256,23 +270,46 @@ private fun ShelfLockup(shelf: AudiobookShelf, size: Dp = Lockup.posterWidth, on
 private fun AudiobookHero(books: List<Audiobook>, onListen: (Audiobook) -> Unit) {
     val pager = rememberPagerState { books.size }
     val windowHeight = with(LocalDensity.current) { LocalWindowInfo.current.containerSize.height.toDp() }
-    Box(Modifier.fillMaxWidth().height(windowHeight)) {
-        HorizontalPager(pager, Modifier.fillMaxSize()) { page -> HeroPage(books[page], onListen) }
+    val tv = LocalIsTv.current
+    val u = Lockup.tvUnit
+    val scope = rememberCoroutineScope()
+    // A remote pages the hero with Left and Right, and the page it lands on takes focus on its button (as on Home).
+    var refocusPage by remember { mutableStateOf(-1) }
+    val chip = LocalTvChip.current
+    Box(
+        Modifier.fillMaxWidth().height(windowHeight).then(
+            if (!tv) Modifier else Modifier.onFocusChanged { chip?.value = it.hasFocus }.onKeyEvent { event ->
+                val step = when (event.key) { Key.DirectionRight -> 1; Key.DirectionLeft -> -1; else -> 0 }
+                val target = pager.currentPage + step
+                if (step == 0 || target !in books.indices) false
+                else { if (event.type == KeyEventType.KeyDown) { refocusPage = target; scope.launch { pager.animateScrollToPage(target) } }; true }
+            },
+        ),
+    ) {
+        HorizontalPager(pager, Modifier.fillMaxSize()) { page ->
+            HeroPage(books[page], onListen, autofocus = page == 0, focusNow = page == refocusPage && page == pager.settledPage, onFocused = { refocusPage = -1 })
+        }
         if (books.size > 1) {
             Row(
-                Modifier.align(Alignment.BottomEnd).padding(end = Lockup.screenPadding, bottom = 84.dp)
+                if (tv) Modifier.align(Alignment.BottomEnd).padding(end = (86f * u).dp, bottom = (46f * u).dp)
+                else Modifier.align(Alignment.BottomEnd).padding(end = Lockup.screenPadding, bottom = 84.dp)
                     .clip(CircleShape).background(Color.Black.copy(alpha = 0.35f)).padding(horizontal = 14.dp, vertical = 10.dp),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-            ) { repeat(books.size) { i -> Box(Modifier.size(10.dp).clip(CircleShape).background(Color.White.copy(alpha = if (i == pager.currentPage) 0.95f else 0.35f))) } }
+                horizontalArrangement = Arrangement.spacedBy(if (tv) (11f * u).dp else 10.dp),
+            ) { repeat(books.size) { i -> Box(Modifier.size(if (tv) (9f * u).dp else 10.dp).clip(CircleShape).background(Color.White.copy(alpha = if (i == pager.currentPage) 0.95f else 0.35f))) } }
         }
     }
 }
 
 @Composable
-private fun HeroPage(book: Audiobook, onListen: (Audiobook) -> Unit) {
+private fun HeroPage(book: Audiobook, onListen: (Audiobook) -> Unit, autofocus: Boolean = false, focusNow: Boolean = false, onFocused: () -> Unit = {}) {
+    val tv = LocalIsTv.current
+    val focus = remember { FocusRequester() }
+    if (tv && autofocus) LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
+    if (tv) LaunchedEffect(focusNow) { if (focusNow) { runCatching { focus.requestFocus() }; onFocused() } }
     val stacked = LocalConfiguration.current.screenWidthDp < LocalConfiguration.current.screenHeightDp
     val timeText = if (book.progress > 0 && !book.isFinished) Audiobook.lengthText(book.duration * (1 - book.progress))?.let { "$it left" } else book.lengthText
-    Box(Modifier.fillMaxSize().clickable { onListen(book) }) {
+    // The page itself is no stop for a remote; its button is.
+    Box(Modifier.fillMaxSize().focusProperties { canFocus = !tv }.clickable { onListen(book) }) {
         // The cover, blurred and darkened, as the backdrop.
         AsyncImage(
             model = app().downloads.cover(book, 600), contentDescription = null, contentScale = ContentScale.Crop,
@@ -281,6 +318,7 @@ private fun HeroPage(book: Audiobook, onListen: (Audiobook) -> Unit) {
         Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.35f)))
         Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.35f to Color.Transparent, 0.675f to Color.Black.copy(alpha = 0.2f), 1f to Color.Black.copy(alpha = 0.9f))))
         Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(0f to Color.Black.copy(alpha = 0.5f), 0.5f to Color.Transparent)))
+        if (tv) { TvHeroBody(book, timeText, focus, onListen); return@Box }
         val body: @Composable () -> Unit = {
             Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 book.series?.let {
@@ -454,5 +492,42 @@ fun ChapterRow(title: String, startText: String, isCurrent: Boolean, onClick: ()
         Box(Modifier.width(24.dp)) { if (isCurrent) Icon(Icons.Default.VolumeUp, null, tint = SecondaryText, modifier = Modifier.size(18.dp)) }
         Text(title, style = if (isCurrent) Type.calloutSemibold else Type.calloutMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
         Text(startText, style = Type.callout, color = SecondaryText)
+    }
+}
+
+/**
+ * An audiobook hero page on a TV, to the Apple TV's `AudiobookHeroCard` (its measurements, in points): a 420 cover beside the text,
+ * 48 apart, the foot 86 above the bottom and 72 in from the left.
+ */
+@Composable
+private fun BoxScope.TvHeroBody(book: Audiobook, timeText: String?, focus: FocusRequester, onListen: (Audiobook) -> Unit) {
+    val u = Lockup.tvUnit
+    fun pt(points: Float) = (points * u).dp
+    fun sp(points: Float) = (points * u).sp
+    Row(
+        Modifier.align(Alignment.BottomStart).fillMaxWidth().padding(start = pt(72f), bottom = pt(86f)),
+        verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(pt(48f)),
+    ) {
+        AudiobookCover(book, pt(420f), Modifier.shadow(30.dp, RoundedCornerShape(Lockup.cornerRadius)).clip(RoundedCornerShape(Lockup.cornerRadius)), 900)
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(pt(16f))) {
+            book.series?.let {
+                Text(
+                    listOfNotNull(it, book.seriesIndex?.let { i -> "Book $i" }).joinToString(" · ").uppercase(),
+                    style = Type.headline.copy(fontWeight = FontWeight.Bold, fontSize = sp(34f), lineHeight = sp(42f), letterSpacing = 1.5.sp), color = Color.White.copy(alpha = 0.75f), maxLines = 1,
+                )
+            }
+            Text(book.title, style = Type.pageTitle.copy(fontSize = sp(60f), lineHeight = sp(70f)), color = Color.White, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            book.author?.let { Text(it, style = Type.title3.copy(fontWeight = FontWeight.SemiBold), color = Color.White.copy(alpha = 0.85f), maxLines = 1) }
+            if (book.progress > 0 && !book.isFinished) Progress(book.progress, Modifier.widthIn(max = pt(360f)), height = pt(6f))
+            book.overview?.let { Text(it, style = Type.callout, color = SecondaryText, maxLines = 3, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = pt(900f))) }
+            Row(
+                Modifier.focusRequester(focus).tvFocus(pt(36f)).height(pt(72f)).clip(CircleShape).background(Color.White).clickable { onListen(book) }.padding(horizontal = pt(32f)),
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(pt(16f)),
+            ) {
+                Icon(Icons.Default.PlayArrow, null, tint = Color.Black, modifier = Modifier.size(pt(42f)))
+                Text(if (book.resumePoint != null) "Resume" else "Listen", style = Type.headline.copy(fontSize = sp(36f), lineHeight = sp(44f)), color = Color.Black, maxLines = 1)
+                timeText?.let { Text("·  $it", style = Type.headline.copy(fontSize = sp(36f), lineHeight = sp(44f), fontWeight = FontWeight.Normal), color = Color.Black.copy(alpha = 0.5f), maxLines = 1) }
+            }
+        }
     }
 }
