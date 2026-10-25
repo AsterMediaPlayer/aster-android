@@ -25,6 +25,8 @@ import com.astermediaplayer.astermediaplayer.ui.components.MetaLine
 import com.astermediaplayer.astermediaplayer.ui.components.episodeCode
 import com.astermediaplayer.astermediaplayer.ui.components.remainingText
 import com.astermediaplayer.astermediaplayer.ui.theme.ButtonGrey
+import kotlinx.coroutines.delay
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.animation.animateContentSize
 import com.astermediaplayer.astermediaplayer.ui.theme.LocalIsTv
@@ -443,6 +445,10 @@ private fun DetailBody(
     // On a TV the remote starts on Play, which is on the first screen.
     val playFocus = remember { FocusRequester() }
     if (isTv) LaunchedEffect(item.id) { runCatching { playFocus.requestFocus() } }
+    // A tab picked from a remote takes focus down into what it shows, its first card (the Apple TV's section lead), once laid out.
+    val sectionLead = remember { FocusRequester() }
+    var enterSection by remember { mutableIntStateOf(0) }
+    if (isTv) LaunchedEffect(enterSection) { if (enterSection > 0) { delay(350); runCatching { sectionLead.requestFocus() } } }
     // The Play button's middle across the screen, which the episode strip lines the next episode up under.
     var playCenterPx by remember { mutableStateOf<Float?>(null) }
 
@@ -489,13 +495,13 @@ private fun DetailBody(
                 verticalArrangement = Arrangement.spacedBy(sectionGap),
             ) {
                 if (usesTabs) {
-                    if (isTv) TvTabBar(tabs.map { it.label }, tabs.indexOf(tab)) { selectedTab = tabs[it].name }
+                    if (isTv) TvTabBar(tabs.map { it.label }, tabs.indexOf(tab)) { selectedTab = tabs[it].name; enterSection++ }
                     else SegmentedControl(tabs.map { it.label }, tabs.indexOf(tab)) { selectedTab = tabs[it].name }
                     when (tab) {
-                        DetailTab.Episodes -> EpisodesSection(content, viewModel, onPlay)
+                        DetailTab.Episodes -> EpisodesSection(content, viewModel, onPlay, sectionLead)
                         DetailTab.Music -> MusicSection(content, onPlayTheme)
-                        DetailTab.Extras -> Shelf("Extras", content.extras, landscape = true, onItem = { onPlay(it.id) })
-                        DetailTab.Related -> Shelf("Related", content.similar, landscape = true, onItem = onItem)
+                        DetailTab.Extras -> Shelf("Extras", content.extras, landscape = true, firstCardFocus = sectionLead, onItem = { onPlay(it.id) })
+                        DetailTab.Related -> Shelf("Related", content.similar, landscape = true, firstCardFocus = sectionLead, onItem = onItem)
                         DetailTab.Details -> DetailsSection(item, repo)
                     }
                 } else {
@@ -704,7 +710,7 @@ private fun SegmentedControl(labels: List<String>, selected: Int, onSelect: (Int
 }
 
 @Composable
-private fun EpisodesSection(content: DetailContent, viewModel: DetailViewModel, onPlay: (UUID) -> Unit) {
+private fun EpisodesSection(content: DetailContent, viewModel: DetailViewModel, onPlay: (UUID) -> Unit, firstCardFocus: FocusRequester? = null) {
     Column(verticalArrangement = Arrangement.spacedBy(DetailMetrics.seasonShelfSpacing)) {
         if (content.seasons.size > 1) {
             LazyRow(
@@ -724,7 +730,7 @@ private fun EpisodesSection(content: DetailContent, viewModel: DetailViewModel, 
                 }
             }
         }
-        Shelf("Episodes", content.episodes, landscape = true, onItem = { onPlay(it.id) }, showSeriesTitle = false)
+        Shelf("Episodes", content.episodes, landscape = true, firstCardFocus = firstCardFocus, onItem = { onPlay(it.id) }, showSeriesTitle = false)
     }
 }
 
@@ -903,7 +909,7 @@ private fun TvActionButton(title: String?, icon: ImageVector, description: Strin
 
 /** A tab or a season on a TV: a capsule that's grey, lighter when picked, and white with black text, lifted, when focused. */
 @Composable
-private fun TvPill(label: String, selected: Boolean, heightPt: Float, horizontalPt: Float, onClick: () -> Unit) {
+private fun TvPill(label: String, selected: Boolean, heightPt: Float, horizontalPt: Float, boldWhenSelected: Boolean = false, onClick: () -> Unit) {
     val u = Lockup.tvUnit
     var focused by remember { mutableStateOf(false) }
     val height = (heightPt * u).dp
@@ -915,7 +921,7 @@ private fun TvPill(label: String, selected: Boolean, heightPt: Float, horizontal
             .padding(horizontal = (horizontalPt * u).dp),
         contentAlignment = Alignment.Center,
     ) {
-        Text(label, style = Type.callout.copy(fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium), color = if (focused || selected) Color.Black else Color.White, maxLines = 1)
+        Text(label, style = Type.callout.copy(fontWeight = boldWhenSelected.let { if (it && selected) FontWeight.Bold else if (it) FontWeight.Medium else FontWeight.SemiBold }), color = if (focused || selected) Color.Black else Color.White, maxLines = 1)
     }
 }
 
@@ -924,6 +930,6 @@ private fun TvPill(label: String, selected: Boolean, heightPt: Float, horizontal
 private fun TvTabBar(labels: List<String>, selected: Int, onSelect: (Int) -> Unit) {
     val u = Lockup.tvUnit
     Row(Modifier.padding(horizontal = Lockup.screenPadding, vertical = (12f * u).dp), horizontalArrangement = Arrangement.spacedBy((24f * u).dp)) {
-        labels.forEachIndexed { index, label -> TvPill(label, index == selected, 68f, 38f) { onSelect(index) } }
+        labels.forEachIndexed { index, label -> TvPill(label, index == selected, 68f, 38f, boldWhenSelected = true) { onSelect(index) } }
     }
 }

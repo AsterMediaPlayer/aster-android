@@ -31,7 +31,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -155,6 +157,8 @@ fun Shelf(
     /** False on a show's own page, where an episode's card needn't name the show. */
     showSeriesTitle: Boolean = true,
     listState: LazyListState = rememberLazyListState(),
+    /** Takes focus when asked: the first card, for a remote that has just picked the tab this shelf is in. */
+    firstCardFocus: FocusRequester? = null,
     onItem: (BaseItemDto) -> Unit,
 ) {
     if (items.isEmpty()) return
@@ -166,8 +170,9 @@ fun Shelf(
             contentPadding = PaddingValues(horizontal = Lockup.screenPadding, vertical = Lockup.shelfVerticalPadding),
             horizontalArrangement = Arrangement.spacedBy(Lockup.shelfSpacing),
         ) {
-            items(items, key = { it.id }) { item ->
-                if (landscape) LandscapeCard(item, { onItem(item) }, showSeriesTitle = showSeriesTitle) else PosterCard(item, { onItem(item) })
+            itemsIndexed(items, key = { _, item -> item.id }) { index, item ->
+                val lead = if (index == 0 && firstCardFocus != null) Modifier.focusRequester(firstCardFocus) else Modifier
+                if (landscape) LandscapeCard(item, { onItem(item) }, lead, showSeriesTitle = showSeriesTitle) else PosterCard(item, { onItem(item) }, lead)
             }
         }
     }
