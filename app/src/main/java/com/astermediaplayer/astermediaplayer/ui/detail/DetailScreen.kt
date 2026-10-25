@@ -25,6 +25,8 @@ import com.astermediaplayer.astermediaplayer.ui.components.MetaLine
 import com.astermediaplayer.astermediaplayer.ui.components.episodeCode
 import com.astermediaplayer.astermediaplayer.ui.components.remainingText
 import com.astermediaplayer.astermediaplayer.ui.theme.ButtonGrey
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.animation.animateContentSize
 import com.astermediaplayer.astermediaplayer.ui.theme.LocalIsTv
 import com.astermediaplayer.astermediaplayer.ui.theme.tvFocus
 import androidx.compose.ui.focus.FocusRequester
@@ -456,7 +458,11 @@ private fun DetailBody(
             contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize(),
         )
         ThemeVideo(themePlayer, item, Modifier.fillMaxSize())
-        Box(
+        if (isTv) {
+            // The Apple TV's backdrop shade: the page darkens toward the bottom, and a little from the left under the text.
+            Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0f to Color.Black.copy(alpha = 0.1f), 0.5f to Color.Black.copy(alpha = 0.55f), 1f to Color.Black.copy(alpha = 0.97f))))
+            Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(0f to Color.Black.copy(alpha = 0.7f), 0.5f to Color.Transparent)))
+        } else Box(
             Modifier.fillMaxSize().background(
                 Brush.verticalGradient(0.3f to Color.Transparent, 0.75f to Color.Black.copy(alpha = 0.7f), 1f to Color.Black.copy(alpha = 0.9f)),
             ),
@@ -470,18 +476,21 @@ private fun DetailBody(
                 }
                 DetailInfo(content, viewModel, onPlay, onPlayFromBeginning, onGoToSeries, onPlayTheme, showTitle = false, playFocus = playFocus) { playCenterPx = it }
             } else {
-                // A TV's header is the whole first screen, as on the Apple TV: the info sits at its foot over the art.
-                Column(Modifier.fillMaxWidth().heightIn(min = if (isTv) screenHeight else DetailMetrics.headerMinHeight), verticalArrangement = Arrangement.Bottom) {
+                // A TV's header is 780 points tall, as on the Apple TV: the info sits at its foot over the art, the page's tabs below.
+                Column(Modifier.fillMaxWidth().heightIn(min = if (isTv) (780f * Lockup.tvUnit).dp else DetailMetrics.headerMinHeight), verticalArrangement = Arrangement.Bottom) {
                     DetailInfo(content, viewModel, onPlay, onPlayFromBeginning, onGoToSeries, onPlayTheme, showTitle = true, playFocus = playFocus) { playCenterPx = it }
                 }
             }
+            // On a TV the sections sit straight on the shaded backdrop, 36 points apart, as on the Apple TV.
+            val sectionGap = if (isTv) (36f * Lockup.tvUnit).dp else DetailMetrics.sectionSpacing
             Column(
-                Modifier.fillMaxWidth().background(Color.Black.copy(alpha = 0.88f)).navigationBarsPadding()
-                    .padding(top = DetailMetrics.sectionSpacing, bottom = DetailMetrics.pageBottomPadding),
-                verticalArrangement = Arrangement.spacedBy(DetailMetrics.sectionSpacing),
+                Modifier.fillMaxWidth().then(if (isTv) Modifier else Modifier.background(Color.Black.copy(alpha = 0.88f))).navigationBarsPadding()
+                    .padding(top = sectionGap, bottom = if (isTv) (80f * Lockup.tvUnit).dp else DetailMetrics.pageBottomPadding),
+                verticalArrangement = Arrangement.spacedBy(sectionGap),
             ) {
                 if (usesTabs) {
-                    SegmentedControl(tabs.map { it.label }, tabs.indexOf(tab)) { selectedTab = tabs[it].name }
+                    if (isTv) TvTabBar(tabs.map { it.label }, tabs.indexOf(tab)) { selectedTab = tabs[it].name }
+                    else SegmentedControl(tabs.map { it.label }, tabs.indexOf(tab)) { selectedTab = tabs[it].name }
                     when (tab) {
                         DetailTab.Episodes -> EpisodesSection(content, viewModel, onPlay)
                         DetailTab.Music -> MusicSection(content, onPlayTheme)
@@ -510,11 +519,14 @@ private fun BaseItemDto.isEpisodic() = type == BaseItemKind.EPISODE || type == B
 private fun DetailTitle(item: BaseItemDto, repo: AsterRepository, modifier: Modifier = Modifier, small: Boolean = false) {
     val logo = repo.imageUrl(item, ImageType.LOGO, 800)
     val name = if (item.isEpisodic()) item.seriesName ?: item.name else item.name
+    val tv = LocalIsTv.current
+    val u = Lockup.tvUnit
     if (logo != null) {
-        // The box is its full size whatever the logo's shape, with the logo fit inside and centered vertically.
+        // The box is its full size whatever the logo's shape, with the logo fit inside and centered vertically. The Apple TV's
+        // are 600x200 points (420x130 for a show's logo over an episode or season).
         Box(
-            modifier.widthIn(max = if (small) DetailMetrics.seriesLogoMaxWidth else DetailMetrics.logoMaxWidth)
-                .height(if (small) DetailMetrics.seriesLogoMaxHeight else DetailMetrics.logoMaxHeight),
+            modifier.widthIn(max = if (tv) ((if (small) 420f else 600f) * u).dp else if (small) DetailMetrics.seriesLogoMaxWidth else DetailMetrics.logoMaxWidth)
+                .height(if (tv) ((if (small) 130f else 200f) * u).dp else if (small) DetailMetrics.seriesLogoMaxHeight else DetailMetrics.logoMaxHeight),
         ) {
             AsyncImage(
                 model = logo, contentDescription = name, contentScale = ContentScale.Fit,
@@ -549,9 +561,13 @@ private fun DetailInfo(
     var menu by remember { mutableStateOf(false) }
     val seriesId = item.seriesId
 
+    val tv = LocalIsTv.current
+    val u = Lockup.tvUnit
     Column(
-        Modifier.fillMaxWidth().padding(horizontal = Lockup.screenPadding).padding(bottom = DetailMetrics.headerBottomPadding),
-        verticalArrangement = Arrangement.spacedBy(DetailMetrics.headerSpacing),
+        // The Apple TV's header: 90 in from the left, 20 between lines, 20 above the page's tabs.
+        if (tv) Modifier.fillMaxWidth().padding(start = (90f * u).dp, end = (90f * u).dp).padding(bottom = (20f * u).dp)
+        else Modifier.fillMaxWidth().padding(horizontal = Lockup.screenPadding).padding(bottom = DetailMetrics.headerBottomPadding),
+        verticalArrangement = Arrangement.spacedBy(if (tv) (20f * u).dp else DetailMetrics.headerSpacing),
     ) {
         if (item.isEpisodic()) {
             // The show's logo (else its name), then this page's own title.
@@ -562,19 +578,22 @@ private fun DetailInfo(
             DetailTitle(item, repo)
         }
         MetaLine(item, showsUnwatched = true)
+        item.taglines?.firstOrNull()?.takeIf { tv && it.isNotBlank() }?.let {
+            Text(it, style = Type.title3.copy(fontWeight = FontWeight.Normal, fontStyle = androidx.compose.ui.text.font.FontStyle.Italic), color = SecondaryText)
+        }
         item.overview?.let {
-            Text(it, style = Type.callout, color = Color.White, maxLines = 5, overflow = TextOverflow.Ellipsis)
+            Text(it, style = Type.callout, color = Color.White, maxLines = 5, overflow = TextOverflow.Ellipsis, modifier = if (tv) Modifier.widthIn(max = (1000f * u).dp) else Modifier)
         }
         if (isSeries && content.nextEpisode != null) {
             val next = content.nextEpisode
             Text("Up next: " + listOfNotNull(next.episodeCode(), next.name).joinToString(" · "), style = Type.callout, color = SecondaryText)
         }
-        Column(Modifier.padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(DetailMetrics.actionRowSpacing)) {
-            // A phone can't fit every action across, so the row scrolls sideways.
+        Column(Modifier.padding(top = if (tv) (8f * u).dp else 8.dp), verticalArrangement = Arrangement.spacedBy(DetailMetrics.actionRowSpacing)) {
+            // A phone can't fit every action across, so the row scrolls sideways; a TV's fits, and its buttons lift past the row's edge.
             Row(
-                // A TV's focus ring sits outside the buttons, which the scrolling row would clip.
-                Modifier.horizontalScroll(rememberScrollState()).then(if (LocalIsTv.current) Modifier.padding(8.dp) else Modifier),
-                horizontalArrangement = Arrangement.spacedBy(DetailMetrics.actionSpacing), verticalAlignment = Alignment.CenterVertically,
+                // A TV row is as tall as its focused Play pill (79 points) even once focus has left it, so the page above doesn't shift.
+                if (tv) Modifier.heightIn(min = (79f * u).dp) else Modifier.horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(if (tv) (20f * u).dp else DetailMetrics.actionSpacing), verticalAlignment = Alignment.CenterVertically,
             ) {
                 if (target != null) {
                     ActionButton(
@@ -642,6 +661,7 @@ private fun DetailInfo(
 /** The Apple apps' capsule action button: white with black text for the main action, grey for the rest. */
 @Composable
 internal fun ActionButton(title: String, icon: ImageVector, modifier: Modifier = Modifier, prominent: Boolean = false, onClick: () -> Unit) {
+    if (LocalIsTv.current) { TvActionButton(title, icon, title, modifier, prominent, onClick); return }
     Row(
         modifier.height(DetailMetrics.buttonHeight).tvFocus(DetailMetrics.buttonHeight / 2).clip(CircleShape).background(if (prominent) Color.White else ButtonGrey)
             .clickable(onClick = onClick).padding(horizontal = DetailMetrics.buttonHorizontalPadding),
@@ -656,6 +676,7 @@ internal fun ActionButton(title: String, icon: ImageVector, modifier: Modifier =
 /** Heart, watched and more: a capsule as tall as the text buttons. */
 @Composable
 internal fun IconActionButton(icon: ImageVector, description: String, onClick: () -> Unit) {
+    if (LocalIsTv.current) { TvActionButton(null, icon, description, Modifier, false, onClick); return }
     Box(
         Modifier.size(DetailMetrics.iconButtonWidth, DetailMetrics.buttonHeight).tvFocus(DetailMetrics.buttonHeight / 2).clip(CircleShape).background(ButtonGrey).clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
@@ -687,11 +708,12 @@ private fun EpisodesSection(content: DetailContent, viewModel: DetailViewModel, 
     Column(verticalArrangement = Arrangement.spacedBy(DetailMetrics.seasonShelfSpacing)) {
         if (content.seasons.size > 1) {
             LazyRow(
-                contentPadding = PaddingValues(horizontal = Lockup.screenPadding, vertical = DetailMetrics.seasonVerticalPadding),
-                horizontalArrangement = Arrangement.spacedBy(DetailMetrics.seasonSpacing),
+                contentPadding = PaddingValues(horizontal = Lockup.screenPadding, vertical = if (LocalIsTv.current) (14f * Lockup.tvUnit).dp else DetailMetrics.seasonVerticalPadding),
+                horizontalArrangement = Arrangement.spacedBy(if (LocalIsTv.current) (16f * Lockup.tvUnit).dp else DetailMetrics.seasonSpacing),
             ) {
                 items(content.seasons, key = { it.id }) { season ->
                     val active = season.id == content.selectedSeason
+                    if (LocalIsTv.current) { TvPill(season.name.orEmpty(), active, 67f, 37f) { viewModel.selectSeason(season.id) }; return@items }
                     // The Apple apps' bordered buttons: white tint (black text) when picked, grey tint otherwise.
                     Box(
                         Modifier.height(DetailMetrics.seasonPillHeight).tvFocus(DetailMetrics.seasonPillHeight / 2).clip(CircleShape)
@@ -850,5 +872,58 @@ private fun ThemeCard(oe: OpeningEnding, onClick: () -> Unit) {
             Text(title, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
             detail?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis) }
         }
+    }
+}
+
+/**
+ * The TV's action button, as the Apple TV's `TVActionButtonStyle`: a circle holding just its icon (grey, or white for the main
+ * action), that on focus turns white with black content, lifts with a shadow, and widens to say what it does.
+ */
+@Composable
+private fun TvActionButton(title: String?, icon: ImageVector, description: String, modifier: Modifier, prominent: Boolean, onClick: () -> Unit) {
+    val u = Lockup.tvUnit
+    fun pt(points: Float) = (points * u).dp
+    var focused by remember { mutableStateOf(false) }
+    val lit = focused || prominent
+    val tint = if (lit) Color.Black else Color.White
+    Row(
+        modifier.tvFocus(pt(40f), lift = 1.1f, ring = false).onFocusChanged { focused = it.isFocused }
+            .clip(CircleShape).background(if (lit) Color.White else ButtonGrey)
+            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onClick)
+            .padding(horizontal = pt(if (focused && title != null) 26f else 16f), vertical = pt(16f))
+            .animateContentSize(),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(pt(12f)),
+    ) {
+        Box(Modifier.size(pt(44f)), contentAlignment = Alignment.Center) { Icon(icon, description, tint = tint, modifier = Modifier.size(pt(40f))) }
+        if (focused && title != null) {
+            Text(title, style = Type.headline.copy(fontSize = (38f * u).sp, lineHeight = (47f * u).sp), color = tint, maxLines = 1, softWrap = false)
+        }
+    }
+}
+
+/** A tab or a season on a TV: a capsule that's grey, lighter when picked, and white with black text, lifted, when focused. */
+@Composable
+private fun TvPill(label: String, selected: Boolean, heightPt: Float, horizontalPt: Float, onClick: () -> Unit) {
+    val u = Lockup.tvUnit
+    var focused by remember { mutableStateOf(false) }
+    val height = (heightPt * u).dp
+    Box(
+        Modifier.height(height).tvFocus(height / 2, lift = 1.1f, ring = false).onFocusChanged { focused = it.isFocused }
+            .clip(CircleShape)
+            .background(if (focused) Color.White else (if (selected) Color.White else ButtonGrey).copy(alpha = 0.25f))
+            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onClick)
+            .padding(horizontal = (horizontalPt * u).dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(label, style = Type.callout.copy(fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium), color = if (focused || selected) Color.Black else Color.White, maxLines = 1)
+    }
+}
+
+/** A show's page tabs on a TV: pills 24 points apart, as the Apple TV's section bar. */
+@Composable
+private fun TvTabBar(labels: List<String>, selected: Int, onSelect: (Int) -> Unit) {
+    val u = Lockup.tvUnit
+    Row(Modifier.padding(horizontal = Lockup.screenPadding, vertical = (12f * u).dp), horizontalArrangement = Arrangement.spacedBy((24f * u).dp)) {
+        labels.forEachIndexed { index, label -> TvPill(label, index == selected, 68f, 38f) { onSelect(index) } }
     }
 }

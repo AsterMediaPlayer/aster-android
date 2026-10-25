@@ -109,16 +109,18 @@ object Type {
 
     /** The same styles at the Apple TV's sizes (tvOS's text styles, in points), for a TV. [unit] is the sp one point comes to; see [Lockup.useTv]. */
     fun useTv(unit: Float) {
-        fun TextStyle.tv(size: Int, line: Int) = copy(fontSize = (size * unit).sp, lineHeight = (line * unit).sp, letterSpacing = if (letterSpacing.isSpecified) letterSpacing * (size / fontSize.value) else letterSpacing)
-        callout = callout.tv(31, 40)
-        calloutMedium = calloutMedium.tv(31, 40)
-        calloutSemibold = calloutSemibold.tv(31, 40)
-        headline = headline.tv(34, 44)
-        title3 = title3.tv(46, 56)
-        caption = caption.tv(26, 32)
-        caption2Bold = caption2Bold.tv(22, 28)
-        segmented = segmented.tv(28, 34)
-        pageTitle = pageTitle.tv(64, 76)
+        fun TextStyle.tv(size: Float, line: Float) = copy(fontSize = (size * unit).sp, lineHeight = (line * unit).sp, letterSpacing = if (letterSpacing.isSpecified) letterSpacing * (size / fontSize.value) else letterSpacing)
+        // Inter sets wider than San Francisco, so body text is a size down from tvOS's 31 to wrap where the Apple TV's does
+        // (measured: a 72-character line, 959 points on the Apple TV, comes to 1005 here at 31).
+        callout = callout.tv(29.5f, 38f)
+        calloutMedium = calloutMedium.tv(29.5f, 38f)
+        calloutSemibold = calloutSemibold.tv(29.5f, 38f)
+        headline = headline.tv(34f, 44f)
+        title3 = title3.tv(46f, 56f)
+        caption = caption.tv(26f, 32f)
+        caption2Bold = caption2Bold.tv(22f, 28f)
+        segmented = segmented.tv(28f, 34f)
+        pageTitle = pageTitle.tv(64f, 76f)
     }
 }
 

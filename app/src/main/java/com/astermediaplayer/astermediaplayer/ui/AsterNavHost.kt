@@ -260,7 +260,9 @@ fun AsterNavHost(signedIn: Boolean) {
                 arguments = listOf(navArgument("id") { type = NavType.StringType }),
                 deepLinks = listOf(navDeepLink { uriPattern = "aster://item/{id}" }),
             ) { entry ->
-                val id = UUID.fromString(entry.arguments!!.getString("id"))
+                // A link may carry the id either way (see parseId); one that isn't an id goes back rather than crashing.
+                val id = parseId(entry.arguments!!.getString("id").orEmpty())
+                if (id == null) { LaunchedEffect(Unit) { nav.popBackStack() }; return@composable }
                 val vm: DetailViewModel = viewModel(factory = viewModelFactory { initializer { DetailViewModel(repo, id) } })
                 DetailScreen(
                     vm, onBack = { nav.popBackStack() }, onPlay = { nav.navigate(Routes.player(it)) }, onItem = ::open,
