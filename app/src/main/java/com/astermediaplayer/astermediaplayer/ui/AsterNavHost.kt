@@ -242,6 +242,7 @@ fun AsterNavHost(signedIn: Boolean) {
         ServerActions(
             repo,
             onSwitched = { app.resetForServerChange(); nav.navigate(Routes.MAIN) { popUpTo(nav.graph.id) { inclusive = true } } },
+            onOpenChannels = { nav.navigate(Routes.channelSettings()) },
             onAddServer = {
                 scope.launch {
                     repo.changeServer(); app.resetForServerChange()
