@@ -1,5 +1,9 @@
 package com.astermediaplayer.astermediaplayer.ui.channels
 
+import androidx.compose.foundation.focusGroup
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.material.icons.Icons
 import androidx.compose.material3.Icon
 import androidx.compose.foundation.layout.size
@@ -150,15 +154,18 @@ private fun ScheduledProgram.toListing(): GuideProgram {
 }
 
 /** The Apple TV guide's row of group filters: All, then each group, the picked one lit. */
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 private fun TvGroupPills(options: List<String?>, selected: String?, modifier: Modifier = Modifier, onPick: (String?) -> Unit) {
     val u = Lockup.tvUnit
-    Row(modifier.padding(vertical = (10f * u).dp), horizontalArrangement = Arrangement.spacedBy((14f * u).dp)) {
+    // Focus arriving from the guide or the times lands on the picked pill, not whichever is nearest.
+    val pickedPill = remember { FocusRequester() }
+    Row(modifier.padding(vertical = (10f * u).dp).focusProperties { enter = { pickedPill } }.focusGroup(), horizontalArrangement = Arrangement.spacedBy((14f * u).dp)) {
         options.forEach { option ->
             var focused by remember { mutableStateOf(false) }
             val picked = option == selected
             Box(
-                Modifier.height((66f * u).dp).tvFocus((33f * u).dp, lift = 1.08f, ring = false).onFocusChanged { focused = it.isFocused }
+                Modifier.height((66f * u).dp).then(if (picked) Modifier.focusRequester(pickedPill) else Modifier).tvFocus((33f * u).dp, lift = 1.08f, ring = false).onFocusChanged { focused = it.isFocused }
                     .clip(CircleShape).background(if (focused) Color.White else if (picked) Color.White.copy(alpha = 0.3f) else Color.White.copy(alpha = 0.12f))
                     .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onPick(option) }.padding(horizontal = (36f * u).dp),
                 contentAlignment = Alignment.Center,

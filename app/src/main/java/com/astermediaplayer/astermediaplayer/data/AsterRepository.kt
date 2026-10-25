@@ -324,7 +324,27 @@ class AsterRepository(context: Context, private val store: SessionStore) {
                 fields = listOf(ItemFields.OVERVIEW),
             ),
         ).content.items
-        return guideOrder(channels)
+        return guideOrder(withAiringNow(channels))
+    }
+
+    /**
+     * The server's `currentProgram` on a channel can be hours stale, so what's on now comes from the programmes airing this
+     * minute, as the guide has it: a channel with none shows nothing. A failed request leaves the channels as they were.
+     */
+    private suspend fun withAiringNow(channels: List<BaseItemDto>): List<BaseItemDto> {
+        if (channels.isEmpty()) return channels
+        val now = utc(System.currentTimeMillis() / 1000.0)
+        val airing = runCatching {
+            api.liveTvApi.getLiveTvPrograms(
+                org.jellyfin.sdk.model.api.request.GetLiveTvProgramsRequest(
+                    channelIds = channels.map { it.id }, userId = userId, minEndDate = now, maxStartDate = now,
+                    sortBy = listOf(ItemSortBy.START_DATE), limit = 1000, enableImages = true, imageTypeLimit = 1,
+                    enableImageTypes = listOf(ImageType.PRIMARY, ImageType.THUMB), fields = listOf(ItemFields.OVERVIEW), enableUserData = false,
+                ),
+            ).content.items
+        }.getOrNull() ?: return channels
+        val byChannel = airing.filter { it.channelId != null }.groupBy { it.channelId }.mapValues { (_, list) -> list.first() }
+        return channels.map { it.copy(currentProgram = byChannel[it.id]) }
     }
 
     private fun guideOrder(channels: List<BaseItemDto>): List<BaseItemDto> = channels.sortedWith(

@@ -183,6 +183,8 @@ fun GuideView(
     // On a TV: the programme the remote is on, which the pane shows, and the window follows so it's always in view.
     var focused by remember { mutableStateOf<Pair<GuideChannel, GuideProgram>?>(null) }
     val firstFocus = remember { FocusRequester() }
+    // The remote starts on the first channel once; a changed filter's new first row leaves it where it was (on the pill).
+    var startedFocus by remember { mutableStateOf(false) }
     fun followFocus(channel: GuideChannel, program: GuideProgram) {
         focused = channel to program
         val start = max(program.start, guideStart)
@@ -267,7 +269,8 @@ fun GuideView(
                         // A group's name over its first channel, as a cable guide's.
                         groupLabel = channel.group?.takeIf { onTv && channels.getOrNull(rowIndex - 1)?.group != it },
                         onProgramFocus = { followFocus(channel, it) },
-                        firstFocus = if (onTv && rowIndex == 0) firstFocus else null,
+                        firstFocus = if (onTv && rowIndex == 0 && !startedFocus) firstFocus else null,
+                        onFirstFocused = { startedFocus = true },
                     )
                 }
             }
@@ -330,10 +333,11 @@ private fun GuideRow(
     groupLabel: String? = null,
     onProgramFocus: (GuideProgram) -> Unit = {},
     firstFocus: FocusRequester? = null,
+    onFirstFocused: () -> Unit = {},
 ) {
     val density = LocalDensity.current
     // On a TV the remote starts on what's airing on the first channel, once its row is in.
-    if (firstFocus != null) LaunchedEffect(programs != null) { if (programs != null) runCatching { firstFocus.requestFocus() } }
+    if (firstFocus != null) LaunchedEffect(programs != null) { if (programs != null) { runCatching { firstFocus.requestFocus() }; onFirstFocused() } }
     // Programmes near the window, an hour or so either side so they're there as it moves.
     val nearby = remember(programs, bucket, visibleSeconds) {
         val lower = guideStart + bucket * 1800.0 - 5400
