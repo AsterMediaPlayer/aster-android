@@ -56,7 +56,7 @@ import org.jellyfin.sdk.model.api.ImageType
 
 /** A card's tap. On a TV the focus draws the card's own lift and shadow, so the default highlight over the whole card (label too) is off. */
 @Composable
-private fun Modifier.cardClickable(onClick: () -> Unit): Modifier =
+internal fun Modifier.cardClickable(onClick: () -> Unit): Modifier =
     if (LocalIsTv.current) clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onClick) else clickable(onClick = onClick)
 
 @Composable

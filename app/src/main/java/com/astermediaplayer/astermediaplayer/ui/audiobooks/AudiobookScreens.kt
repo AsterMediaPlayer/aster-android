@@ -1,5 +1,8 @@
 package com.astermediaplayer.astermediaplayer.ui.audiobooks
 
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.lazy.itemsIndexed
+import com.astermediaplayer.astermediaplayer.ui.components.cardClickable
 import kotlinx.coroutines.launch
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.key.onKeyEvent
@@ -133,11 +136,22 @@ fun AudiobooksScreen(
     val hasHero = state.loaded && featured.isNotEmpty()
     Column(
         modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(bottom = TabBarClearance),
-        verticalArrangement = Arrangement.spacedBy(20.dp),
+        verticalArrangement = Arrangement.spacedBy(if (LocalIsTv.current) Lockup.sectionSpacing else 20.dp),
     ) {
-        if (hasHero) AudiobookHero(featured, onListen)
+        // Down from the hero's button lands on the first book below it, not the section picker (as on the Apple TV).
+        val firstBook = remember { FocusRequester() }
+        if (hasHero) AudiobookHero(featured, onListen, downTarget = if (state.continueListening.isNotEmpty() || state.recentlyAdded.isNotEmpty()) firstBook else null)
         if (state.loaded || state.books.isNotEmpty()) {
-            Column(
+            if (LocalIsTv.current) {
+                // The Apple TV's header: the title with the section picker beside it, 740 wide.
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = Lockup.screenPadding).then(if (hasHero) Modifier else Modifier.padding(top = (40f * Lockup.tvUnit).dp)),
+                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text("Audiobooks", style = Type.pageTitle.copy(fontSize = (76f * Lockup.tvUnit).sp, lineHeight = (90f * Lockup.tvUnit).sp))
+                    Segmented(AudiobookSection.entries.map { it.label }, section.ordinal) { section = AudiobookSection.entries[it] }
+                }
+            } else Column(
                 Modifier.padding(horizontal = Lockup.screenPadding).then(if (hasHero) Modifier else Modifier.statusBarsPadding().padding(top = 8.dp + topInset)),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
@@ -151,8 +165,9 @@ fun AudiobooksScreen(
             state.books.isEmpty() -> Box(Modifier.fillMaxWidth().height(320.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
             else -> when (section) {
                 AudiobookSection.Books -> {
-                    BookShelf("Continue Listening", state.continueListening, onBook)
-                    BookShelf("Recently Added", state.recentlyAdded, onBook)
+                    val firstIsContinue = state.continueListening.isNotEmpty()
+                    BookShelf("Continue Listening", state.continueListening, onBook, if (firstIsContinue) firstBook else null)
+                    BookShelf("Recently Added", state.recentlyAdded, onBook, if (!firstIsContinue) firstBook else null)
                     Text("All Books", style = Type.title3, modifier = Modifier.padding(horizontal = Lockup.screenPadding).padding(top = 20.dp))
                     BookGrid(state.books, onBook)
                 }
@@ -172,6 +187,7 @@ fun AudiobooksScreen(
 /** The system segmented control, as on the title pages. */
 @Composable
 fun Segmented(labels: List<String>, selected: Int, onSelect: (Int) -> Unit) {
+    if (LocalIsTv.current) { TvSegmented(labels, selected, onSelect); return }
     Row(
         Modifier.widthIn(max = DetailMetrics.segmentedMaxWidth).fillMaxWidth().height(DetailMetrics.segmentedHeight)
             .clip(CircleShape).background(Color.White.copy(alpha = 0.19f)).padding(2.dp),
@@ -187,14 +203,14 @@ fun Segmented(labels: List<String>, selected: Int, onSelect: (Int) -> Unit) {
 }
 
 @Composable
-private fun BookShelf(title: String, books: List<Audiobook>, onBook: (Audiobook) -> Unit) {
+private fun BookShelf(title: String, books: List<Audiobook>, onBook: (Audiobook) -> Unit, firstFocus: FocusRequester? = null) {
     if (books.isEmpty()) return
     Column(verticalArrangement = Arrangement.spacedBy(Lockup.shelfTitleSpacing)) {
         Text(title, style = Type.title3, modifier = Modifier.padding(horizontal = Lockup.screenPadding))
         LazyRow(
             contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = Lockup.screenPadding, vertical = Lockup.shelfVerticalPadding),
             horizontalArrangement = Arrangement.spacedBy(Lockup.shelfSpacing),
-        ) { items(books, key = { it.id }) { BookLockup(it, onClick = { onBook(it) }) } }
+        ) { itemsIndexed(books, key = { _, b -> b.id }) { i, b -> BookLockup(b, modifier = if (i == 0 && firstFocus != null) Modifier.focusRequester(firstFocus) else Modifier, onClick = { onBook(b) }) } }
     }
 }
 
@@ -202,10 +218,10 @@ private fun BookShelf(title: String, books: List<Audiobook>, onBook: (Audiobook)
 @Composable
 fun BookGrid(books: List<Audiobook>, onBook: (Audiobook) -> Unit) {
     BoxWithConstraints(Modifier.fillMaxWidth()) {
-        val perRow = maxOf(1, ((maxWidth - Lockup.screenPadding * 2 + Lockup.shelfSpacing) / (Lockup.posterWidth + Lockup.shelfSpacing)).toInt())
-        Column(Modifier.padding(horizontal = Lockup.screenPadding).padding(vertical = 20.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
+        val perRow = maxOf(1, ((maxWidth - Lockup.screenPadding * 2 + Lockup.gridSpacing) / (Lockup.posterWidth + Lockup.gridSpacing)).toInt())
+        Column(Modifier.padding(horizontal = Lockup.screenPadding).padding(vertical = 20.dp), verticalArrangement = Arrangement.spacedBy(Lockup.gridRowSpacing)) {
             books.chunked(perRow).forEach { row ->
-                Row(horizontalArrangement = Arrangement.spacedBy(Lockup.shelfSpacing)) { row.forEach { BookLockup(it, onClick = { onBook(it) }) } }
+                Row(horizontalArrangement = Arrangement.spacedBy(Lockup.gridSpacing)) { row.forEach { BookLockup(it, onClick = { onBook(it) }) } }
             }
         }
     }
@@ -213,9 +229,9 @@ fun BookGrid(books: List<Audiobook>, onBook: (Audiobook) -> Unit) {
 
 /** A book's cover, how far through it is, its title and author. */
 @Composable
-fun BookLockup(book: Audiobook, size: Dp = Lockup.posterWidth, onClick: () -> Unit) {
+fun BookLockup(book: Audiobook, size: Dp = Lockup.posterWidth, modifier: Modifier = Modifier, onClick: () -> Unit) {
     val subtitle = if (book.seriesIndex != null && book.series != null) "${book.series} ${book.seriesIndex}" else book.author
-    Column(Modifier.width(size).clickable(onClick = onClick), verticalArrangement = Arrangement.spacedBy(Lockup.cardLabelSpacing)) {
+    Column(modifier.width(size).tvFocus(Lockup.cornerRadius, lift = 1.08f, ring = false, pictureAspect = 1f).cardClickable(onClick), verticalArrangement = Arrangement.spacedBy(Lockup.cardLabelSpacing)) {
         Box(Modifier.clip(RoundedCornerShape(Lockup.cornerRadius))) {
             AudiobookCover(book, size)
             if (book.progress > 0 && !book.isFinished) Progress(book.progress, Modifier.align(Alignment.BottomCenter).padding(10.dp), 5.dp)
@@ -236,10 +252,10 @@ private fun ShelfGrid(shelves: List<AudiobookShelf>, onShelf: (AudiobookShelf) -
         return
     }
     BoxWithConstraints(Modifier.fillMaxWidth()) {
-        val perRow = maxOf(1, ((maxWidth - Lockup.screenPadding * 2 + Lockup.shelfSpacing) / (Lockup.posterWidth + Lockup.shelfSpacing)).toInt())
-        Column(Modifier.padding(horizontal = Lockup.screenPadding).padding(vertical = 20.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
+        val perRow = maxOf(1, ((maxWidth - Lockup.screenPadding * 2 + Lockup.gridSpacing) / (Lockup.posterWidth + Lockup.gridSpacing)).toInt())
+        Column(Modifier.padding(horizontal = Lockup.screenPadding).padding(vertical = 20.dp), verticalArrangement = Arrangement.spacedBy(Lockup.gridRowSpacing)) {
             shelves.chunked(perRow).forEach { row ->
-                Row(horizontalArrangement = Arrangement.spacedBy(Lockup.shelfSpacing)) { row.forEach { ShelfLockup(it) { onShelf(it) } } }
+                Row(horizontalArrangement = Arrangement.spacedBy(Lockup.gridSpacing)) { row.forEach { ShelfLockup(it) { onShelf(it) } } }
             }
         }
     }
@@ -247,7 +263,7 @@ private fun ShelfGrid(shelves: List<AudiobookShelf>, onShelf: (AudiobookShelf) -
 
 @Composable
 private fun ShelfLockup(shelf: AudiobookShelf, size: Dp = Lockup.posterWidth, onClick: () -> Unit) {
-    Column(Modifier.width(size).clickable(onClick = onClick), verticalArrangement = Arrangement.spacedBy(Lockup.cardLabelSpacing)) {
+    Column(Modifier.width(size).tvFocus(Lockup.cornerRadius, lift = 1.08f, ring = false, pictureAspect = 1f).cardClickable(onClick), verticalArrangement = Arrangement.spacedBy(Lockup.cardLabelSpacing)) {
         Box(Modifier.size(size)) {
             // A second cover peeking out behind, for a stack of books.
             if (shelf.books.size > 1) AudiobookCover(shelf.books[1], size * 0.9f, Modifier.offset(size * 0.05f, -size * 0.05f).alpha(0.5f).clip(RoundedCornerShape(Lockup.cornerRadius)), 400)
@@ -267,7 +283,7 @@ private fun ShelfLockup(shelf: AudiobookShelf, size: Dp = Lockup.posterWidth, on
 
 /** A book as a page of the Audiobooks hero: its cover, blurred, fills the banner behind the cover itself. */
 @Composable
-private fun AudiobookHero(books: List<Audiobook>, onListen: (Audiobook) -> Unit) {
+private fun AudiobookHero(books: List<Audiobook>, onListen: (Audiobook) -> Unit, downTarget: FocusRequester? = null) {
     val pager = rememberPagerState { books.size }
     val windowHeight = with(LocalDensity.current) { LocalWindowInfo.current.containerSize.height.toDp() }
     val tv = LocalIsTv.current
@@ -287,7 +303,7 @@ private fun AudiobookHero(books: List<Audiobook>, onListen: (Audiobook) -> Unit)
         ),
     ) {
         HorizontalPager(pager, Modifier.fillMaxSize()) { page ->
-            HeroPage(books[page], onListen, autofocus = page == 0, focusNow = page == refocusPage && page == pager.settledPage, onFocused = { refocusPage = -1 })
+            HeroPage(books[page], onListen, autofocus = page == 0, focusNow = page == refocusPage && page == pager.settledPage, onFocused = { refocusPage = -1 }, downTarget = downTarget)
         }
         if (books.size > 1) {
             Row(
@@ -301,7 +317,7 @@ private fun AudiobookHero(books: List<Audiobook>, onListen: (Audiobook) -> Unit)
 }
 
 @Composable
-private fun HeroPage(book: Audiobook, onListen: (Audiobook) -> Unit, autofocus: Boolean = false, focusNow: Boolean = false, onFocused: () -> Unit = {}) {
+private fun HeroPage(book: Audiobook, onListen: (Audiobook) -> Unit, autofocus: Boolean = false, focusNow: Boolean = false, onFocused: () -> Unit = {}, downTarget: FocusRequester? = null) {
     val tv = LocalIsTv.current
     val focus = remember { FocusRequester() }
     if (tv && autofocus) LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
@@ -318,7 +334,7 @@ private fun HeroPage(book: Audiobook, onListen: (Audiobook) -> Unit, autofocus: 
         Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.35f)))
         Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.35f to Color.Transparent, 0.675f to Color.Black.copy(alpha = 0.2f), 1f to Color.Black.copy(alpha = 0.9f))))
         Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(0f to Color.Black.copy(alpha = 0.5f), 0.5f to Color.Transparent)))
-        if (tv) { TvHeroBody(book, timeText, focus, onListen); return@Box }
+        if (tv) { TvHeroBody(book, timeText, focus, downTarget, onListen); return@Box }
         val body: @Composable () -> Unit = {
             Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 book.series?.let {
@@ -500,7 +516,7 @@ fun ChapterRow(title: String, startText: String, isCurrent: Boolean, onClick: ()
  * 48 apart, the foot 86 above the bottom and 72 in from the left.
  */
 @Composable
-private fun BoxScope.TvHeroBody(book: Audiobook, timeText: String?, focus: FocusRequester, onListen: (Audiobook) -> Unit) {
+private fun BoxScope.TvHeroBody(book: Audiobook, timeText: String?, focus: FocusRequester, downTarget: FocusRequester?, onListen: (Audiobook) -> Unit) {
     val u = Lockup.tvUnit
     fun pt(points: Float) = (points * u).dp
     fun sp(points: Float) = (points * u).sp
@@ -521,13 +537,32 @@ private fun BoxScope.TvHeroBody(book: Audiobook, timeText: String?, focus: Focus
             if (book.progress > 0 && !book.isFinished) Progress(book.progress, Modifier.widthIn(max = pt(360f)), height = pt(6f))
             book.overview?.let { Text(it, style = Type.callout, color = SecondaryText, maxLines = 3, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = pt(900f))) }
             Row(
-                Modifier.focusRequester(focus).tvFocus(pt(36f)).height(pt(72f)).clip(CircleShape).background(Color.White).clickable { onListen(book) }.padding(horizontal = pt(32f)),
+                Modifier.focusRequester(focus).then(if (downTarget != null) Modifier.focusProperties { down = downTarget } else Modifier).tvFocus(pt(36f)).height(pt(72f)).clip(CircleShape).background(Color.White).clickable { onListen(book) }.padding(horizontal = pt(32f)),
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(pt(16f)),
             ) {
                 Icon(Icons.Default.PlayArrow, null, tint = Color.Black, modifier = Modifier.size(pt(42f)))
                 Text(if (book.resumePoint != null) "Resume" else "Listen", style = Type.headline.copy(fontSize = sp(36f), lineHeight = sp(44f)), color = Color.Black, maxLines = 1)
                 timeText?.let { Text("·  $it", style = Type.headline.copy(fontSize = sp(36f), lineHeight = sp(44f), fontWeight = FontWeight.Normal), color = Color.Black.copy(alpha = 0.5f), maxLines = 1) }
             }
+        }
+    }
+}
+
+/** The section picker on a TV, beside the page title: a 740-point capsule of segments, the picked one lighter and the focused one white. */
+@Composable
+private fun TvSegmented(labels: List<String>, selected: Int, onSelect: (Int) -> Unit) {
+    val u = Lockup.tvUnit
+    Row(
+        Modifier.width((740f * u).dp).height((68f * u).dp).clip(CircleShape).background(Color.White.copy(alpha = 0.14f)).padding((4f * u).dp),
+    ) {
+        labels.forEachIndexed { index, label ->
+            var focused by remember { mutableStateOf(false) }
+            Box(
+                Modifier.weight(1f).fillMaxSize().onFocusChanged { focused = it.isFocused }.clip(CircleShape)
+                    .background(if (focused) Color.White else if (index == selected) Color.White.copy(alpha = 0.3f) else Color.Transparent)
+                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onSelect(index) },
+                contentAlignment = Alignment.Center,
+            ) { Text(label, style = Type.calloutMedium, color = if (focused) Color.Black else Color.White, maxLines = 1) }
         }
     }
 }
