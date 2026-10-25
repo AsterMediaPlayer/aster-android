@@ -22,6 +22,7 @@ import com.astermediaplayer.astermediaplayer.ui.player.ThemePlayer
 class AsterApp : Application(), SingletonImageLoader.Factory {
     val repository: AsterRepository by lazy { AsterRepository(this, SessionStore(this)) }
     val settings: SettingsStore by lazy { SettingsStore(this) }
+    val settingsSync: com.astermediaplayer.astermediaplayer.data.SettingsSync by lazy { com.astermediaplayer.astermediaplayer.data.SettingsSync(repository, settings) }
     val themePlayer: ThemePlayer by lazy { ThemePlayer(this, repository) }
     val themeDeck: com.astermediaplayer.astermediaplayer.ui.player.ThemeDeck by lazy { com.astermediaplayer.astermediaplayer.ui.player.ThemeDeck(repository, themePlayer) }
     val audiobookLibrary: AudiobookLibrary by lazy { AudiobookLibrary(repository) }

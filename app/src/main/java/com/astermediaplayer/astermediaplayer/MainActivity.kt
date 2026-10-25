@@ -44,7 +44,11 @@ class MainActivity : ComponentActivity() {
         // The clock for each server's lock-after: it starts when the app leaves the screen and is read when it's back.
         lifecycle.addObserver(object : androidx.lifecycle.DefaultLifecycleObserver {
             override fun onStop(owner: androidx.lifecycle.LifecycleOwner) { lifecycleScope.launch { repo.noteLeftApp() } }
-            override fun onStart(owner: androidx.lifecycle.LifecycleOwner) { lifecycleScope.launch { repo.checkLock() } }
+            override fun onStart(owner: androidx.lifecycle.LifecycleOwner) {
+                lifecycleScope.launch { repo.checkLock() }
+                // The synced settings come from the server whenever the app opens or returns (and again when Settings opens).
+                lifecycleScope.launch { if (repo.session != null) (application as AsterApp).settingsSync.pull() }
+            }
         })
         setContent {
             val signedIn by produceState<Boolean?>(null) { value = repo.restore() }

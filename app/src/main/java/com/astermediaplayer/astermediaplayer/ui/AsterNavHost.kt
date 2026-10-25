@@ -261,6 +261,8 @@ fun AsterNavHost(signedIn: Boolean) {
     val route = nav.currentBackStackEntryAsState().value?.destination?.route.orEmpty()
     // A video, a disc menu or a theme taking over the screen ends the songs playing under the page.
     LaunchedEffect(route) { if (route.startsWith("player") || route.startsWith("disc") || route.startsWith("theme") || route.startsWith("channel/") || route == Routes.AUTH) deck.stop() }
+    // Reaching the main tabs (opening signed in, signing in, switching servers): the settings that follow the user are fetched.
+    LaunchedEffect(route.startsWith("main")) { if (route.startsWith("main") && repo.session != null) app.settingsSync.pull() }
     val miniFocus = remember { androidx.compose.ui.focus.FocusRequester() }
     val firstRequest = remember { deck.focusRequest }
     LaunchedEffect(deck.focusRequest) { if (deck.focusRequest != firstRequest) runCatching { miniFocus.requestFocus() } }
@@ -633,8 +635,26 @@ private fun MainTabs(
     val detectedAnime by produceState<List<BaseItemDto>?>(null, libraries) { value = if (libraries.isEmpty()) null else runCatching { repo.animeLibraries(libraries) }.getOrDefault(emptyList()) }
     // Upcoming is listed only while the server has something coming up, as on the Apple apps.
     // Channels are playlist tags in Jellyfin's shape: not on Emby yet, as in the Apple apps.
-    val hasChannels = repo.serverKind == com.astermediaplayer.astermediaplayer.data.emby.ServerKind.Jellyfin
+    // The tab is there once the server has channels shown to this user (editing them is Settings' Channels page), as on the Apple apps.
+    val hasChannels by produceState(false, repo.currentServerId) {
+        value = repo.serverKind == com.astermediaplayer.astermediaplayer.data.emby.ServerKind.Jellyfin &&
+            runCatching { repo.videoPlaylists() }.getOrDefault(emptyList()).any { p ->
+                com.astermediaplayer.astermediaplayer.data.channels.ChannelTags.from(p.tags).let { it.isChannel && it.isShown(repo.session?.userName) }
+            }
+    }
     val hasUpcoming by produceState(false) { value = runCatching { repo.upcoming(1).isNotEmpty() }.getOrDefault(false) }
+    // What the menu lists is what the server has, as on the Apple apps: Music, Audiobooks and Live TV need a library of their own.
+    val hasMusic = libraries.any { it.collectionType == CollectionType.MUSIC }
+    val hasBooks = libraries.any { it.collectionType == CollectionType.BOOKS }
+    val hasLiveTv = libraries.any { it.collectionType == CollectionType.LIVETV }
+    fun listed(d: MoreDestination) = when (d) {
+        MoreDestination.Upcoming -> hasUpcoming
+        MoreDestination.Channels -> hasChannels
+        MoreDestination.Music -> hasMusic
+        MoreDestination.Audiobooks -> hasBooks
+        MoreDestination.LiveTv -> hasLiveTv
+        else -> true
+    }
     val upcoming: UpcomingViewModel = viewModel(factory = viewModelFactory { initializer { UpcomingViewModel(repo) } })
     val libraryHome: LibraryHomeViewModel = viewModel(factory = viewModelFactory { initializer { LibraryHomeViewModel(repo) } })
     val animeLibraries = detectedAnime.orEmpty()
@@ -657,8 +677,8 @@ private fun MainTabs(
     val isTv = LocalIsTv.current
     val landscape = !wide && config.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
     val promoted = when {
-        isTv -> TvDestinations.filter { (it != MoreDestination.Upcoming || hasUpcoming) && (it != MoreDestination.Channels || hasChannels) }
-        landscape -> promotedFor(tabs, PromotedOrder.filter { it != MoreDestination.Upcoming || hasUpcoming }, config.screenWidthDp)
+        isTv -> TvDestinations.filter(::listed)
+        landscape -> promotedFor(tabs, PromotedOrder.filter(::listed), config.screenWidthDp)
         else -> emptyList()
     }
     var menuOpen by rememberSaveable { mutableStateOf(false) }
@@ -748,7 +768,7 @@ private fun MainTabs(
                     SettingsScreen(repo.session, app.settings, servers, onSignOut, Modifier.statusBarsPadding().padding(top = 56.dp))
                     BackButton { back() }
                 }
-                null -> MoreMenu(MoreDestination.entries.filter { (it != MoreDestination.Upcoming || hasUpcoming) && (it != MoreDestination.Channels || hasChannels) && it !in promoted }, onPick = { more = it }, modifier = modifier.statusBarsPadding())
+                null -> MoreMenu(MoreDestination.entries.filter { listed(it) && it !in promoted }, onPick = { more = it }, modifier = modifier.statusBarsPadding())
             }
         }
     }

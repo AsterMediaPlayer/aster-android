@@ -50,7 +50,13 @@ object EmbyShapes {
     private fun fillOrNull(json: JsonElement, descriptor: SerialDescriptor): JsonElement? = when (descriptor.kind) {
         StructureKind.CLASS -> if (json is JsonObject) fillClass(json, descriptor) else json
         // An entry the SDK can't hold (a tag among the items, an attachment among the streams) is left out of its list.
-        StructureKind.LIST -> if (json is JsonArray && descriptor.elementsCount > 0) JsonArray(json.mapNotNull { fillOrNull(it, descriptor.getElementDescriptor(0)) }) else json
+        StructureKind.LIST ->
+            if (json is JsonArray && descriptor.elementsCount > 0) {
+                val element = descriptor.getElementDescriptor(0)
+                // A list of enum values (a library's locked fields) keeps those the SDK knows; Emby has more ("SortName").
+                if (element.kind == SerialKind.ENUM) JsonArray(json.filter { knows(element, it) })
+                else JsonArray(json.mapNotNull { fillOrNull(it, element) })
+            } else json
         StructureKind.MAP -> if (json is JsonObject && descriptor.elementsCount > 1) JsonObject(json.mapValues { (_, v) -> fill(v, descriptor.getElementDescriptor(1)) }) else json
         else -> json
     }
