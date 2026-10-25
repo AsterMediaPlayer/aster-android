@@ -31,6 +31,8 @@ data class OpEdTheme(
     val playsInEpisode: Boolean?,
     val spoiler: Boolean,
     val nsfw: Boolean,
+    /** Which episodes it plays in, as the plugin writes it ("1-11", "2, 5, 8-9"). */
+    val episodes: String? = null,
     val videoMp4Url: String?,
     val videoMp4Status: String?,
     val audioM4aUrl: String?,
@@ -103,6 +105,7 @@ data class OpEdTheme(
             playsInEpisode = if (o.has("PlaysInEpisode") && !o.isNull("PlaysInEpisode")) o.optBoolean("PlaysInEpisode") else null,
             spoiler = o.optBoolean("Spoiler"),
             nsfw = o.optBoolean("Nsfw"),
+            episodes = o.str("Episodes"),
             videoMp4Url = o.str("VideoMp4Url"),
             videoMp4Status = o.str("VideoMp4Status"),
             audioM4aUrl = o.str("AudioM4aUrl"),

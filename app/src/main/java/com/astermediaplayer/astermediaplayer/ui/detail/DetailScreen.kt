@@ -87,6 +87,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Favorite
@@ -545,6 +546,17 @@ private fun DetailBody(
                 }
             }
         }
+        // The Now Playing panel floats at the top right while the Music tab plays something, over the page (the Apple TV's).
+        val deck = app.themeDeck
+        if (isTv && deck.isActive) {
+            val artwork = remember(item.id) { repo.imageUrl(item, ImageType.PRIMARY, 640) ?: repo.imageUrl(item, ImageType.BACKDROP, 640) }
+            ThemeNowPlayingPanel(
+                deck, artwork,
+                Modifier.align(Alignment.TopEnd).padding(top = 20.dp, end = 40.dp).width(300.dp),
+                showDetails = true, wide = false,
+                onFullScreen = { deck.current?.let { entry -> deck.stop(); onPlayTheme(entry) } },
+            )
+        }
     }
 }
 
@@ -818,14 +830,17 @@ private fun EpisodeStrip(season: List<BaseItemDto>, currentId: UUID, playCenterP
 }
 
 /**
- * An anime title's openings and endings: a list of cards, and beside it (a TV) or above it (a phone) a Now Playing panel
- * once one plays. A card plays in the panel, then the rest follow it; the panel stops with the page.
+ * An anime title's openings and endings, as on the Apple TV: Play All, Shuffle and Add All to Playlist, a Now Playing panel
+ * once something plays, then a row of picture cards for the openings and one for the endings. A card plays in the panel and
+ * the rest follow it; the panel stops with the page.
  */
 @Composable
 private fun MusicSection(content: DetailContent, onPlayTheme: (OpeningEnding) -> Unit) {
     val app = LocalContext.current.applicationContext as AsterApp
+    val repo = app.repository
     val deck = app.themeDeck
     val tv = LocalIsTv.current
+    val settings by app.settings.settings.collectAsStateWithLifecycle(initialValue = AppSettings())
     // Away from the page it goes quiet; the full-screen buttons (Watch OP, Watch ED) start their own player.
     DisposableEffect(content.item.id) { onDispose { deck.stop() } }
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -834,24 +849,94 @@ private fun MusicSection(content: DetailContent, onPlayTheme: (OpeningEnding) ->
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
-    val artwork = remember(content.item.id) { app.repository.imageUrl(content.item, ImageType.PRIMARY, 640) ?: app.repository.imageUrl(content.item, ImageType.BACKDROP, 640) }
-    val cards: @Composable (Modifier) -> Unit = { modifier ->
-        Column(modifier, verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            content.openingsEndings.forEach { oe -> ThemeCard(oe, onClick = { deck.play(oe, content.openingsEndings, content.item) }) }
+    val artwork = remember(content.item.id) { repo.imageUrl(content.item, ImageType.PRIMARY, 640) ?: repo.imageUrl(content.item, ImageType.BACKDROP, 640) }
+    val realSeasons = content.seasons.filter { (it.indexNumber ?: 0) > 0 }
+
+    /** Openings (or endings) season by season, in the show's order; themes for the whole show first. */
+    fun sorted(opening: Boolean): List<OpeningEnding> {
+        val order = content.seasons.withIndex().associate { it.value.id.toString().replace("-", "") to it.index }
+        return content.openingsEndings.filter { it.isOpening == opening }.sortedWith(
+            compareBy<OpeningEnding>(
+                { (it as? OpeningEnding.Theme)?.theme?.seasonId?.let { id -> order[id.replace("-", "")] } ?: -1 },
+                { (it as? OpeningEnding.Theme)?.theme?.sequence ?: 0 },
+                { (it as? OpeningEnding.Theme)?.theme?.version ?: 0 },
+            ),
+        )
+    }
+    fun preferred(entry: OpeningEnding): OpeningEnding = if (entry is OpeningEnding.Theme) OpeningEnding.Theme(entry.theme.preferring(settings.themeCut)) else entry
+    val queue = (sorted(true) + sorted(false)).map(::preferred)
+    val unflagged = queue.filter { it !is OpeningEnding.Theme || (it.theme.playablePath != null && !it.theme.spoiler && !it.theme.nsfw) }
+    val publishedIds = queue.mapNotNull { (it as? OpeningEnding.Theme)?.theme?.libraryItemId?.let(::parseDiscUuid) }
+    var confirming by remember { mutableStateOf<OpeningEnding.Theme?>(null) }
+    var addingIds by remember { mutableStateOf<List<UUID>?>(null) }
+    val context = LocalContext.current
+
+    fun start(entry: OpeningEnding, order: List<OpeningEnding> = queue) = deck.play(entry, order, content.item)
+    fun pressed(entry: OpeningEnding) {
+        val e = preferred(entry)
+        if (e is OpeningEnding.Theme && (e.theme.spoiler || e.theme.nsfw)) confirming = e else start(e)
+    }
+    fun isPlaying(entry: OpeningEnding): Boolean = when (val c = deck.current) {
+        is OpeningEnding.Theme -> entry is OpeningEnding.Theme && entry.theme.id == c.theme.id
+        is OpeningEnding.Chapter -> entry is OpeningEnding.Chapter && entry.clip.episode.id == c.clip.episode.id && entry.clip.startMs == c.clip.startMs
+        null -> false
+    }
+
+    Column(verticalArrangement = Arrangement.spacedBy(24.dp)) {
+        if (unflagged.isNotEmpty() || publishedIds.isNotEmpty()) Row(Modifier.padding(horizontal = Lockup.screenPadding), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            if (unflagged.isNotEmpty()) {
+                LabeledPill("Play All", Icons.Default.PlayArrow, prominent = true) { start(unflagged.first()) }
+                LabeledPill("Shuffle", Icons.Default.Shuffle) { val order = unflagged.shuffled(); start(order.first(), order) }
+            }
+            if (publishedIds.isNotEmpty()) LabeledPill("Add All to Playlist", Icons.AutoMirrored.Filled.PlaylistAdd) { addingIds = publishedIds }
+        }
+        if (deck.isActive && !tv) ThemeNowPlayingPanel(deck, artwork, Modifier.padding(horizontal = Lockup.screenPadding), showDetails = true, wide = false)
+        for ((title, subtitle, opening) in listOf(Triple("Openings", "The songs that start each episode.", true), Triple("Endings", "The songs over the closing credits.", false))) {
+            val entries = sorted(opening)
+            if (entries.isEmpty()) continue
+            Column {
+                Column(Modifier.padding(horizontal = Lockup.screenPadding), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Bottom) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Icon(Icons.Default.MusicNote, null)
+                            Text(title, style = Type.title3)
+                        }
+                        Text(if (entries.size == 1) "1 song" else "${entries.size} songs", style = MaterialTheme.typography.bodySmall, color = SecondaryText)
+                    }
+                    Text(subtitle, style = MaterialTheme.typography.bodySmall, color = SecondaryText)
+                }
+                LazyRow(
+                    contentPadding = PaddingValues(horizontal = Lockup.screenPadding, vertical = Lockup.shelfVerticalPadding),
+                    horizontalArrangement = Arrangement.spacedBy(Lockup.shelfSpacing),
+                ) {
+                    items(entries) { entry ->
+                        when (entry) {
+                            is OpeningEnding.Theme -> {
+                                val seasonName = if (realSeasons.size > 1) entry.theme.seasonId?.let { id -> content.seasons.firstOrNull { it.id.toString().replace("-", "") == id.replace("-", "") }?.name } else null
+                                ThemeCard(entry.theme, repo, seasonName, artwork, isPlaying(preferred(entry))) { pressed(entry) }
+                            }
+                            is OpeningEnding.Chapter -> ThemeClipCard(entry.clip, repo.imageUrl(entry.clip.episode, ImageType.PRIMARY, 480), isPlaying(entry)) { pressed(entry) }
+                        }
+                    }
+                }
+            }
         }
     }
-    Column(verticalArrangement = Arrangement.spacedBy(Lockup.shelfTitleSpacing)) {
-        Text("Openings & Endings", style = Type.title3, modifier = Modifier.padding(horizontal = Lockup.screenPadding))
-        if (tv) Row(Modifier.padding(start = Lockup.screenPadding, end = Lockup.screenPadding, bottom = 48.dp), horizontalArrangement = Arrangement.spacedBy(32.dp)) {
-            cards(Modifier.width(560.dp))
-            // The screen is short: the facts under the controls are left for a phone.
-            if (deck.isActive) ThemeNowPlayingPanel(deck, artwork, Modifier.width(460.dp), showDetails = false)
-        } else Column(Modifier.padding(horizontal = Lockup.screenPadding), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            if (deck.isActive) ThemeNowPlayingPanel(deck, artwork, Modifier.fillMaxWidth())
-            cards(Modifier)
-        }
+    confirming?.let { theme ->
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { confirming = null },
+            title = { Text(if (theme.theme.nsfw) "NSFW" else "Spoilers") },
+            text = { Text(if (theme.theme.nsfw) "This opening or ending is marked as not safe for work." else "This opening or ending is marked as containing spoilers.") },
+            confirmButton = { androidx.compose.material3.TextButton({ confirming = null; start(theme) }) { Text("Play") } },
+            dismissButton = { androidx.compose.material3.TextButton({ confirming = null }) { Text("Cancel") } },
+        )
+    }
+    addingIds?.let { ids ->
+        PlaylistPicker(ids, onDone = { name -> addingIds = null; android.widget.Toast.makeText(context, "Added to $name.", android.widget.Toast.LENGTH_SHORT).show() }, onDismiss = { addingIds = null })
     }
 }
+
+private fun parseDiscUuid(id: String): UUID? = com.astermediaplayer.astermediaplayer.data.disc.parseUuid(id)
 
 /** Who's in it, and the facts about it. */
 @Composable
@@ -942,26 +1027,6 @@ private fun ThemeVideo(themePlayer: ThemePlayer, item: BaseItemDto, modifier: Mo
         update = { it.player = player },
         modifier = modifier.alpha(alpha),
     )
-}
-
-@Composable
-private fun ThemeCard(oe: OpeningEnding, onClick: () -> Unit) {
-    val playable = when (oe) { is OpeningEnding.Theme -> oe.theme.playablePath != null; is OpeningEnding.Chapter -> true }
-    val (title, detail) = when (oe) {
-        is OpeningEnding.Theme -> (oe.theme.code) to (oe.theme.songLine ?: if (oe.theme.isPreparing) "Preparing…" else null)
-        is OpeningEnding.Chapter -> oe.clip.title to "%d:%02d".format(oe.clip.seconds / 60, oe.clip.seconds % 60)
-    }
-    Row(
-        Modifier.widthIn(min = 240.dp).fillMaxWidth().tvFocus(12.dp).clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceVariant)
-            .clickable(enabled = playable, onClick = onClick).padding(14.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(Icons.Default.MusicNote, null, tint = if (playable) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
-        Column {
-            Text(title, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            detail?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis) }
-        }
-    }
 }
 
 /**
