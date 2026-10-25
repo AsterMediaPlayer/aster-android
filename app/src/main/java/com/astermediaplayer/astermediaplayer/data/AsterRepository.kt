@@ -694,6 +694,32 @@ class AsterRepository(context: Context, private val store: SessionStore) {
     fun videoStreamUrl(itemId: UUID): String =
         api.videoApi.getVideoStreamUrl(itemId = itemId, static = true, mediaSourceId = itemId.toString())
 
+    // MARK: Server routes the SDK has no call for (plugins, repositories, restart)
+
+    /** A request to a server route outside the SDK; the body of a success, an exception for anything else. */
+    suspend fun serverRequest(method: String, path: String, jsonBody: String? = null): String = withContext(Dispatchers.IO) {
+        val builder = Request.Builder().url(serverUrl.trimEnd('/') + path).header("Authorization", authorizationHeader())
+        if (method == "GET") builder.get()
+        else builder.method(method, (jsonBody ?: "").toRequestBody((if (jsonBody != null) "application/json" else "text/plain").toMediaType()))
+        http.newCall(builder.build()).execute().use { r ->
+            val body = r.body.string()
+            if (!r.isSuccessful) error("the server said ${r.code}")
+            body
+        }
+    }
+
+    /** Whether the server answers `path`: true for a reply, false for a 404 (a plugin that isn't there), null when it can't tell. */
+    suspend fun serverHas(path: String): Boolean? {
+        if (serverKind != ServerKind.Jellyfin) return null
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                http.newCall(Request.Builder().url(serverUrl.trimEnd('/') + path).header("Authorization", authorizationHeader()).build()).execute().use { r ->
+                    if (r.code == 404) false else if (r.isSuccessful) true else null
+                }
+            }.getOrNull()
+        }
+    }
+
     // MARK: Disc menus (the Aster Disc plugin)
 
     /** The resolved disc menu for a movie, series or season; null when the server has none (a 404 is "nothing to show", never an error). */

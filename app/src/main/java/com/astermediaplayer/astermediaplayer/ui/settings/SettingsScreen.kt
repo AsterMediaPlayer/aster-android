@@ -26,6 +26,8 @@ import androidx.compose.material.icons.filled.Album
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.ClosedCaption
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Extension
+import androidx.compose.material.icons.filled.Tv
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.PlayCircle
@@ -80,7 +82,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /** What the servers list in Settings does beyond showing them: the screen's way back to sign-in, and to a server switched to. */
-class ServerActions(val repo: com.astermediaplayer.astermediaplayer.data.AsterRepository, val onSwitched: () -> Unit, val onAddServer: () -> Unit)
+class ServerActions(val repo: com.astermediaplayer.astermediaplayer.data.AsterRepository, val onSwitched: () -> Unit, val onAddServer: () -> Unit, val onOpenChannels: () -> Unit = {})
 
 /** The pages Settings opens (the Apple apps' `SettingsDestination`): a root of categories, each its own page. */
 private sealed interface SettingsPage {
@@ -89,6 +91,7 @@ private sealed interface SettingsPage {
     data object Subtitles : SettingsPage
     data object DiscMenus : SettingsPage
     data object TitlePages : SettingsPage
+    data object ServerPlugins : SettingsPage
     data object Downloads : SettingsPage
     data object Account : SettingsPage
     data object About : SettingsPage
@@ -112,11 +115,12 @@ fun SettingsScreen(session: Session?, store: SettingsStore, servers: ServerActio
 
     SettingsFrame(page, modifier) {
         when (page) {
-            SettingsPage.Root -> RootPage(session, ::open)
+            SettingsPage.Root -> RootPage(session, servers.onOpenChannels, ::open)
             SettingsPage.Playback -> PlaybackPage(settings, store, scope)
             SettingsPage.Subtitles -> SubtitlesPage(settings, store, scope)
             SettingsPage.DiscMenus -> DiscMenusPage(settings, store, scope)
             SettingsPage.TitlePages -> TitlePagesPage(settings, store, scope)
+            SettingsPage.ServerPlugins -> ServerPluginsPage(servers.repo)
             SettingsPage.Downloads -> DownloadsPage(settings, store, scope)
             SettingsPage.Account -> AccountPage(session, servers, onSignOut, ::open)
             SettingsPage.About -> AboutPage()
@@ -132,6 +136,7 @@ private fun SettingsPage.title(servers: List<SavedServer>) = when (this) {
     SettingsPage.Subtitles -> "Audio & Subtitles"
     SettingsPage.DiscMenus -> "Disc Menus"
     SettingsPage.TitlePages -> "Title Pages"
+    SettingsPage.ServerPlugins -> "Server Plugins"
     SettingsPage.Downloads -> "Downloads"
     SettingsPage.Account -> "Account"
     SettingsPage.About -> "About"
@@ -151,7 +156,8 @@ private val LocalFirstFocus = androidx.compose.runtime.compositionLocalOf<FirstF
 @Composable
 private fun firstFocusModifier(pressable: Boolean): Modifier {
     val first = LocalFirstFocus.current
-    return remember { if (pressable && first?.claim() == true) Modifier.focusRequester(first.requester) else Modifier }
+    // Decided again when a row becomes pressable (a page still loading has its rows disabled).
+    return remember(pressable) { if (pressable && first?.claim() == true) Modifier.focusRequester(first.requester) else Modifier }
 }
 
 /** The page's title and scrolling column, in the TV's list style or a phone's; focus goes into the first row as a page opens. */
@@ -161,7 +167,7 @@ private fun SettingsFrame(page: SettingsPage, modifier: Modifier, content: @Comp
     val u = Lockup.tvUnit
     val first = remember(page) { FirstFocus() }
     // Rows aren't placed in the frame a page opens in, so asking again until one takes it.
-    LaunchedEffect(page) { if (tv) repeat(15) { if (runCatching { first.requester.requestFocus() }.isSuccess) return@LaunchedEffect else delay(60) } }
+    LaunchedEffect(page) { if (tv) repeat(50) { if (runCatching { first.requester.requestFocus() }.getOrDefault(false)) return@LaunchedEffect else delay(60) } }
     if (tv) {
         androidx.compose.runtime.CompositionLocalProvider(LocalFirstFocus provides first) {
             Column(
@@ -251,13 +257,18 @@ internal fun SChoice(title: String, options: List<String>, selected: Int, onPick
 // --- The pages ---
 
 @Composable
-private fun RootPage(session: Session?, open: (SettingsPage) -> Unit) {
+private fun RootPage(session: Session?, openChannels: () -> Unit, open: (SettingsPage) -> Unit) {
     val tv = LocalIsTv.current
     SRow("Playback", icon = Icons.Default.PlayCircle, chevron = true) { open(SettingsPage.Playback) }
     SRow("Audio & Subtitles", icon = Icons.Default.ClosedCaption, chevron = true) { open(SettingsPage.Subtitles) }
     // Disc menus come from a Jellyfin plugin.
     if (session?.kind == com.astermediaplayer.astermediaplayer.data.emby.ServerKind.Jellyfin) SRow("Disc Menus", icon = Icons.Default.Album, chevron = true) { open(SettingsPage.DiscMenus) }
     SRow("Title Pages", icon = Icons.Default.MusicNote, chevron = true) { open(SettingsPage.TitlePages) }
+    // Channels are playlist tags in Jellyfin's shape, and the plugins are Jellyfin's: neither on Emby.
+    if (session?.kind == com.astermediaplayer.astermediaplayer.data.emby.ServerKind.Jellyfin) {
+        SRow("Channels (Beta)", icon = Icons.Default.Tv, chevron = true, onClick = openChannels)
+        SRow("Server Plugins", icon = Icons.Default.Extension, chevron = true) { open(SettingsPage.ServerPlugins) }
+    }
     if (!tv) SRow("Downloads", icon = Icons.Default.Download, chevron = true) { open(SettingsPage.Downloads) }
     SGroup(" ")
     SRow("Account", session?.userName.orEmpty(), icon = Icons.Default.AccountCircle, chevron = true) { open(SettingsPage.Account) }
@@ -293,6 +304,50 @@ private fun TitlePagesPage(settings: AppSettings, store: SettingsStore, scope: k
     SGroup("Anime")
     SSwitch("Opening plays with sound", settings.openingSound, enabled = settings.themeVideos) { scope.launch { store.setOpeningSound(it) } }
     SNote("Anime with no theme video of its own loops its first opening behind the series page, when Theme videos is on. With sound, it plays quietly, like theme music.")
+}
+
+/** Aster's companion plugins on the server: a switch each for an administrator, else whether they're there. */
+@Composable
+private fun ServerPluginsPage(repo: com.astermediaplayer.astermediaplayer.data.AsterRepository) {
+    val model = remember { com.astermediaplayer.astermediaplayer.data.ServerPluginsModel(repo) }
+    val scope = rememberCoroutineScope()
+    var confirming by remember { mutableStateOf(false) }
+    LaunchedEffect(model) { model.load() }
+    val admin = model.isAdministrator
+    if (admin == null) { SNote("Looking at your server…"); return }
+    for (plugin in com.astermediaplayer.astermediaplayer.data.AsterPlugin.entries) {
+        val state = model.state(plugin)
+        val title = "${plugin.headline} · ${plugin.packageName}"
+        if (admin) SSwitch(title, state.isOn, enabled = state.canSwitch && model.restart != com.astermediaplayer.astermediaplayer.data.ServerPluginsModel.Restart.Restarting) { scope.launch { model.set(plugin, it) } }
+        else SRow(title)
+        // An administrator's switch already says On or Off.
+        val caption = state.caption("Jellyfin").takeIf { it.isNotEmpty() && !(admin && (state == com.astermediaplayer.astermediaplayer.data.PluginState.Active || state == com.astermediaplayer.astermediaplayer.data.PluginState.Disabled)) }
+        SNote(plugin.summary + caption?.let { "\n$it" }.orEmpty())
+    }
+    if (admin) SNote("Free plugins for Jellyfin that add more to Aster. Switching one on installs it on your server; off turns it off and keeps its settings. Either takes a server restart.")
+    if (admin && (model.needsRestart || model.restart != com.astermediaplayer.astermediaplayer.data.ServerPluginsModel.Restart.Idle || model.errorMessage != null)) {
+        SGroup("Restart")
+        when (val restart = model.restart) {
+            com.astermediaplayer.astermediaplayer.data.ServerPluginsModel.Restart.Restarting -> SNote("Restarting your server. This usually takes about a minute…")
+            is com.astermediaplayer.astermediaplayer.data.ServerPluginsModel.Restart.Failed -> SNote(restart.message)
+            com.astermediaplayer.astermediaplayer.data.ServerPluginsModel.Restart.Idle -> if (model.needsRestart) {
+                if (model.canRestart) {
+                    SNote("Almost there. Your server needs a quick restart to finish.")
+                    SRow("Restart Server", destructive = true) { confirming = true }
+                } else SNote("Almost there. Restart Jellyfin to finish (it can't restart itself where it's running).")
+            }
+        }
+        model.errorMessage?.let { SNote(it) }
+    }
+    SGroup(" ")
+    SNote("Aster Aurora, for the web: brings as much of Aster as it can to Jellyfin in your browser, with big hero banners, trailers playing behind titles, and more. Once Aster's repository is on your server, you'll find it in the plugin catalogue in Jellyfin's dashboard.")
+    if (!admin) SNote("Want these? Ask whoever runs your server. They can switch them on from Aster in a few seconds, or add this repository under Plugins ▸ Repositories in Jellyfin's dashboard: ${com.astermediaplayer.astermediaplayer.data.AsterPlugin.REPOSITORY_URL}")
+    if (confirming) androidx.compose.material3.AlertDialog(
+        onDismissRequest = { confirming = false },
+        title = { Text("Restart your server now?") }, text = { Text("Anyone watching will be paused for about a minute.") },
+        confirmButton = { androidx.compose.material3.TextButton({ confirming = false; scope.launch { model.restartServer() } }) { Text("Restart") } },
+        dismissButton = { androidx.compose.material3.TextButton({ confirming = false }) { Text("Cancel") } },
+    )
 }
 
 @Composable
