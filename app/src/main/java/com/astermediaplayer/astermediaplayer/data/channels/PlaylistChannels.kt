@@ -59,6 +59,8 @@ data class PlaylistChannel(
     val breakClips: ChannelBreakClips = ChannelBreakClips.None,
     /** The series' clear logo, when the playlist is all one series' episodes. */
     val seriesLogo: SeriesLogo? = null,
+    /** From the `group=` tag; null for none. */
+    val group: String? = null,
 ) {
     data class SeriesLogo(val itemId: UUID, val tag: String)
 
@@ -201,9 +203,9 @@ class ChannelsModel(private val repo: AsterRepository) {
                     playlist = entry.playlist, number = number, items = items, lineup = entry.tags.lineup,
                     showsLogo = entry.tags.showsLogo, showsBug = entry.tags.showsBug, bugCorner = entry.tags.bugCorner, bugSize = entry.tags.bugSize,
                     bugHideAfter = entry.tags.bugHideAfter, bugOpacity = entry.tags.bugOpacity, customName = entry.tags.name,
-                    breakClips = clips, seriesLogo = PlaylistChannel.seriesLogo(items),
+                    breakClips = clips, seriesLogo = PlaylistChannel.seriesLogo(items), group = entry.tags.group,
                 )
-            }.sortedWith(compareBy<PlaylistChannel>({ it.number }, { it.name }))
+            }.sortedWith(compareBy<PlaylistChannel>({ it.number }, { it.name })).let(ChannelGroups::ordered)
             _channels.value = built
             ChannelTuner.register(built)
         } catch (e: Exception) {
@@ -340,4 +342,25 @@ class ChannelsModel(private val repo: AsterRepository) {
     private fun idsByName(items: List<BaseItemDto>) = Companion.idsByName(items)
     private fun merged(own: List<BaseItemDto>, extra: List<BaseItemDto>) = Companion.merged(own, extra)
     private fun passes(item: BaseItemDto, tags: ChannelTags) = Companion.passes(item, tags)
+}
+
+/**
+ * Channels in named groups, like a cable guide's (the Apple apps' `ChannelGrouping`): a group goes in order of its lowest channel
+ * number, its channels by number within it, and channels without a group go under "Other" once any channel has one. Until some
+ * channel has a group there are none, and everything stays as it was.
+ */
+object ChannelGroups {
+    const val OTHER = "Other"
+
+    /** [channels] (given by number) in group order, with each group's channels staying in the order given. */
+    fun ordered(channels: List<PlaylistChannel>): List<PlaylistChannel> {
+        val names = names(channels)
+        if (names.isEmpty()) return channels
+        val rank = names.withIndex().associate { (i, n) -> n to i }
+        return channels.sortedBy { rank[it.group ?: OTHER] ?: 0 }
+    }
+
+    /** The groups in order: by their lowest channel number (channels come by number); empty when no channel has a group. */
+    fun names(channels: List<PlaylistChannel>): List<String> =
+        if (channels.none { it.group != null }) emptyList() else channels.map { it.group ?: OTHER }.distinct()
 }

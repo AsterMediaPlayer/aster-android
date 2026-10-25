@@ -1,5 +1,11 @@
 package com.astermediaplayer.astermediaplayer.ui.guide
 
+import androidx.compose.foundation.layout.Spacer
+import com.astermediaplayer.astermediaplayer.ui.theme.tvFocus
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -72,7 +78,10 @@ import kotlin.math.min
 import kotlin.math.roundToInt
 
 /** A channel's row heading in the guide. */
-data class GuideChannel(val id: String, val number: String?, val name: String, val logoUrl: String? = null, val favorite: Boolean = false)
+data class GuideChannel(val id: String, val number: String?, val name: String, val logoUrl: String? = null, val favorite: Boolean = false, val group: String? = null)
+
+/** What the TV's detail pane shows of the focused programme: its picture, title and description. */
+data class GuideDetail(val title: String, val overview: String?, val imageUrl: String?)
 
 /** A programme's cell: [title] over [episodeTitle] (else its time), from [start] to [end] (seconds since 1970). */
 data class GuideProgram(
@@ -82,15 +91,18 @@ data class GuideProgram(
 )
 
 // About an hour of guide across a phone held upright, as the Apple apps' phone layout.
-private val CHANNEL_COLUMN = 88.dp
-private val ROW_HEIGHT = 60.dp
-private const val POINTS_PER_MINUTE = 4f
-private val COLUMN_GAP = 6.dp
-private val CELL_GAP = 4.dp
-private val CELL_RADIUS = 8.dp
-private val MINIMUM_VISIBLE_CELL = 80.dp
+// On a TV the same guide at the Apple TV's measurements (8 points a minute: a half hour is 240 wide).
+private val tvUnit: Float get() = Lockup.tvUnit
+private val onTv: Boolean get() = Lockup.onTv
+private val CHANNEL_COLUMN: Dp get() = if (onTv) (250f * tvUnit).dp else 88.dp
+private val ROW_HEIGHT: Dp get() = if (onTv) (96f * tvUnit).dp else 60.dp
+private val POINTS_PER_MINUTE: Float get() = if (onTv) 8f * tvUnit else 4f
+private val COLUMN_GAP: Dp get() = if (onTv) (8f * tvUnit).dp else 6.dp
+private val CELL_GAP: Dp get() = if (onTv) (8f * tvUnit).dp else 4.dp
+private val CELL_RADIUS: Dp get() = if (onTv) (14f * tvUnit).dp else 8.dp
+private val MINIMUM_VISIBLE_CELL: Dp get() = if (onTv) (200f * tvUnit).dp else 80.dp
 private val MINIMUM_CELL_WIDTH = 20.dp
-private val HEADER_HEIGHT = 32.dp
+private val HEADER_HEIGHT: Dp get() = if (onTv) (60f * tvUnit).dp else 32.dp
 private val CellGrey = Color(0xFF292929)
 private val AiringGrey = Color(0xFF383838)
 private val PlaceholderGrey = Color(0xFF1F1F1F)
@@ -136,6 +148,10 @@ fun GuideView(
     emptyDetail: String = "Add a tuner or M3U source in the Jellyfin dashboard.",
     modifier: Modifier = Modifier,
     bottomPadding: Dp = 60.dp,
+    /** On a TV, the programme the remote is on, for the pane above the times (none: no pane). */
+    detail: ((GuideChannel, GuideProgram) -> GuideDetail?)? = null,
+    /** Extra room at each side, over the page's own. */
+    inset: Dp = 0.dp,
 ) {
     val density = LocalDensity.current
     val scope = rememberCoroutineScope()
@@ -162,11 +178,23 @@ fun GuideView(
         }
     }
 
-    Column(modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    // On a TV: the programme the remote is on, which the pane shows, and the window follows so it's always in view.
+    var focused by remember { mutableStateOf<Pair<GuideChannel, GuideProgram>?>(null) }
+    val firstFocus = remember { FocusRequester() }
+    fun followFocus(channel: GuideChannel, program: GuideProgram) {
+        focused = channel to program
+        val start = max(program.start, guideStart)
+        val current = guideStart + window.value
+        val fits = program.end - start <= visibleSeconds
+        if (start < current - 1 || (fits && program.end > current + visibleSeconds + 1)) jumpTo(floorToHalfHour(start))
+    }
+
+    Column(modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(if (onTv) 0.dp else 8.dp)) {
+        if (onTv && detail != null) TvDetailPane(focused?.let { (c, p) -> detail(c, p) }, Modifier.padding(horizontal = Lockup.screenPadding + inset))
         // The whole strip, padding included, takes the drag; the day picker and Now still take taps.
         val drag = rememberDraggableState { dx -> scope.launch { window.snapTo(clamped(window.value - dx / ppm * 60f)) } }
         Row(
-            Modifier.fillMaxWidth().padding(horizontal = Lockup.screenPadding).padding(top = 10.dp)
+            Modifier.fillMaxWidth().padding(horizontal = Lockup.screenPadding + inset).padding(top = if (onTv) 6.dp else 10.dp)
                 .draggable(drag, Orientation.Horizontal, onDragStopped = { velocity ->
                     // A flick carries on a little, and settles on the nearest quarter hour.
                     val coasted = window.value - velocity * 0.3f / ppm * 60f
@@ -219,10 +247,10 @@ fun GuideView(
         } else {
             LazyColumn(
                 Modifier.fillMaxWidth().weight(1f),
-                contentPadding = PaddingValues(start = Lockup.screenPadding, end = Lockup.screenPadding, top = 20.dp, bottom = bottomPadding),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
+                contentPadding = PaddingValues(start = Lockup.screenPadding + inset, end = Lockup.screenPadding + inset, top = if (onTv) 12.dp else 20.dp, bottom = bottomPadding),
+                verticalArrangement = Arrangement.spacedBy(if (onTv) (10f * tvUnit).dp else 10.dp),
             ) {
-                items(channels, key = { it.id }) { channel ->
+                itemsIndexed(channels, key = { _, c -> c.id }) { rowIndex, channel ->
                     // Fetches the row, and a stretch of rows ahead too, so scrolling rarely reaches one that is still loading.
                     LaunchedEffect(channel.id) {
                         ensure(channel)
@@ -232,6 +260,10 @@ fun GuideView(
                     GuideRow(
                         channel, programs(channel), guideStart, guideEnd, { window.value }, bucket, visibleSeconds, ppm,
                         onProgram = { onProgram(channel, it) }, onChannel = { onChannel(channel) }, onFavorite = onFavorite?.let { f -> { f(channel) } },
+                        // A group's name over its first channel, as a cable guide's.
+                        groupLabel = channel.group?.takeIf { onTv && channels.getOrNull(rowIndex - 1)?.group != it },
+                        onProgramFocus = { followFocus(channel, it) },
+                        firstFocus = if (onTv && rowIndex == 0) firstFocus else null,
                     )
                 }
             }
@@ -291,8 +323,13 @@ private fun GuideRow(
     onProgram: (GuideProgram) -> Unit,
     onChannel: () -> Unit,
     onFavorite: (() -> Unit)?,
+    groupLabel: String? = null,
+    onProgramFocus: (GuideProgram) -> Unit = {},
+    firstFocus: FocusRequester? = null,
 ) {
     val density = LocalDensity.current
+    // On a TV the remote starts on what's airing on the first channel, once its row is in.
+    if (firstFocus != null) LaunchedEffect(programs != null) { if (programs != null) runCatching { firstFocus.requestFocus() } }
     // Programmes near the window, an hour or so either side so they're there as it moves.
     val nearby = remember(programs, bucket, visibleSeconds) {
         val lower = guideStart + bucket * 1800.0 - 5400
@@ -300,7 +337,7 @@ private fun GuideRow(
         programs.orEmpty().filter { it.end > lower && it.start < upper && it.end > guideStart }
     }
     Row(Modifier.fillMaxWidth().height(ROW_HEIGHT), horizontalArrangement = Arrangement.spacedBy(COLUMN_GAP)) {
-        ChannelCell(channel, Modifier.width(CHANNEL_COLUMN).fillMaxHeight(), onChannel, onFavorite)
+        ChannelCell(channel, Modifier.width(CHANNEL_COLUMN).fillMaxHeight(), onChannel, onFavorite, groupLabel)
         Box(Modifier.weight(1f).fillMaxHeight().clip(RoundedCornerShape(0.dp))) {
             when {
                 programs == null -> Placeholder(null, Modifier.offset { IntOffset(0, 0) }.width(with(density) { (90 * ppm).toDp() }), onChannel)
@@ -313,7 +350,8 @@ private fun GuideRow(
                     val end = max(program.end, start + 300)
                     val widthPx = ((end - start) / 60.0 * ppm - with(density) { CELL_GAP.toPx() }).toFloat()
                     ProgramCell(
-                        program, start, end, nowSeconds, widthPx, window, guideStart, ppm,
+                        program, start, end, nowSeconds, widthPx, window, guideStart, ppm, { onProgramFocus(program) },
+                        if (firstFocus != null && nowSeconds >= program.start && nowSeconds < program.end) Modifier.focusRequester(firstFocus) else Modifier,
                         // As wide as the programme is long, whatever the room: placed by its time against the window, and clipped by the row.
                         Modifier.layout { measurable, constraints ->
                             val width = max(widthPx, with(density) { MINIMUM_CELL_WIDTH.toPx() }).roundToInt()
@@ -337,20 +375,30 @@ private fun Placeholder(text: String?, modifier: Modifier, onClick: () -> Unit) 
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun ChannelCell(channel: GuideChannel, modifier: Modifier, onClick: () -> Unit, onFavorite: (() -> Unit)?) {
+private fun ChannelCell(channel: GuideChannel, modifier: Modifier, onClick: () -> Unit, onFavorite: (() -> Unit)?, groupLabel: String? = null) {
     var menu by remember { mutableStateOf(false) }
+    var focused by remember { mutableStateOf(false) }
+    val tvStyle = onTv
     Box(modifier) {
         Row(
-            Modifier.fillMaxSize().clip(RoundedCornerShape(CELL_RADIUS)).background(CellGrey)
+            Modifier.fillMaxSize().then(if (tvStyle) Modifier.tvFocus(CELL_RADIUS, lift = 1.03f, ring = false).onFocusChanged { focused = it.isFocused } else Modifier)
+                .clip(RoundedCornerShape(CELL_RADIUS)).background(if (focused) Color.White else CellGrey)
                 .combinedClickable(onClick = onClick, onLongClick = { if (onFavorite != null) menu = true })
-                .padding(horizontal = 8.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp),
+                .padding(horizontal = if (tvStyle) (16f * tvUnit).dp else 8.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(if (tvStyle) (12f * tvUnit).dp else 4.dp),
         ) {
-            Text(channel.number.orEmpty(), style = Type.caption2Bold, color = SecondaryText, maxLines = 1, modifier = Modifier.width(26.dp))
-            if (channel.logoUrl != null) {
-                AsyncImage(model = channel.logoUrl, contentDescription = channel.name, contentScale = ContentScale.Fit, modifier = Modifier.weight(1f).fillMaxHeight())
-            } else {
-                Text(channel.name, style = Type.caption.copy(fontSize = 13.sp, lineHeight = 16.sp, fontWeight = FontWeight.SemiBold), maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+            val tint = if (focused) Color.Black else Color.White
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.Center) {
+                // A group's name over the channel's first row, as a cable guide's.
+                if (groupLabel != null) Text(groupLabel.uppercase(), style = Type.caption2Bold, color = if (focused) Color.Black.copy(alpha = 0.6f) else SecondaryText, maxLines = 1, softWrap = false)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(if (tvStyle) (12f * tvUnit).dp else 4.dp)) {
+                    Text(channel.number.orEmpty(), style = Type.caption2Bold.let { if (tvStyle) it.copy(fontSize = (27f * tvUnit).sp, lineHeight = (32f * tvUnit).sp) else it }, color = if (focused) Color.Black.copy(alpha = 0.6f) else SecondaryText, maxLines = 1, modifier = Modifier.width(if (tvStyle) (56f * tvUnit).dp else 26.dp))
+                    if (channel.logoUrl != null) {
+                        AsyncImage(model = channel.logoUrl, contentDescription = channel.name, contentScale = ContentScale.Fit, modifier = Modifier.weight(1f).height(if (tvStyle) (60f * tvUnit).dp else 40.dp))
+                    } else {
+                        Text(channel.name, style = Type.caption.copy(fontSize = if (tvStyle) (30f * tvUnit).sp else 13.sp, lineHeight = if (tvStyle) (36f * tvUnit).sp else 16.sp, fontWeight = FontWeight.SemiBold), color = tint, maxLines = if (groupLabel != null) 1 else 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                    }
+                }
             }
         }
         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
@@ -363,15 +411,19 @@ private fun ChannelCell(channel: GuideChannel, modifier: Modifier, onClick: () -
 @Composable
 private fun ProgramCell(
     program: GuideProgram, start: Double, end: Double, nowSeconds: Double, widthPx: Float, window: () -> Float, guideStart: Double, ppm: Float,
-    modifier: Modifier, onClick: () -> Unit,
+    onFocus: () -> Unit, focusModifier: Modifier, modifier: Modifier, onClick: () -> Unit,
 ) {
+    var focused by remember { mutableStateOf(false) }
     val airing = nowSeconds >= program.start && nowSeconds < program.end
     // Share of the cell that has already aired.
     val aired = if (airing && end > start) ((nowSeconds - start) / (end - start)).coerceIn(0.0, 1.0).toFloat() else null
     val subtitle = program.episodeTitle?.takeIf { it != program.title } ?: timeRange(program.start, program.end)
     val density = LocalDensity.current
-    Box(modifier.clip(RoundedCornerShape(CELL_RADIUS)).background(if (airing) AiringGrey else CellGrey).combinedClickable(onClick = onClick)) {
-        if (aired != null) Box(Modifier.fillMaxHeight().fillMaxWidth(aired).background(Color.White.copy(alpha = 0.12f)))
+    Box(
+        modifier.then(focusModifier).then(if (onTv) Modifier.tvFocus(CELL_RADIUS, lift = 1.03f, ring = false).onFocusChanged { focused = it.isFocused; if (it.isFocused) onFocus() } else Modifier)
+            .clip(RoundedCornerShape(CELL_RADIUS)).background(if (focused) Color.White else if (airing) AiringGrey else CellGrey).combinedClickable(onClick = onClick),
+    ) {
+        if (aired != null && !focused) Box(Modifier.fillMaxHeight().fillMaxWidth(aired).background(Color.White.copy(alpha = 0.12f)))
         Column(
             Modifier.fillMaxSize()
                 // The text stays in view when the cell's start is scrolled out of the window to the left.
@@ -381,14 +433,32 @@ private fun ProgramCell(
                     val placeable = measurable.measure(constraints.copy(maxWidth = max(0, constraints.maxWidth - inset), minWidth = 0))
                     layout(constraints.maxWidth, constraints.maxHeight) { placeable.place(inset, 0) }
                 }
-                .padding(horizontal = 8.dp, vertical = 6.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
+                .padding(horizontal = if (onTv) (16f * tvUnit).dp else 8.dp, vertical = 6.dp),
+            verticalArrangement = Arrangement.spacedBy(if (onTv) 0.dp else 4.dp),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 if (program.recording) Icon(Icons.Default.FiberManualRecord, null, tint = Color.Red, modifier = Modifier.size(12.dp))
-                Text(program.title, style = Type.caption.copy(fontSize = 13.sp, lineHeight = 16.sp, fontWeight = FontWeight.SemiBold), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(program.title, style = Type.caption.copy(fontSize = if (onTv) (30f * tvUnit).sp else 13.sp, lineHeight = if (onTv) (36f * tvUnit).sp else 16.sp, fontWeight = FontWeight.SemiBold), color = if (focused) Color.Black else Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-            Text(subtitle, style = Type.caption.copy(fontSize = 11.sp, lineHeight = 13.sp), color = SecondaryText, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(subtitle, style = Type.caption.copy(fontSize = if (onTv) (26f * tvUnit).sp else 11.sp, lineHeight = if (onTv) (32f * tvUnit).sp else 13.sp), color = if (focused) Color.Black.copy(alpha = 0.6f) else SecondaryText, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
+/** The pane above the TV guide's times: the focused programme's picture, title and description (the Apple TV guide's). */
+@Composable
+private fun TvDetailPane(detail: GuideDetail?, modifier: Modifier = Modifier) {
+    val u = tvUnit
+    Row(modifier.fillMaxWidth().height((230f * u).dp), horizontalArrangement = Arrangement.spacedBy((24f * u).dp)) {
+        Box(Modifier.width((160f * u).dp).fillMaxHeight().clip(RoundedCornerShape((8f * u).dp))) {
+            if (detail?.imageUrl != null) AsyncImage(model = detail.imageUrl, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+        }
+        Spacer(Modifier.weight(0.35f))
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy((8f * u).dp)) {
+            if (detail != null) {
+                Text(detail.title, style = Type.headline.copy(fontSize = (34f * u).sp, lineHeight = (42f * u).sp, fontWeight = FontWeight.SemiBold), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                detail.overview?.let { Text(it, style = Type.callout, color = SecondaryText, maxLines = 3, overflow = TextOverflow.Ellipsis) }
+            }
         }
     }
 }

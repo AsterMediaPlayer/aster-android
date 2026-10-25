@@ -1,5 +1,26 @@
 package com.astermediaplayer.astermediaplayer.ui.channels
 
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.draw.clip
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import org.jellyfin.sdk.model.api.ImageType
+import com.astermediaplayer.astermediaplayer.data.channels.ChannelGroups
+import com.astermediaplayer.astermediaplayer.ui.guide.GuideDetail
+import com.astermediaplayer.astermediaplayer.ui.theme.tvFocus
+import com.astermediaplayer.astermediaplayer.ui.theme.LocalIsTv
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
@@ -48,10 +69,16 @@ fun ChannelsScreen(onTune: (String) -> Unit, onOpen: (BaseItemDto) -> Unit, modi
         }
     }
 
-    Column(modifier.fillMaxSize().statusBarsPadding().padding(top = 8.dp + topInset)) {
+    val tv = LocalIsTv.current
+    val u = Lockup.tvUnit
+    // The guide's group the filter shows; null for all of them.
+    var group by remember { mutableStateOf<String?>(null) }
+    // The Apple TV's guide keeps its own margin of 160 points.
+    val inset = if (tv) 80.dp * u else 0.dp
+    Column(modifier.fillMaxSize().then(if (tv) Modifier else Modifier.statusBarsPadding().padding(top = 8.dp + topInset))) {
         Text(
-            "Channels (Beta)", style = Type.pageTitle.copy(fontSize = 34.sp, lineHeight = 41.sp),
-            modifier = Modifier.padding(horizontal = Lockup.screenPadding).padding(bottom = 10.dp),
+            "Channels (Beta)", style = if (tv) Type.pageTitle.copy(fontSize = (76f * u).sp, lineHeight = (90f * u).sp) else Type.pageTitle.copy(fontSize = 34.sp, lineHeight = 41.sp),
+            modifier = Modifier.padding(horizontal = Lockup.screenPadding + inset).padding(top = if (tv) (118f * u).dp else 0.dp, bottom = if (tv) 4.dp else 10.dp),
         )
         when {
             error != null && channels.isEmpty() -> Box(Modifier.fillMaxSize(), Alignment.Center) { Text(error!!, color = SecondaryText) }
@@ -60,8 +87,12 @@ fun ChannelsScreen(onTune: (String) -> Unit, onOpen: (BaseItemDto) -> Unit, modi
                 Text("Make a video playlist into a channel in Edit Channels, or tag it aster:channel in Jellyfin.", color = SecondaryText, style = Type.callout)
             }
             else -> {
-                val rows = remember(guideChannels) {
-                    guideChannels.map { GuideChannel(it.id, "${it.number}", it.name, if (it.showsLogo) it.logoUrl(app.repository, 300) else null) }
+                val groups = remember(guideChannels) { ChannelGroups.names(guideChannels) }
+                if (tv && groups.isNotEmpty()) TvGroupPills(listOf<String?>(null) + groups, group, Modifier.padding(horizontal = Lockup.screenPadding + inset)) { group = it }
+                val rows = remember(guideChannels, group) {
+                    guideChannels.filter { group == null || (it.group ?: ChannelGroups.OTHER) == group }.map {
+                        GuideChannel(it.id, "${it.number}", it.name, if (it.showsLogo) it.logoUrl(app.repository, 300) else null, group = if (groups.isEmpty()) null else it.group ?: ChannelGroups.OTHER)
+                    }
                 }
                 val guideEnd = guideStart + GUIDE_DAYS * 24 * 3600.0
                 // Each row's programmes are worked out from the schedule as the row comes into view.
@@ -84,6 +115,16 @@ fun ChannelsScreen(onTune: (String) -> Unit, onOpen: (BaseItemDto) -> Unit, modi
                     },
                     onChannel = { onTune(it.id) },
                     bottomPadding = 120.dp,
+                    inset = inset,
+                    detail = if (!tv) null else { _, program ->
+                        val scheduled = program.payload as? ScheduledProgram
+                        val dto = scheduled?.item?.source as? BaseItemDto
+                        GuideDetail(
+                            title = if (scheduled?.item?.isEpisode == true && scheduled.item.seriesName != null) "${scheduled.item.seriesName}: ${scheduled.item.name.orEmpty()}" else program.title,
+                            overview = dto?.overview,
+                            imageUrl = dto?.let { app.repository.imageUrl(it, ImageType.PRIMARY, 400) ?: app.repository.seriesPosterUrl(it, 400) },
+                        )
+                    },
                 )
             }
         }
@@ -95,4 +136,22 @@ private fun ScheduledProgram.toListing(): GuideProgram {
     val item = item
     return if (item.isEpisode && item.seriesName != null) GuideProgram(id, item.seriesName, item.name, start, end, payload = this)
     else GuideProgram(id, item.name.orEmpty(), null, start, end, payload = this)
+}
+
+/** The Apple TV guide's row of group filters: All, then each group, the picked one lit. */
+@Composable
+private fun TvGroupPills(options: List<String?>, selected: String?, modifier: Modifier = Modifier, onPick: (String?) -> Unit) {
+    val u = Lockup.tvUnit
+    Row(modifier.padding(vertical = (10f * u).dp), horizontalArrangement = Arrangement.spacedBy((14f * u).dp)) {
+        options.forEach { option ->
+            var focused by remember { mutableStateOf(false) }
+            val picked = option == selected
+            Box(
+                Modifier.height((66f * u).dp).tvFocus((33f * u).dp, lift = 1.08f, ring = false).onFocusChanged { focused = it.isFocused }
+                    .clip(CircleShape).background(if (focused) Color.White else if (picked) Color.White.copy(alpha = 0.3f) else Color.White.copy(alpha = 0.12f))
+                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onPick(option) }.padding(horizontal = (36f * u).dp),
+                contentAlignment = Alignment.Center,
+            ) { Text(option ?: "All", style = Type.calloutMedium, color = if (focused) Color.Black else Color.White, maxLines = 1) }
+        }
+    }
 }

@@ -180,6 +180,8 @@ data class ChannelTags(
     val users: List<String> = emptyList(),
     /** Null for the playlist's own name. */
     val name: String? = null,
+    /** The guide's group for the channel (Kids, Anime, Movies); null for none. */
+    val group: String? = null,
 ) {
     /** Whether the channel fills itself from genres, networks or collections. */
     val hasSources: Boolean get() = genres.isNotEmpty() || networks.isNotEmpty() || collections.isNotEmpty()
@@ -250,6 +252,7 @@ data class ChannelTags(
         }
         if (users.isNotEmpty()) result += p + "user=" + users.joinToString(",")
         name?.let { result += "${p}channel-name=$it" }
+        group?.let { result += "${p}group=$it" }
         return result
     }
 
@@ -271,7 +274,7 @@ data class ChannelTags(
             "channel", "number", "mode", "logo", "reshuffle", "seed", "blocks", "bug", "bug-location", "bug-size", "bug-hide", "bug-opacity",
             "genre", "type", "library", "network", "collection", "years", "rating", "weight", "min-length", "max-length",
             "filler-playlists", "filler-playlist", "filler-types", "filler-type", "bumpers-at", "promo-count", "trailer-count",
-            "interstitial-count", "break-length", "break-every", "align", "align-fit", "user", "users", "channel-name",
+            "interstitial-count", "break-length", "break-every", "align", "align-fit", "user", "users", "channel-name", "group",
         )
 
         /** Reads a playlist's tags. */
@@ -284,7 +287,7 @@ data class ChannelTags(
             var years: IntRange? = null; val ratings = mutableListOf<String>(); val weights = mutableListOf<ShowWeight>()
             var minLength: Int? = null; var maxLength: Int? = null
             val fillerPlaylists = mutableListOf<String>(); var fillerTypes = BreakKind.entries.toSet()
-            var breaks = ChannelBreaks(); val users = mutableListOf<String>(); var name: String? = null
+            var breaks = ChannelBreaks(); val users = mutableListOf<String>(); var name: String? = null; var group: String? = null
 
             for (tag in tags.orEmpty()) {
                 val (key, value) = ChannelTagParsing.parse(tag) ?: continue
@@ -334,12 +337,13 @@ data class ChannelTags(
                     "align" -> breaks = breaks.copy(align = value?.let(ChannelTagParsing::minutes)?.takeIf { it in ALIGNMENTS } ?: 0)
                     "user", "users" -> ChannelTagParsing.collect(value, users)
                     "channel-name" -> name = value?.takeIf { it.isNotEmpty() }
+                    "group" -> group = value?.trim()?.takeIf { it.isNotEmpty() }
                 }
             }
             return ChannelTags(
                 isChannel, number, mode, showsLogo, reshuffle, seed, blocks, showsBug, bugCorner, bugSize, bugHideAfter, bugOpacity,
                 genres, content, libraries, networks, collections, years, ratings, weights, minLength, maxLength,
-                fillerPlaylists, fillerTypes, breaks, users, name,
+                fillerPlaylists, fillerTypes, breaks, users, name, group,
             )
         }
 
