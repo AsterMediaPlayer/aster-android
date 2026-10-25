@@ -3,6 +3,7 @@ package com.astermediaplayer.astermediaplayer.ui.auth
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.astermediaplayer.astermediaplayer.data.AsterRepository
+import com.astermediaplayer.astermediaplayer.data.SavedServer
 import com.astermediaplayer.astermediaplayer.ui.components.userMessage
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -24,12 +25,17 @@ data class AuthState(
     val busy: Boolean = false,
     val error: String? = null,
     val signedIn: Boolean = false,
+    /** A saved server that asks for its password before switching to it. */
+    val asking: SavedServer? = null,
 )
 
-class AuthViewModel(private val repo: AsterRepository) : ViewModel() {
+class AuthViewModel(private val repo: AsterRepository, private val onServerChanged: () -> Unit = {}) : ViewModel() {
     private val _state = MutableStateFlow(AuthState())
     val state: StateFlow<AuthState> = _state.asStateFlow()
     private var quickConnectJob: Job? = null
+
+    /** The servers already signed in to: back to one without typing it. */
+    val servers: StateFlow<List<SavedServer>> = repo.savedServers
 
     init {
         viewModelScope.launch {
@@ -62,6 +68,30 @@ class AuthViewModel(private val repo: AsterRepository) : ViewModel() {
         }
     }
 
+    /** Back to a saved server, asking for its password first where it's set to. */
+    fun switchTo(server: SavedServer) {
+        if (server.asksPasswordToSwitch) { _state.update { it.copy(asking = server) }; return }
+        viewModelScope.launch {
+            try {
+                repo.switchTo(server)
+                onServerChanged()
+                _state.update { it.copy(signedIn = true) }
+            } catch (e: Exception) {
+                _state.update { it.copy(error = e.userMessage()) }
+            }
+        }
+    }
+
+    /** The password was right (the server says so, or this throws): switch with the fresh sign-in. */
+    suspend fun switchWithPassword(server: SavedServer, password: String) {
+        val fresh = repo.signInAgain(server, password)
+        repo.switchTo(server, fresh)
+        onServerChanged()
+        _state.update { it.copy(asking = null, signedIn = true) }
+    }
+
+    fun dismissAsking() = _state.update { it.copy(asking = null) }
+
     fun changeServer() {
         quickConnectJob?.cancel()
         _state.update { it.copy(connectedServer = null, users = emptyList(), quickConnectCode = null, error = null) }
@@ -75,6 +105,7 @@ class AuthViewModel(private val repo: AsterRepository) : ViewModel() {
         viewModelScope.launch {
             try {
                 repo.signIn(server, s.username.trim(), s.password)
+                onServerChanged()
                 _state.update { it.copy(busy = false, signedIn = true) }
             } catch (e: Exception) {
                 _state.update { it.copy(busy = false, error = "Sign-in failed. Check the username and password.") }
@@ -95,6 +126,7 @@ class AuthViewModel(private val repo: AsterRepository) : ViewModel() {
                     if (repo.quickConnectState(initiated.secret).authenticated) break
                 }
                 repo.signInWithQuickConnect(server, initiated.secret)
+                onServerChanged()
                 _state.update { it.copy(signedIn = true, quickConnectCode = null) }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e

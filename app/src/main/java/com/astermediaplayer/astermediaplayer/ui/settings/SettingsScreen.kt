@@ -1,166 +1,365 @@
 package com.astermediaplayer.astermediaplayer.ui.settings
 
-import com.astermediaplayer.astermediaplayer.ui.theme.LocalIsTv
-import com.astermediaplayer.astermediaplayer.ui.theme.tvFocus
-import com.astermediaplayer.astermediaplayer.ui.theme.Type
-import com.astermediaplayer.astermediaplayer.ui.detail.MenuHost
-import com.astermediaplayer.astermediaplayer.ui.detail.MenuItem
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.focusable
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.ui.draw.clip
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
-import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.sp
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.setValue
-import com.astermediaplayer.astermediaplayer.ui.theme.Lockup
-import com.astermediaplayer.astermediaplayer.ui.theme.SecondaryText
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusGroup
+import androidx.compose.foundation.focusable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AccountCircle
+import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.ClosedCaption
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.PlayCircle
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusDirection
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.astermediaplayer.astermediaplayer.data.AppSettings
+import com.astermediaplayer.astermediaplayer.data.SavedServer
 import com.astermediaplayer.astermediaplayer.data.Session
 import com.astermediaplayer.astermediaplayer.data.SettingsStore
 import com.astermediaplayer.astermediaplayer.data.ThemeCut
+import com.astermediaplayer.astermediaplayer.ui.detail.MenuHost
+import com.astermediaplayer.astermediaplayer.ui.detail.MenuItem
 import com.astermediaplayer.astermediaplayer.ui.downloads.DownloadOptions
 import com.astermediaplayer.astermediaplayer.ui.home.TabBarClearance
 import com.astermediaplayer.astermediaplayer.ui.player.Qualities
+import com.astermediaplayer.astermediaplayer.ui.theme.Lockup
+import com.astermediaplayer.astermediaplayer.ui.theme.LocalIsTv
+import com.astermediaplayer.astermediaplayer.ui.theme.SecondaryText
+import com.astermediaplayer.astermediaplayer.ui.theme.Type
+import com.astermediaplayer.astermediaplayer.ui.theme.tvFocus
+import androidx.compose.ui.focus.focusRequester
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
+/** What the servers list in Settings does beyond showing them: the screen's way back to sign-in, and to a server switched to. */
+class ServerActions(val repo: com.astermediaplayer.astermediaplayer.data.AsterRepository, val onSwitched: () -> Unit, val onAddServer: () -> Unit)
+
+/** The pages Settings opens (the Apple apps' `SettingsDestination`): a root of categories, each its own page. */
+private sealed interface SettingsPage {
+    data object Root : SettingsPage
+    data object Playback : SettingsPage
+    data object Subtitles : SettingsPage
+    data object TitlePages : SettingsPage
+    data object Downloads : SettingsPage
+    data object Account : SettingsPage
+    data object About : SettingsPage
+    data class Server(val id: String) : SettingsPage
+    data class LockAfter(val id: String) : SettingsPage
+}
+
+/**
+ * Settings in the Apple apps' shape: a root of categories (Playback, Audio & Subtitles, Title Pages, then Account and About), each
+ * opening its own page, with a saved server's page, and its Lock After choices, under Account. One set of pages for a TV and a phone.
+ */
 @Composable
-fun SettingsScreen(session: Session?, store: SettingsStore, onSignOut: () -> Unit, modifier: Modifier = Modifier) {
+fun SettingsScreen(session: Session?, store: SettingsStore, servers: ServerActions, onSignOut: () -> Unit, modifier: Modifier = Modifier) {
     val settings by store.settings.collectAsStateWithLifecycle(initialValue = AppSettings())
     val scope = rememberCoroutineScope()
-    if (LocalIsTv.current) { TvSettings(session, settings, store, onSignOut, modifier); return }
+    val stack = remember { mutableStateListOf<SettingsPage>(SettingsPage.Root) }
+    val page = stack.last()
+    fun open(next: SettingsPage) { stack.add(next) }
+    fun back() { if (stack.size > 1) stack.removeAt(stack.lastIndex) }
+    BackHandler(enabled = stack.size > 1) { back() }
 
-    Column(modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = TabBarClearance), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Section("Account")
-        Text(session?.userName.orEmpty(), style = MaterialTheme.typography.bodyLarge)
-        Text(session?.serverUrl.orEmpty(), color = MaterialTheme.colorScheme.onSurfaceVariant)
-        OutlinedButton(onClick = onSignOut) { Text("Sign out") }
+    SettingsFrame(page, modifier) {
+        when (page) {
+            SettingsPage.Root -> RootPage(session, ::open)
+            SettingsPage.Playback -> PlaybackPage(settings, store, scope)
+            SettingsPage.Subtitles -> SubtitlesPage(settings, store, scope)
+            SettingsPage.TitlePages -> TitlePagesPage(settings, store, scope)
+            SettingsPage.Downloads -> DownloadsPage(settings, store, scope)
+            SettingsPage.Account -> AccountPage(session, servers, onSignOut, ::open)
+            SettingsPage.About -> AboutPage()
+            is SettingsPage.Server -> ServerPage(page.id, servers, ::open, ::back)
+            is SettingsPage.LockAfter -> LockAfterPage(page.id, servers, ::back)
+        }
+    }
+}
 
-        HorizontalDivider(Modifier.padding(vertical = 8.dp))
-        Section("Playback")
-        Text("Default quality", style = MaterialTheme.typography.bodyLarge)
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            itemsIndexed(Qualities) { index, quality ->
-                FilterChip(
-                    selected = settings.qualityIndex == index,
-                    onClick = { scope.launch { store.setQualityIndex(index) } },
-                    label = { Text(quality.label) },
-                )
+private fun SettingsPage.title(servers: List<SavedServer>) = when (this) {
+    SettingsPage.Root -> "Settings"
+    SettingsPage.Playback -> "Playback"
+    SettingsPage.Subtitles -> "Audio & Subtitles"
+    SettingsPage.TitlePages -> "Title Pages"
+    SettingsPage.Downloads -> "Downloads"
+    SettingsPage.Account -> "Account"
+    SettingsPage.About -> "About"
+    is SettingsPage.Server -> servers.firstOrNull { it.id == id }?.titleAmong(servers) ?: "Server"
+    is SettingsPage.LockAfter -> "Lock After"
+}
+
+/** The first row of a page that can be pressed takes the remote as the page opens. */
+private class FirstFocus {
+    val requester = androidx.compose.ui.focus.FocusRequester()
+    private var taken = false
+    fun claim(): Boolean { if (taken) return false; taken = true; return true }
+}
+private val LocalFirstFocus = androidx.compose.runtime.compositionLocalOf<FirstFocus?> { null }
+
+/** A row's modifier: the page's first pressable one asks for focus when the page opens. */
+@Composable
+private fun firstFocusModifier(pressable: Boolean): Modifier {
+    val first = LocalFirstFocus.current
+    return remember { if (pressable && first?.claim() == true) Modifier.focusRequester(first.requester) else Modifier }
+}
+
+/** The page's title and scrolling column, in the TV's list style or a phone's; focus goes into the first row as a page opens. */
+@Composable
+private fun SettingsFrame(page: SettingsPage, modifier: Modifier, content: @Composable ColumnScope.() -> Unit) {
+    val tv = LocalIsTv.current
+    val u = Lockup.tvUnit
+    val first = remember(page) { FirstFocus() }
+    // Rows aren't placed in the frame a page opens in, so asking again until one takes it.
+    LaunchedEffect(page) { if (tv) repeat(15) { if (runCatching { first.requester.requestFocus() }.isSuccess) return@LaunchedEffect else delay(60) } }
+    if (tv) {
+        androidx.compose.runtime.CompositionLocalProvider(LocalFirstFocus provides first) {
+            Column(
+                modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = (90f * u).dp).padding(top = (40f * u).dp, bottom = (80f * u).dp),
+                verticalArrangement = Arrangement.spacedBy((6f * u).dp),
+            ) {
+                Text(titleOf(page), style = Type.pageTitle.copy(fontSize = (76f * u).sp, lineHeight = (90f * u).sp), modifier = Modifier.padding(bottom = (18f * u).dp))
+                content()
             }
         }
-        Text("Opening and ending version", style = MaterialTheme.typography.bodyLarge)
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            itemsIndexed(ThemeCut.entries) { _, cut ->
-                FilterChip(
-                    selected = settings.themeCut == cut,
-                    onClick = { scope.launch { store.setThemeCut(cut) } },
-                    label = { Text(cut.settingTitle) },
-                )
-            }
+    } else {
+        Column(
+            modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = TabBarClearance).focusGroup(),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(titleOf(page), style = MaterialTheme.typography.headlineMedium, modifier = Modifier.padding(bottom = 8.dp))
+            content()
         }
-        SwitchRow("Skip intros and credits automatically", settings.autoSkipSegments) { scope.launch { store.setAutoSkipSegments(it) } }
-        SwitchRow("Draw styled ASS/SSA subtitles (libass)", settings.styledSubtitles) { scope.launch { store.setStyledSubtitles(it) } }
-        SwitchRow("Play the next episode automatically", settings.autoPlayNext) { scope.launch { store.setAutoPlayNext(it) } }
-
-        HorizontalDivider(Modifier.padding(vertical = 8.dp))
-        Section("Downloads")
-        SwitchRow("Allow downloads", settings.downloadsEnabled) { scope.launch { store.setDownloadsEnabled(it) } }
-        if (settings.downloadsEnabled) DownloadOptions()
-        HorizontalDivider(Modifier.padding(vertical = 8.dp))
-        Section("Title pages")
-        SwitchRow("Theme music", settings.themeMusic) { scope.launch { store.setThemeMusic(it) } }
-        SwitchRow("Theme videos", settings.themeVideos) { scope.launch { store.setThemeVideos(it) } }
-        Text(
-            "Plays a title's theme song quietly, or loops its theme video behind the page, when your library has them.",
-            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Section("Anime")
-        SwitchRow("Opening plays with sound", settings.openingSound, enabled = settings.themeVideos) { scope.launch { store.setOpeningSound(it) } }
-        Text(
-            "Anime with no theme video of its own loops its first opening behind the series page, when Theme videos is on. With sound, it plays quietly, like theme music.",
-            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
     }
 }
 
 @Composable
-private fun Section(title: String) = Text(title, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+private fun titleOf(page: SettingsPage): String {
+    val app = LocalContext.current.applicationContext as com.astermediaplayer.astermediaplayer.AsterApp
+    val servers by app.repository.savedServers.collectAsState()
+    return page.title(servers)
+}
+
+// --- The kit: a group heading, a row, a switch, a choice, a note; each drawn the TV way or the phone's. ---
 
 @Composable
-private fun SwitchRow(label: String, checked: Boolean, enabled: Boolean = true, onChange: (Boolean) -> Unit) {
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text(
-            label, Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge,
-            color = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+internal fun SGroup(title: String? = null) {
+    if (title == null) return
+    if (LocalIsTv.current) TvGroup(title)
+    else Text(title.uppercase(), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 14.dp, start = 4.dp))
+}
+
+@Composable
+internal fun SNote(text: String) {
+    if (LocalIsTv.current) TvNote(text)
+    else Text(text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 4.dp))
+}
+
+@Composable
+internal fun SRow(
+    title: String, value: String? = null, icon: ImageVector? = null, chevron: Boolean = false, enabled: Boolean = true,
+    destructive: Boolean = false, onClick: (() -> Unit)? = null,
+) {
+    if (LocalIsTv.current) { TvRow(title, value, enabled = enabled, destructive = destructive, modifier = firstFocusModifier(onClick != null && enabled), icon = icon, chevron = chevron, onClick = onClick); return }
+    val tint = if (destructive) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
+    Row(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f))
+            .then(if (onClick != null && enabled) Modifier.clickable(onClick = onClick) else Modifier).padding(horizontal = 16.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (icon != null) Icon(icon, null, tint = tint, modifier = Modifier.padding(end = 14.dp).size(24.dp))
+        Text(title, Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge, color = if (enabled) tint else MaterialTheme.colorScheme.onSurfaceVariant)
+        if (value != null) Text(value, Modifier.padding(start = 12.dp).widthIn(max = 220.dp), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        if (chevron) Icon(Icons.Default.ChevronRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 4.dp))
+    }
+}
+
+@Composable
+internal fun SSwitch(title: String, checked: Boolean, enabled: Boolean = true, onChange: (Boolean) -> Unit) {
+    if (LocalIsTv.current) { TvSwitchRow(title, checked, enabled = enabled, modifier = firstFocusModifier(enabled), onChange = onChange); return }
+    Row(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)).padding(start = 16.dp, end = 12.dp, top = 6.dp, bottom = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(title, Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge, color = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant)
         Switch(checked = checked, onCheckedChange = onChange, enabled = enabled)
     }
 }
 
-/** Settings on a TV, in the Apple TV's list style (its `SettingsView`): a large title, then groups of rows that turn white when focused. */
 @Composable
-private fun TvSettings(session: Session?, settings: AppSettings, store: SettingsStore, onSignOut: () -> Unit, modifier: Modifier) {
+internal fun SChoice(title: String, options: List<String>, selected: Int, onPick: (Int) -> Unit) {
+    if (LocalIsTv.current) { TvChoiceRow(title, options, selected, modifier = firstFocusModifier(true), onPick = onPick); return }
+    var open by remember { mutableStateOf(false) }
+    Box {
+        SRow(title, options.getOrNull(selected).orEmpty(), onClick = { open = true })
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            options.forEachIndexed { i, name -> DropdownMenuItem(text = { Text(name) }, onClick = { open = false; onPick(i) }, trailingIcon = if (i == selected) ({ Icon(Icons.Default.Check, null) }) else null) }
+        }
+    }
+}
+
+// --- The pages ---
+
+@Composable
+private fun RootPage(session: Session?, open: (SettingsPage) -> Unit) {
+    val tv = LocalIsTv.current
+    SRow("Playback", icon = Icons.Default.PlayCircle, chevron = true) { open(SettingsPage.Playback) }
+    SRow("Audio & Subtitles", icon = Icons.Default.ClosedCaption, chevron = true) { open(SettingsPage.Subtitles) }
+    SRow("Title Pages", icon = Icons.Default.MusicNote, chevron = true) { open(SettingsPage.TitlePages) }
+    if (!tv) SRow("Downloads", icon = Icons.Default.Download, chevron = true) { open(SettingsPage.Downloads) }
+    SGroup(" ")
+    SRow("Account", session?.userName.orEmpty(), icon = Icons.Default.AccountCircle, chevron = true) { open(SettingsPage.Account) }
+    SRow("About", icon = Icons.Default.Info, chevron = true) { open(SettingsPage.About) }
+}
+
+@Composable
+private fun PlaybackPage(settings: AppSettings, store: SettingsStore, scope: kotlinx.coroutines.CoroutineScope) {
+    SChoice("Default quality", Qualities.map { it.label }, settings.qualityIndex) { scope.launch { store.setQualityIndex(it) } }
+    SChoice("Opening and ending version", ThemeCut.entries.map { it.settingTitle }, ThemeCut.entries.indexOf(settings.themeCut)) { scope.launch { store.setThemeCut(ThemeCut.entries[it]) } }
+    SSwitch("Skip intros and credits automatically", settings.autoSkipSegments) { scope.launch { store.setAutoSkipSegments(it) } }
+    SSwitch("Play the next episode automatically", settings.autoPlayNext) { scope.launch { store.setAutoPlayNext(it) } }
+}
+
+@Composable
+private fun SubtitlesPage(settings: AppSettings, store: SettingsStore, scope: kotlinx.coroutines.CoroutineScope) {
+    SSwitch("Draw styled ASS/SSA subtitles (libass)", settings.styledSubtitles) { scope.launch { store.setStyledSubtitles(it) } }
+    SNote("Draws a track's own fonts, colours and positions, as the Apple apps do, instead of plain text.")
+}
+
+@Composable
+private fun TitlePagesPage(settings: AppSettings, store: SettingsStore, scope: kotlinx.coroutines.CoroutineScope) {
+    SSwitch("Theme music", settings.themeMusic) { scope.launch { store.setThemeMusic(it) } }
+    SSwitch("Theme videos", settings.themeVideos) { scope.launch { store.setThemeVideos(it) } }
+    SNote("Plays a title's theme song quietly, or loops its theme video behind the page, when your library has them.")
+    SGroup("Anime")
+    SSwitch("Opening plays with sound", settings.openingSound, enabled = settings.themeVideos) { scope.launch { store.setOpeningSound(it) } }
+    SNote("Anime with no theme video of its own loops its first opening behind the series page, when Theme videos is on. With sound, it plays quietly, like theme music.")
+}
+
+@Composable
+private fun DownloadsPage(settings: AppSettings, store: SettingsStore, scope: kotlinx.coroutines.CoroutineScope) {
+    SSwitch("Allow downloads", settings.downloadsEnabled) { scope.launch { store.setDownloadsEnabled(it) } }
+    if (settings.downloadsEnabled) DownloadOptions()
+}
+
+@Composable
+private fun AboutPage() {
+    val context = LocalContext.current
+    val version = remember { runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull().orEmpty() }
+    SRow("Aster", version)
+    SNote("A Jellyfin and Emby player in the Apple apps' design.")
+}
+
+/** Account: the server in use, the user, and the servers signed in to, to switch between. */
+@Composable
+private fun AccountPage(session: Session?, servers: ServerActions, onSignOut: () -> Unit, open: (SettingsPage) -> Unit) {
+    val repo = servers.repo
+    val saved by repo.savedServers.collectAsState()
+    val version by produceState<String?>(null, session?.serverUrl) { value = repo.serverVersion() }
+    SGroup("Server")
+    SRow("Server", session?.serverName ?: session?.serverUrl.orEmpty())
+    SRow("Address", session?.serverUrl.orEmpty())
+    if (version != null) SRow("${session?.kind?.displayName ?: "Server"} version", version)
+    SGroup("User")
+    SRow("User", session?.userName.orEmpty())
+    SRow("Switch User", destructive = true, onClick = onSignOut)
+    SGroup("Servers")
+    saved.forEach { server ->
+        val current = server.id == repo.currentServerId
+        SRow(server.titleAmong(saved), "${server.session.kind.displayName} · ${server.session.userName}" + if (current) " · In Use" else "", chevron = true) { open(SettingsPage.Server(server.id)) }
+    }
+    SRow("Add Server", onClick = servers.onAddServer)
+    SNote("Servers you've signed in to stay signed in, to switch between. Add one to sign in to another Jellyfin or Emby server.")
+}
+
+/** One saved server: switch to it, ask for its password first, lock it after a while, or forget it. */
+@Composable
+private fun ServerPage(id: String, servers: ServerActions, open: (SettingsPage) -> Unit, back: () -> Unit) {
+    val repo = servers.repo
+    val saved by repo.savedServers.collectAsState()
+    val server = saved.firstOrNull { it.id == id } ?: return
     val scope = rememberCoroutineScope()
-    val u = Lockup.tvUnit
-    Column(
-        modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = (90f * u).dp).padding(top = (40f * u).dp, bottom = (80f * u).dp),
-        verticalArrangement = Arrangement.spacedBy((6f * u).dp),
-    ) {
-        Text("Settings", style = Type.pageTitle.copy(fontSize = (76f * u).sp, lineHeight = (90f * u).sp), modifier = Modifier.padding(bottom = (18f * u).dp))
+    var asking by remember { mutableStateOf(false) }
+    val inUse = id == repo.currentServerId
+    SRow("Server", server.session.kind.displayName)
+    SRow("Address", server.session.serverUrl)
+    SRow("User", server.session.userName)
+    SGroup(" ")
+    if (inUse) SNote("This is the server in use.")
+    else SRow("Switch to This Server") {
+        if (server.asksPasswordToSwitch) asking = true else scope.launch { repo.switchTo(server); servers.onSwitched() }
+    }
+    SSwitch("Ask for Password to Switch", server.asksPasswordToSwitch) { scope.launch { repo.setAsksPasswordToSwitch(id, it) } }
+    SNote("Switching to this server asks for ${server.session.userName}'s password first, checked by the server, so others on this device can't switch to it.")
+    SGroup(" ")
+    SRow("Lock After", SavedServer.lockTitle(server.lockAfterMinutes), chevron = true) { open(SettingsPage.LockAfter(id)) }
+    SNote("After this long away from Aster, coming back to this server asks for ${server.session.userName}'s password.")
+    if (!inUse) {
+        SGroup(" ")
+        SRow("Remove Server", destructive = true) { scope.launch { repo.removeServer(id); back() } }
+    }
+    if (asking) com.astermediaplayer.astermediaplayer.ui.auth.ServerPasswordDialog(
+        server, "Switch", title = server.titleAmong(saved),
+        onCheck = { password -> val fresh = repo.signInAgain(server, password); repo.switchTo(server, fresh); servers.onSwitched() },
+        onDismiss = { asking = false },
+    )
+}
 
-        TvGroup("Account")
-        TvValueRow("Signed in as", session?.userName.orEmpty())
-        TvValueRow("Server", session?.serverUrl.orEmpty())
-        TvButtonRow("Sign out", destructive = true, onClick = onSignOut)
-
-        TvGroup("Playback")
-        TvChoiceRow("Default quality", Qualities.map { it.label }, settings.qualityIndex) { scope.launch { store.setQualityIndex(it) } }
-        TvChoiceRow("Opening and ending version", ThemeCut.entries.map { it.settingTitle }, ThemeCut.entries.indexOf(settings.themeCut)) { scope.launch { store.setThemeCut(ThemeCut.entries[it]) } }
-        TvSwitchRow("Skip intros and credits automatically", settings.autoSkipSegments) { scope.launch { store.setAutoSkipSegments(it) } }
-        TvSwitchRow("Draw styled ASS/SSA subtitles (libass)", settings.styledSubtitles) { scope.launch { store.setStyledSubtitles(it) } }
-        TvSwitchRow("Play the next episode automatically", settings.autoPlayNext) { scope.launch { store.setAutoPlayNext(it) } }
-
-        TvGroup("Title pages")
-        TvSwitchRow("Theme music", settings.themeMusic) { scope.launch { store.setThemeMusic(it) } }
-        TvSwitchRow("Theme videos", settings.themeVideos) { scope.launch { store.setThemeVideos(it) } }
-        TvNote("Plays a title's theme song quietly, or loops its theme video behind the page, when your library has them.")
-
-        TvGroup("Anime")
-        TvSwitchRow("Opening plays with sound", settings.openingSound, enabled = settings.themeVideos) { scope.launch { store.setOpeningSound(it) } }
-        TvNote("Anime with no theme video of its own loops its first opening behind the series page, when Theme videos is on. With sound, it plays quietly, like theme music.")
+/** A saved server's Lock After choices: picking one saves it and goes back. */
+@Composable
+private fun LockAfterPage(id: String, servers: ServerActions, back: () -> Unit) {
+    val repo = servers.repo
+    val saved by repo.savedServers.collectAsState()
+    val chosen = saved.firstOrNull { it.id == id }?.lockAfterMinutes
+    val scope = rememberCoroutineScope()
+    (listOf<Int?>(null) + SavedServer.LOCK_CHOICES).forEach { minutes ->
+        SRow(SavedServer.lockTitle(minutes), if (minutes == chosen) "✓" else null) { scope.launch { repo.setLockAfter(id, minutes); back() } }
     }
 }
 
@@ -171,14 +370,17 @@ internal fun TvGroup(title: String) {
 }
 
 @Composable
-private fun TvNote(text: String) {
+internal fun TvNote(text: String) {
     val u = Lockup.tvUnit
     Text(text, style = Type.caption, color = SecondaryText, modifier = Modifier.padding(horizontal = (8f * u).dp, vertical = (4f * u).dp).widthIn(max = (1200f * u).dp))
 }
 
 /** One row of the list: its title on the left and a value on the right, grey, and white with black text when focused. */
 @Composable
-internal fun TvRow(title: String, value: String?, enabled: Boolean = true, destructive: Boolean = false, modifier: Modifier = Modifier, onClick: (() -> Unit)?) {
+internal fun TvRow(
+    title: String, value: String?, enabled: Boolean = true, destructive: Boolean = false, modifier: Modifier = Modifier,
+    icon: ImageVector? = null, chevron: Boolean = false, onClick: (() -> Unit)?,
+) {
     val u = Lockup.tvUnit
     var focused by remember { mutableStateOf(false) }
     val tint = when {
@@ -194,14 +396,16 @@ internal fun TvRow(title: String, value: String?, enabled: Boolean = true, destr
             .padding(horizontal = (28f * u).dp, vertical = (14f * u).dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        if (icon != null) Icon(icon, null, tint = tint, modifier = Modifier.padding(end = (20f * u).dp).size((38f * u).dp))
+        // A long title wraps in what the value leaves; a long value gives way with an ellipsis, never out of the row.
         Text(title, style = Type.callout, color = tint, modifier = Modifier.weight(1f))
-        if (value != null) Text(value, style = Type.callout, color = if (focused) Color.Black.copy(alpha = 0.6f) else SecondaryText, maxLines = 1)
+        if (value != null) Text(
+            value, style = Type.callout, color = if (focused) Color.Black.copy(alpha = 0.6f) else SecondaryText, maxLines = 1,
+            overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(start = (16f * u).dp).widthIn(max = (900f * u).dp),
+        )
+        if (chevron) Icon(Icons.Default.ChevronRight, null, tint = if (focused) Color.Black.copy(alpha = 0.5f) else SecondaryText, modifier = Modifier.padding(start = (12f * u).dp).size((34f * u).dp))
     }
 }
-
-@Composable private fun TvValueRow(title: String, value: String) = TvRow(title, value, onClick = null)
-
-@Composable private fun TvButtonRow(title: String, destructive: Boolean = false, onClick: () -> Unit) = TvRow(title, null, destructive = destructive, onClick = onClick)
 
 @Composable
 internal fun TvSwitchRow(title: String, checked: Boolean, enabled: Boolean = true, modifier: Modifier = Modifier, onChange: (Boolean) -> Unit) =

@@ -1,5 +1,7 @@
 package com.astermediaplayer.astermediaplayer.ui
 
+import androidx.compose.foundation.focusGroup
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.CalendarMonth
@@ -34,6 +36,8 @@ import com.astermediaplayer.astermediaplayer.data.AudiobookShelf
 import com.astermediaplayer.astermediaplayer.ui.audiobooks.AudiobookBar
 import com.astermediaplayer.astermediaplayer.data.channels.ChannelTuner
 import com.astermediaplayer.astermediaplayer.ui.channels.ChannelsScreen
+import com.astermediaplayer.astermediaplayer.ui.auth.ServerLockScreen
+import com.astermediaplayer.astermediaplayer.ui.settings.ServerActions
 import com.astermediaplayer.astermediaplayer.ui.channels.ChannelSettingsScreen
 import com.astermediaplayer.astermediaplayer.ui.channels.ChannelSettingsViewModel
 import com.astermediaplayer.astermediaplayer.ui.downloads.DownloadsScreen
@@ -225,10 +229,25 @@ fun AsterNavHost(signedIn: Boolean) {
         ) notificationPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
     }
 
+    // Switching servers starts the app afresh on the new one: the whole back stack goes, and with it every screen's loaded data.
+    val servers = remember {
+        ServerActions(
+            repo,
+            onSwitched = { app.resetForServerChange(); nav.navigate(Routes.MAIN) { popUpTo(nav.graph.id) { inclusive = true } } },
+            onAddServer = {
+                scope.launch {
+                    repo.changeServer(); app.resetForServerChange()
+                    nav.navigate(Routes.AUTH) { popUpTo(nav.graph.id) { inclusive = true } }
+                }
+            },
+        )
+    }
+    val locked by repo.locked.collectAsStateWithLifecycle()
+
     Box(Modifier.fillMaxSize()) {
         NavHost(nav, startDestination = if (signedIn) Routes.MAIN else Routes.AUTH, modifier = Modifier.fillMaxSize()) {
             composable(Routes.AUTH) {
-                val vm: AuthViewModel = viewModel(factory = viewModelFactory { initializer { AuthViewModel(repo) } })
+                val vm: AuthViewModel = viewModel(factory = viewModelFactory { initializer { AuthViewModel(repo, app::resetForServerChange) } })
                 AuthScreen(vm, onSignedIn = { nav.navigate(Routes.MAIN) { popUpTo(Routes.AUTH) { inclusive = true } } })
             }
             composable(Routes.MAIN) {
@@ -243,9 +262,11 @@ fun AsterNavHost(signedIn: Boolean) {
                 onProgram = { nav.navigate(Routes.program(it.id.toString())) },
                 onSeriesRule = { nav.navigate(Routes.seriesTimer(it)) },
                     onPlay = { nav.navigate(Routes.player(it)) },
+                    servers = servers,
                     onSignOut = {
                         scope.launch {
                             repo.signOut()
+                            app.resetForServerChange()
                             nav.navigate(Routes.AUTH) { popUpTo(Routes.MAIN) { inclusive = true } }
                         }
                     },
@@ -409,6 +430,26 @@ fun AsterNavHost(signedIn: Boolean) {
             androidx.activity.compose.BackHandler { app.music.setPresented(false) }
             MusicPlayerScreen()
         }
+        // The server in use was left too long: its password, or another server, before anything shows. Focus can't leave it.
+        if (locked) {
+            val server = repo.currentServer
+            if (server != null) {
+                androidx.activity.compose.BackHandler { }
+                @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
+                Box(Modifier.fillMaxSize().focusProperties { exit = { androidx.compose.ui.focus.FocusRequester.Cancel } }.focusGroup()) {
+                    ServerLockScreen(
+                        server, server.titleAmong(repo.savedServers.value),
+                        onUnlock = { password -> repo.unlock(repo.signInAgain(server, password)) },
+                        onUseAnother = {
+                            scope.launch {
+                                repo.changeServer(); app.resetForServerChange()
+                                nav.navigate(Routes.AUTH) { popUpTo(nav.graph.id) { inclusive = true } }
+                            }
+                        },
+                    )
+                }
+            }
+        }
     }
 
 }
@@ -473,6 +514,7 @@ private fun MainTabs(
     onTuneChannel: (String) -> Unit,
     onProgram: (BaseItemDto) -> Unit,
     onSeriesRule: (String) -> Unit,
+    servers: ServerActions,
     onSignOut: () -> Unit,
 ) {
     val app = LocalContext.current.applicationContext as AsterApp
@@ -490,6 +532,8 @@ private fun MainTabs(
     // Null until the check has run, so Movies and TV Shows don't load with anime still in them.
     val detectedAnime by produceState<List<BaseItemDto>?>(null, libraries) { value = if (libraries.isEmpty()) null else runCatching { repo.animeLibraries(libraries) }.getOrDefault(emptyList()) }
     // Upcoming is listed only while the server has something coming up, as on the Apple apps.
+    // Channels are playlist tags in Jellyfin's shape: not on Emby yet, as in the Apple apps.
+    val hasChannels = repo.serverKind == com.astermediaplayer.astermediaplayer.data.emby.ServerKind.Jellyfin
     val hasUpcoming by produceState(false) { value = runCatching { repo.upcoming(1).isNotEmpty() }.getOrDefault(false) }
     val upcoming: UpcomingViewModel = viewModel(factory = viewModelFactory { initializer { UpcomingViewModel(repo) } })
     val libraryHome: LibraryHomeViewModel = viewModel(factory = viewModelFactory { initializer { LibraryHomeViewModel(repo) } })
@@ -513,7 +557,7 @@ private fun MainTabs(
     val isTv = LocalIsTv.current
     val landscape = !wide && config.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
     val promoted = when {
-        isTv -> TvDestinations.filter { it != MoreDestination.Upcoming || hasUpcoming }
+        isTv -> TvDestinations.filter { (it != MoreDestination.Upcoming || hasUpcoming) && (it != MoreDestination.Channels || hasChannels) }
         landscape -> promotedFor(tabs, PromotedOrder.filter { it != MoreDestination.Upcoming || hasUpcoming }, config.screenWidthDp)
         else -> emptyList()
     }
@@ -601,10 +645,10 @@ private fun MainTabs(
                     BackButton { back() }
                 }
                 MoreDestination.Settings -> Box(modifier) {
-                    SettingsScreen(repo.session, app.settings, onSignOut, Modifier.statusBarsPadding().padding(top = 56.dp))
+                    SettingsScreen(repo.session, app.settings, servers, onSignOut, Modifier.statusBarsPadding().padding(top = 56.dp))
                     BackButton { back() }
                 }
-                null -> MoreMenu(MoreDestination.entries.filter { (it != MoreDestination.Upcoming || hasUpcoming) && it !in promoted }, onPick = { more = it }, modifier = modifier.statusBarsPadding())
+                null -> MoreMenu(MoreDestination.entries.filter { (it != MoreDestination.Upcoming || hasUpcoming) && (it != MoreDestination.Channels || hasChannels) && it !in promoted }, onPick = { more = it }, modifier = modifier.statusBarsPadding())
             }
         }
     }

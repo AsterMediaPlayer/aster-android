@@ -34,6 +34,15 @@ class AsterApp : Application(), SingletonImageLoader.Factory {
         MusicPlayer(this, repository).also { it.onStart = { themePlayer.hide(evenIfShowing = true); audiobooks.stop() } }
     }
 
+    /** What was learned about one server, stopped or cleared, for the server switched to (or none). */
+    fun resetForServerChange() {
+        music.stop()
+        audiobooks.stop()
+        themePlayer.hide(evenIfShowing = true)
+        channels.reset()
+        audiobookLibrary.reset()
+    }
+
     override fun newImageLoader(context: PlatformContext): ImageLoader = ImageLoader.Builder(context)
         // A fade on every image is a lot of frames for a TV's CPU, which has a screen of them arriving at once.
         .crossfade(!isTelevision(context))

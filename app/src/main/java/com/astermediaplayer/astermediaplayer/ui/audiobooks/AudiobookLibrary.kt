@@ -46,6 +46,9 @@ class AudiobookLibrary(private val repo: AsterRepository) {
     private val _state = MutableStateFlow(AudiobookLibraryState())
     val state: StateFlow<AudiobookLibraryState> = _state.asStateFlow()
 
+    /** Forgets one server's books, for another's. */
+    fun reset() { _state.value = AudiobookLibraryState() }
+
     /** Fetches every book. Keeps what's showing while it reloads, so coming back to the tab doesn't flash empty. */
     suspend fun load() {
         if (_state.value.loading) return
