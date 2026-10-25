@@ -34,7 +34,7 @@ object AndroidDeviceProfile {
                 container = "mp4,m4v,mkv,webm",
                 type = DlnaProfileType.VIDEO,
                 videoCodec = if (isEmulator) "h264,hevc,vp9" else "h264,hevc,vp9,av1",
-                audioCodec = "aac,mp3,opus,flac,vorbis,ac3,eac3",
+                audioCodec = "aac,mp3,opus,flac,vorbis,ac3,eac3,dts,truehd",
             ),
             DirectPlayProfile(
                 container = "mp3,aac,flac,ogg,opus,m4a,m4b",
@@ -45,7 +45,8 @@ object AndroidDeviceProfile {
             TranscodingProfile(
                 container = "ts",
                 type = DlnaProfileType.VIDEO,
-                videoCodec = "h264",
+                // HEVC is allowed so a title whose audio needs converting keeps its picture: the server copies the video rather than re-encoding it.
+                videoCodec = "hevc,h264",
                 audioCodec = "aac",
                 protocol = MediaStreamProtocol.HLS,
                 context = EncodingContext.STREAMING,
