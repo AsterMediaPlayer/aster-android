@@ -35,6 +35,8 @@ object Lockup {
     var sectionSpacing = 16.dp; private set
     /** The dp one Apple TV point comes to on this screen (1 off a TV); see [useTv]. */
     var tvUnit = 1f; private set
+    /** True once [useTv] has run: this is a TV, where some wording follows the Apple TV's. */
+    var onTv = false; private set
 
     /**
      * The Apple TV's numbers (the tvOS branch of `Lockup`, in points on its 1920x1080 screen) for a TV. [unit] is the dp one
@@ -42,6 +44,7 @@ object Lockup {
      */
     fun useTv(unit: Float) {
         tvUnit = unit
+        onTv = true
         landscapeWidth = (400 * unit).dp
         posterWidth = (240 * unit).dp
         cornerRadius = (14 * unit).dp
@@ -120,7 +123,7 @@ object Type {
         caption = caption.tv(26f, 32f)
         caption2Bold = caption2Bold.tv(22f, 28f)
         segmented = segmented.tv(28f, 34f)
-        pageTitle = pageTitle.tv(64f, 76f)
+        pageTitle = pageTitle.tv(64f, 76f).copy(letterSpacing = 0.sp)
     }
 }
 

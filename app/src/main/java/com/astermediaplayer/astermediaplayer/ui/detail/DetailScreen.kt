@@ -25,6 +25,14 @@ import com.astermediaplayer.astermediaplayer.ui.components.MetaLine
 import com.astermediaplayer.astermediaplayer.ui.components.episodeCode
 import com.astermediaplayer.astermediaplayer.ui.components.remainingText
 import com.astermediaplayer.astermediaplayer.ui.theme.ButtonGrey
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.IntRect
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.window.PopupProperties
+import androidx.compose.ui.window.PopupPositionProvider
+import androidx.compose.ui.window.Popup
 import kotlinx.coroutines.delay
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -622,15 +630,15 @@ private fun DetailInfo(
                     val records by downloads.records.collectAsStateWithLifecycle()
                     val saved = records.firstOrNull { it.id == item.id.toString() }
                     val flow = rememberDownloadFlow()
-                    Box {
+                    // The Apple TV's menu has only Go to Series (downloads are for the phone), so on a TV there is none to open elsewhere.
+                    if (!tv || (item.type == BaseItemKind.EPISODE && seriesId != null)) Box {
                         IconActionButton(Icons.Default.MoreHoriz, "More") { menu = true }
-                        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                            if (item.type == BaseItemKind.EPISODE && seriesId != null) DropdownMenuItem(
-                                text = { Text("Go to Series") },
-                                leadingIcon = { Icon(Icons.Default.Tv, null) },
+                        MenuHost(expanded = menu, onDismiss = { menu = false }) {
+                            if (item.type == BaseItemKind.EPISODE && seriesId != null) MenuItem(
+                                "Go to Series", Icons.Default.Tv,
                                 onClick = { menu = false; onGoToSeries(seriesId) },
                             )
-                            when (saved?.state) {
+                            if (!tv) when (saved?.state) {
                                 null -> DropdownMenuItem(
                                     text = { Text("Download") }, leadingIcon = { Icon(Icons.Default.Download, null) },
                                     onClick = { menu = false; flow.download(item) },
@@ -931,5 +939,52 @@ private fun TvTabBar(labels: List<String>, selected: Int, onSelect: (Int) -> Uni
     val u = Lockup.tvUnit
     Row(Modifier.padding(horizontal = Lockup.screenPadding, vertical = (12f * u).dp), horizontalArrangement = Arrangement.spacedBy((24f * u).dp)) {
         labels.forEachIndexed { index, label -> TvPill(label, index == selected, 68f, 38f, boldWhenSelected = true) { onSelect(index) } }
+    }
+}
+
+/** A menu over its button: Material's drop-down, or on a TV the Apple TV's glass panel above the button. */
+@Composable
+private fun MenuHost(expanded: Boolean, onDismiss: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
+    if (!LocalIsTv.current) { DropdownMenu(expanded = expanded, onDismissRequest = onDismiss, content = content); return }
+    if (!expanded) return
+    val u = Lockup.tvUnit
+    val gap = (12f * u * LocalDensity.current.density).toInt()
+    val above = remember(gap) {
+        object : PopupPositionProvider {
+            override fun calculatePosition(anchorBounds: IntRect, windowSize: IntSize, layoutDirection: LayoutDirection, popupContentSize: IntSize) =
+                IntOffset(anchorBounds.left, (anchorBounds.top - popupContentSize.height - gap).coerceAtLeast(0))
+        }
+    }
+    val shape = RoundedCornerShape((50f * u).dp)
+    Popup(above, onDismissRequest = onDismiss, properties = PopupProperties(focusable = true)) {
+        Column(
+            Modifier.width((448f * u).dp).clip(shape)
+                .background(Brush.verticalGradient(listOf(Color(0xF2201C1A), Color(0xF2141210))))
+                .border((1f * u).dp, Color.White.copy(alpha = 0.16f), shape)
+                .padding((15f * u).dp),
+            verticalArrangement = Arrangement.spacedBy((2f * u).dp),
+            content = content,
+        )
+    }
+}
+
+/** One entry of a [MenuHost]; on a TV a row that turns into a white pill when focused, the first one taking the remote. */
+@Composable
+private fun ColumnScope.MenuItem(text: String, icon: ImageVector, first: Boolean = true, onClick: () -> Unit) {
+    if (!LocalIsTv.current) { DropdownMenuItem(text = { Text(text) }, leadingIcon = { Icon(icon, null) }, onClick = onClick); return }
+    val u = Lockup.tvUnit
+    var focused by remember { mutableStateOf(false) }
+    val focus = remember { FocusRequester() }
+    if (first) LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
+    Row(
+        Modifier.fillMaxWidth().height((73f * u).dp).focusRequester(focus).onFocusChanged { focused = it.isFocused }
+            .clip(CircleShape).background(if (focused) Color.White else Color.Transparent)
+            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onClick)
+            .padding(start = (16f * u).dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy((14f * u).dp),
+    ) {
+        val tint = if (focused) Color.Black else Color.White
+        Icon(icon, null, tint = tint, modifier = Modifier.size((38f * u).dp))
+        Text(text, style = Type.callout.copy(fontSize = (25f * u).sp, lineHeight = (32f * u).sp), color = tint, maxLines = 1)
     }
 }
