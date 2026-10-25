@@ -115,9 +115,9 @@ data class HomeContent(
     val libraryShelves: List<Pair<BaseItemDto, List<BaseItemDto>>>,
 ) {
     /** What the banner pages through: what's being watched first, then the newest additions. */
-    val featured: List<BaseItemDto> = (resume.take(3) + nextUp.take(3) + movies.take(4) + shows.take(3))
+    val featured: List<BaseItemDto> = (resume.take(3) + nextUp.take(4) + movies.take(2) + shows.take(1))
         .distinctBy { it.id }
-        .take(8)
+        .take(10)
 }
 
 class HomeViewModel(private val repo: AsterRepository) : ViewModel() {
@@ -141,8 +141,9 @@ class HomeViewModel(private val repo: AsterRepository) : ViewModel() {
                     val animeIds = animeLibraries.map { it.id }.toSet()
                     val movies = views.firstOrNull { it.collectionType == CollectionType.MOVIES && it.id !in animeIds }
                         ?.let { library -> async { runCatching { repo.latest(library.id, kinds = listOf(BaseItemKind.MOVIE)) }.getOrDefault(emptyList()) } }
-                    val shows = views.firstOrNull { it.collectionType == CollectionType.TVSHOWS && it.id !in animeIds }
-                        ?.let { library -> async { runCatching { repo.latest(library.id, kinds = listOf(BaseItemKind.SERIES)) }.getOrDefault(emptyList()) } }
+                    // Every TV library but anime's, not only the first: a show added to Kid Cartoons or DVR is as new as one in Cartoons.
+                    val showLibraries = views.filter { it.collectionType == CollectionType.TVSHOWS && it.id !in animeIds }
+                    val shows = if (showLibraries.isEmpty()) null else async { repo.recentlyAddedShows(showLibraries.map { it.id }) }
                     val anime = async { repo.recentlyAddedAnime(animeLibraries) }
                     val shelves = views.filter { it.collectionType !in NoLibraryShelf }
                         .map { view -> async { view to runCatching { repo.latest(view.id) }.getOrDefault(emptyList()) } }

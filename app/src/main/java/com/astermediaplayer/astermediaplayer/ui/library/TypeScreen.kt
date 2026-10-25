@@ -163,7 +163,11 @@ class TypeViewModel(
     private suspend fun loadHero() {
         try {
             coroutineScope {
-                val latest = async { runCatching { repo.latest(null, 40, listOf(kind)) }.getOrDefault(emptyList()) }
+                // `latest` filtered to series returns nothing on a Jellyfin server, so the newest shows come from a search sorted by date added.
+                val latest = async {
+                    if (kind == BaseItemKind.SERIES) repo.recentlyAddedShows(listOf(null), 40)
+                    else runCatching { repo.latest(null, 40, listOf(kind)) }.getOrDefault(emptyList())
+                }
                 val resumed = async { runCatching { repo.resume(30) }.getOrDefault(emptyList()) }
                 val next = async { if (kind == BaseItemKind.SERIES) runCatching { repo.nextUp(20) }.getOrDefault(emptyList()) else emptyList() }
                 val newest = latest.await().filter { it.id !in animeIds }.take(20)

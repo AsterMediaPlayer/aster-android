@@ -171,6 +171,26 @@ class AsterRepository(context: Context, private val store: SessionStore) {
         fields = listOf(ItemFields.OVERVIEW, ItemFields.GENRES),
     ).content
 
+    /**
+     * The newest series, by when they were added, across these libraries (everywhere when [libraryIds] holds null). `latest`
+     * filtered to series returns nothing on a Jellyfin server, so this is an ordinary search sorted by date added.
+     */
+    suspend fun recentlyAddedShows(libraryIds: List<UUID?>, limit: Int = 20): List<BaseItemDto> = coroutineScope {
+        libraryIds.map { parent ->
+            async {
+                runCatching {
+                    api.libraryApi.getItems(
+                        GetItemsRequest(
+                            userId = userId, parentId = parent, recursive = true, includeItemTypes = listOf(BaseItemKind.SERIES),
+                            sortBy = listOf(ItemSortBy.DATE_CREATED), sortOrder = listOf(SortOrder.DESCENDING), limit = limit,
+                            fields = listOf(ItemFields.OVERVIEW, ItemFields.GENRES, ItemFields.DATE_CREATED),
+                        ),
+                    ).content.items
+                }.getOrDefault(emptyList())
+            }
+        }.awaitAll().flatten().sortedByDescending { it.dateCreated }.take(limit)
+    }
+
     // MARK: Channel sources
 
     /** The user's video playlists, with their tags: the channels among them are tagged `aster:channel`. */
