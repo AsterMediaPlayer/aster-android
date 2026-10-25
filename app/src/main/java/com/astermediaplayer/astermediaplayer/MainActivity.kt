@@ -34,6 +34,7 @@ class MainActivity : ComponentActivity() {
             navigationBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
         )
         val repo = (application as AsterApp).repository
+        com.astermediaplayer.astermediaplayer.ui.player.AudioCapabilities.log(this)
         if (isTelevision(this)) {
             // One Apple TV point is this many dp (text: sp) here, on this screen's own pixels.
             val metrics = resources.displayMetrics
