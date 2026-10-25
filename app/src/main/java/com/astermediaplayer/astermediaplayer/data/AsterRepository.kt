@@ -147,15 +147,21 @@ class AsterRepository(context: Context, private val store: SessionStore) {
 
     suspend fun views(): List<BaseItemDto> = api.userViewApi.getUserViews(userId = userId).content.items
 
+    /**
+     * What a shelf card or a hero page shows of a title: its overview and genres, and the video's streams for the HD or 4K badge.
+     * The Apple apps ask for these (and more) on every list; a list that doesn't gets titles with no description or badge.
+     */
+    private val listFields = listOf(ItemFields.OVERVIEW, ItemFields.GENRES, ItemFields.MEDIA_SOURCES)
+
     suspend fun resume(limit: Int = 20, parentId: UUID? = null): List<BaseItemDto> = api.libraryApi.getResumeItems(
         GetResumeItemsRequest(
-            userId = userId, limit = limit, parentId = parentId, fields = listOf(ItemFields.OVERVIEW, ItemFields.GENRES),
+            userId = userId, limit = limit, parentId = parentId, fields = listFields,
             mediaTypes = listOf(org.jellyfin.sdk.model.api.MediaType.VIDEO),
         ),
     ).content.items
 
     suspend fun nextUp(limit: Int = 20, seriesId: UUID? = null, parentId: UUID? = null): List<BaseItemDto> = api.showApi.getNextUp(
-        GetNextUpRequest(userId = userId, limit = limit, seriesId = seriesId, parentId = parentId),
+        GetNextUpRequest(userId = userId, limit = limit, seriesId = seriesId, parentId = parentId, fields = listFields),
     ).content.items
 
     /** Episodes of shows in the library that air soon, soonest first; most are placeholders from the show's schedule rather than files. */
@@ -168,7 +174,7 @@ class AsterRepository(context: Context, private val store: SessionStore) {
 
     suspend fun latest(parentId: UUID?, limit: Int = 20, kinds: List<BaseItemKind>? = null): List<BaseItemDto> = api.libraryApi.getLatestMedia(
         userId = userId, parentId = parentId, limit = limit, includeItemTypes = kinds,
-        fields = listOf(ItemFields.OVERVIEW, ItemFields.GENRES),
+        fields = listFields,
     ).content
 
     /**
@@ -183,7 +189,7 @@ class AsterRepository(context: Context, private val store: SessionStore) {
                         GetItemsRequest(
                             userId = userId, parentId = parent, recursive = true, includeItemTypes = listOf(BaseItemKind.SERIES),
                             sortBy = listOf(ItemSortBy.DATE_CREATED), sortOrder = listOf(SortOrder.DESCENDING), limit = limit,
-                            fields = listOf(ItemFields.OVERVIEW, ItemFields.GENRES, ItemFields.DATE_CREATED),
+                            fields = listFields + ItemFields.DATE_CREATED,
                         ),
                     ).content.items
                 }.getOrDefault(emptyList())
