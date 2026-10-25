@@ -54,7 +54,8 @@ fun Badge(text: String) {
 
 
 fun runtimeText(item: BaseItemDto): String? {
-    val minutes = item.runTimeTicks?.let { it / 600_000_000L } ?: return null
+    // A placeholder for an episode that hasn't aired has no length: "0 min" would be a lie.
+    val minutes = item.runTimeTicks?.let { it / 600_000_000L }?.takeIf { it > 0 } ?: return null
     // The Apple TV writes "1 hr 41 min"; the phone apps, "1h 41m".
     if (com.astermediaplayer.astermediaplayer.ui.theme.Lockup.onTv) return if (minutes >= 60) "${minutes / 60} hr ${minutes % 60} min" else "$minutes min"
     return if (minutes >= 60) "${minutes / 60}h ${minutes % 60}m" else "${minutes}m"
