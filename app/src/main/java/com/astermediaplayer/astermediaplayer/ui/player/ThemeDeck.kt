@@ -2,6 +2,7 @@ package com.astermediaplayer.astermediaplayer.ui.player
 
 import androidx.annotation.OptIn
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -53,6 +54,11 @@ class ThemeDeck(private val repo: AsterRepository, private val themes: ThemePlay
     private var ticker: Job? = null
 
     val isActive: Boolean get() = current != null
+
+    /** Bumped when a start from the page should take focus to the panel's Play/Pause. */
+    var focusRequest by mutableIntStateOf(0)
+        private set
+    fun requestPanelFocus() { focusRequest++ }
 
     /** Whether there's a picture: an MP4 from the plugin, or an episode. */
     val hasVideo: Boolean get() = when (val c = current) {
