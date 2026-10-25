@@ -17,6 +17,7 @@ Aster covers movies, TV, anime, music, audiobooks and live TV, and can turn your
 | Channels from playlists (beta) | ✓ | ✓ |
 | Disc menus | ✓ | ✓ |
 | Downloads for offline viewing | | ✓ |
+| Cast to a Chromecast | | ✓ |
 | Built for a remote (focus, long-press, side menu) | ✓ | |
 
 Requires Android 8.0 (API 26) or later.
@@ -47,6 +48,7 @@ Aster is developed against Jellyfin 12 and Emby 4.11. Emby support goes through 
 - **Skip Intro, Skip Credits and Play Next Episode**, with optional automatic skipping.
 - **Subtitles and audio**: styled ASS/SSA subtitles are drawn with libass; text tracks are drawn by the app; any audio or subtitle track can be switched during playback.
 - **Quality**: Auto or a fixed quality, with an offer to step down when playback keeps stalling.
+- **Chromecast** (phone): the Cast button in the player hands the title to a Chromecast from where it is, as H.264 (copied when it already is, converted when not) with the text subtitles as separate tracks, and the phone becomes the remote; ending the session picks up on the phone. Picture subtitles are burned in by the server.
 - **Trickplay**: scrub thumbnails on the progress bar, on Jellyfin.
 - **Add to Playlist**: from any movie, episode, show or season, to an existing video playlist or a new one.
 - **Disc menus**: the Aster Disc plugin's menus, drawn full screen with their backgrounds, trailers, layers, themes, scene selection, paging, music and button sounds. Play, extras, chapters and whole shows play from the menu, and you come back to where you left it.

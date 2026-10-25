@@ -767,6 +767,9 @@ class AsterRepository(context: Context, private val store: SessionStore) {
     fun itemImageUrl(itemId: UUID, type: String, index: Int): String =
         withToken("${serverUrl.trimEnd('/')}/Items/${wire(itemId)}/Images/$type/$index?maxWidth=1920")
 
+    /** The URL with the sign-in token in it unless it carries one, for a Chromecast, which can't send headers. */
+    fun withApiKey(url: String): String = if (url.contains("api_key=", ignoreCase = true) || url.contains("ApiKey=", ignoreCase = true)) url else withToken(url)
+
     private fun withToken(url: String): String {
         val token = android.net.Uri.encode(checkNotNull(session).accessToken)
         return url + (if ('?' in url) "&" else "?") + "ApiKey=$token"
@@ -1060,6 +1063,7 @@ class AsterRepository(context: Context, private val store: SessionStore) {
         audioStreamIndex: Int? = null,
         subtitleStreamIndex: Int? = null,
         forceTranscode: Boolean = false,
+        cast: Boolean = false,
     ): PlaybackInfoResponse = api.mediaInfoApi.getPostedPlaybackInfo(
         itemId,
         PlaybackInfoDto(
@@ -1069,7 +1073,7 @@ class AsterRepository(context: Context, private val store: SessionStore) {
             mediaSourceId = mediaSourceId,
             audioStreamIndex = audioStreamIndex,
             subtitleStreamIndex = subtitleStreamIndex,
-            deviceProfile = AndroidDeviceProfile.build(maxBitrate),
+            deviceProfile = if (cast) AndroidDeviceProfile.cast(maxBitrate) else AndroidDeviceProfile.build(maxBitrate),
             enableDirectPlay = !forceTranscode,
             enableDirectStream = !forceTranscode,
             enableTranscoding = true,

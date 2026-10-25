@@ -96,7 +96,7 @@ fun PlayerScreen(
     var subtitleMenu by remember { mutableStateOf(false) }
     var speedMenu by remember { mutableStateOf(false) }
     var playerView by remember { mutableStateOf<PlayerView?>(null) }
-    val exo = viewModel.player
+    val exo by viewModel.activePlayer.collectAsStateWithLifecycle()
     val clock = rememberPlayerClock(exo)
     val scope = rememberCoroutineScope()
 
@@ -158,7 +158,7 @@ fun PlayerScreen(
     // Pause when the app goes to the background.
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
-        val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_STOP) viewModel.player.pause() }
+        val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_STOP && viewModel.cast?.isConnected != true) viewModel.player.pause() }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
@@ -176,7 +176,7 @@ fun PlayerScreen(
                     viewModel.assHandler?.let { subtitleView?.addView(AssSubtitleView(ctx, it)) }
                 }
             },
-            update = { it.resizeMode = if (fills) androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_ZOOM else androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT },
+            update = { it.player = exo; it.resizeMode = if (fills) androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_ZOOM else androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT },
             modifier = Modifier.fillMaxSize(),
         )
 
@@ -203,6 +203,9 @@ fun PlayerScreen(
         // The server's text subtitle, drawn by the app under the controls; the player's own captions and libass draw in the video view.
         state.cueText?.let { SubtitleOverlay(it) }
 
+        state.castingTo?.let { name ->
+            Text("Casting to $name", style = Type.title3, color = Color.White.copy(alpha = 0.8f), modifier = Modifier.align(Alignment.Center).padding(bottom = 96.dp))
+        }
         if (state.loading && state.error == null) {
             CircularProgressIndicator(Modifier.align(Alignment.Center))
         }
@@ -224,6 +227,7 @@ fun PlayerScreen(
                         state.subtitle?.let { Text(it, style = Type.headline, color = Color.White.copy(alpha = 0.7f), maxLines = 1) }
                         Text(state.title, style = Type.title3.copy(fontSize = 22.sp, lineHeight = 28.sp), color = Color.White, maxLines = 1)
                     }
+                    if (viewModel.cast != null) CastButton(Modifier.size(44.dp))
                 }
                 Spacer(Modifier.weight(1f))
                 if (state.live) {

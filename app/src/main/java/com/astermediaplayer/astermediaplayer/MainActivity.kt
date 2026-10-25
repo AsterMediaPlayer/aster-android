@@ -25,7 +25,8 @@ import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
 import com.astermediaplayer.astermediaplayer.ui.theme.MinimalBringIntoView
 
 @OptIn(ExperimentalFoundationApi::class)
-class MainActivity : ComponentActivity() {
+// A FragmentActivity (a ComponentActivity with fragments) because the Cast button opens its device list as a dialog fragment.
+class MainActivity : androidx.fragment.app.FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // The app is dark whatever the system theme is, so the bars always get light icons.
