@@ -1,5 +1,10 @@
 package com.astermediaplayer.astermediaplayer.ui.channels
 
+import androidx.compose.material.icons.Icons
+import androidx.compose.material3.Icon
+import androidx.compose.foundation.layout.size
+import androidx.compose.runtime.produceState
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.focus.onFocusChanged
@@ -52,7 +57,7 @@ private const val GUIDE_DAYS = 7
 
 /** The Channels tab: playlists made into TV-style channels, laid out in a guide. */
 @Composable
-fun ChannelsScreen(onTune: (String) -> Unit, onOpen: (BaseItemDto) -> Unit, modifier: Modifier = Modifier, topInset: Dp = 0.dp) {
+fun ChannelsScreen(onTune: (String) -> Unit, onOpen: (BaseItemDto) -> Unit, modifier: Modifier = Modifier, topInset: Dp = 0.dp, onEdit: (String?) -> Unit = {}) {
     val app = LocalContext.current.applicationContext as AsterApp
     val model = app.channels
     val channels by model.channels.collectAsStateWithLifecycle()
@@ -73,13 +78,19 @@ fun ChannelsScreen(onTune: (String) -> Unit, onOpen: (BaseItemDto) -> Unit, modi
     val u = Lockup.tvUnit
     // The guide's group the filter shows; null for all of them.
     var group by remember { mutableStateOf<String?>(null) }
+    // Only the administrator can change channels: for them Select on a TV guide's channel opens its settings (as on the Apple TV).
+    val admin by produceState(false) { value = app.repository.isAdministrator() }
     // The Apple TV's guide keeps its own margin of 160 points.
     val inset = if (tv) 80.dp * u else 0.dp
     Column(modifier.fillMaxSize().then(if (tv) Modifier else Modifier.statusBarsPadding().padding(top = 8.dp + topInset))) {
-        Text(
-            "Channels (Beta)", style = if (tv) Type.pageTitle.copy(fontSize = (76f * u).sp, lineHeight = (90f * u).sp) else Type.pageTitle.copy(fontSize = 34.sp, lineHeight = 41.sp),
-            modifier = Modifier.padding(horizontal = Lockup.screenPadding + inset).padding(top = if (tv) (118f * u).dp else 0.dp, bottom = if (tv) 4.dp else 10.dp),
-        )
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = Lockup.screenPadding + inset).padding(top = if (tv) (118f * u).dp else 0.dp, bottom = if (tv) 4.dp else 10.dp),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Text("Channels (Beta)", style = if (tv) Type.pageTitle.copy(fontSize = (76f * u).sp, lineHeight = (90f * u).sp) else Type.pageTitle.copy(fontSize = 34.sp, lineHeight = 41.sp))
+            // Where to change them: shown to everyone, who see the settings read-only.
+            EditChannelsButton { onEdit(null) }
+        }
         when {
             error != null && channels.isEmpty() -> Box(Modifier.fillMaxSize(), Alignment.Center) { Text(error!!, color = SecondaryText) }
             !loaded -> Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator() }
@@ -112,7 +123,7 @@ fun ChannelsScreen(onTune: (String) -> Unit, onOpen: (BaseItemDto) -> Unit, modi
                         if (PlaylistChannel.now().let { scheduled.start <= it && it < scheduled.end }) onTune(row.id)
                         else (scheduled.item.source as? BaseItemDto)?.let(onOpen)
                     },
-                    onChannel = { onTune(it.id) },
+                    onChannel = { if (tv && admin) onEdit(it.id) else onTune(it.id) },
                     bottomPadding = 120.dp,
                     inset = inset,
                     belowTimes = if (tv && groups.isNotEmpty()) ({ TvGroupPills(listOf<String?>(null) + groups, group, Modifier.padding(horizontal = Lockup.screenPadding + inset)) { group = it } }) else null,
@@ -153,5 +164,22 @@ private fun TvGroupPills(options: List<String?>, selected: String?, modifier: Mo
                 contentAlignment = Alignment.Center,
             ) { Text(option ?: "All", style = Type.calloutMedium, color = if (focused) Color.Black else Color.White, maxLines = 1) }
         }
+    }
+}
+
+/** The Apple TV's Edit Channels button, beside the title. */
+@Composable
+private fun EditChannelsButton(onClick: () -> Unit) {
+    val u = Lockup.tvUnit
+    var focused by remember { mutableStateOf(false) }
+    Row(
+        Modifier.height((68f * u).dp).tvFocus((34f * u).dp, lift = 1.1f, ring = false).onFocusChanged { focused = it.isFocused }
+            .clip(CircleShape).background(if (focused) Color.White else Color.White.copy(alpha = 0.12f))
+            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onClick).padding(horizontal = (30f * u).dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy((12f * u).dp),
+    ) {
+        val tint = if (focused) Color.Black else Color.White
+        Icon(Icons.Default.Tune, null, tint = tint, modifier = Modifier.size((34f * u).dp))
+        Text("Edit Channels", style = Type.calloutMedium, color = tint, maxLines = 1)
     }
 }

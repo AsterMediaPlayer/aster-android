@@ -967,6 +967,8 @@ internal fun MenuHost(expanded: Boolean, onDismiss: () -> Unit, below: Boolean =
             Modifier.width((448f * u).dp).clip(shape)
                 .background(Brush.verticalGradient(listOf(Color(0xF2201C1A), Color(0xF2141210))))
                 .border((1f * u).dp, Color.White.copy(alpha = 0.16f), shape)
+                // A long list (the channel numbers) scrolls inside the panel.
+                .heightIn(max = (760f * u).dp).verticalScroll(rememberScrollState())
                 .padding((15f * u).dp),
             verticalArrangement = Arrangement.spacedBy((2f * u).dp),
             content = content,

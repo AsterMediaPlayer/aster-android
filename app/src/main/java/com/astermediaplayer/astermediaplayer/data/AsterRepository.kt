@@ -22,6 +22,7 @@ import org.jellyfin.sdk.api.client.extensions.showApi
 import org.jellyfin.sdk.api.client.extensions.subtitleApi
 import org.jellyfin.sdk.api.client.extensions.systemApi
 import org.jellyfin.sdk.api.client.extensions.userApi
+import org.jellyfin.sdk.api.client.extensions.itemUpdateApi
 import org.jellyfin.sdk.api.client.extensions.userDataApi
 import org.jellyfin.sdk.api.client.extensions.userViewApi
 import org.jellyfin.sdk.api.client.extensions.videoApi
@@ -195,6 +196,19 @@ class AsterRepository(context: Context, private val store: SessionStore) {
                 }.getOrDefault(emptyList())
             }
         }.awaitAll().flatten().sortedByDescending { it.dateCreated }.take(limit)
+    }
+
+    /** Whether this account is the server's administrator, who alone can change the tags that make a playlist a channel. */
+    suspend fun isAdministrator(): Boolean =
+        runCatching { api.userApi.getCurrentUser().content.policy?.isAdministrator == true }.getOrDefault(false)
+
+    /**
+     * Sets an item's tags, as the Apple apps do: its own record read back with the tags replaced and posted, so everything
+     * else on it stays as it was. The server refuses anyone but an administrator.
+     */
+    suspend fun setTags(itemId: UUID, tags: List<String>) {
+        val record = api.libraryApi.getItem(itemId = itemId, userId = userId).content
+        api.itemUpdateApi.updateItem(itemId, record.copy(tags = tags))
     }
 
     // MARK: Channel sources

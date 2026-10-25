@@ -34,6 +34,8 @@ import com.astermediaplayer.astermediaplayer.data.AudiobookShelf
 import com.astermediaplayer.astermediaplayer.ui.audiobooks.AudiobookBar
 import com.astermediaplayer.astermediaplayer.data.channels.ChannelTuner
 import com.astermediaplayer.astermediaplayer.ui.channels.ChannelsScreen
+import com.astermediaplayer.astermediaplayer.ui.channels.ChannelSettingsScreen
+import com.astermediaplayer.astermediaplayer.ui.channels.ChannelSettingsViewModel
 import com.astermediaplayer.astermediaplayer.ui.downloads.DownloadsScreen
 import com.astermediaplayer.astermediaplayer.ui.upcoming.UpcomingScreen
 import com.astermediaplayer.astermediaplayer.ui.upcoming.UpcomingViewModel
@@ -177,6 +179,7 @@ private object Routes {
     const val PLAYER = "player/{id}?start={start}&end={end}&label={label}&begin={begin}"
     const val AUDIOBOOK = "audiobook/{id}"
     const val CHANNEL = "channel/{id}"
+    const val CHANNEL_SETTINGS = "channelsettings?only={only}"
     const val PROGRAM = "program/{id}"
     const val SERIES_TIMER = "seriestimer/{id}"
     const val ALBUM = "album/{id}"
@@ -187,6 +190,7 @@ private object Routes {
     fun detail(id: UUID) = "detail/$id"
     fun audiobook(id: UUID) = "audiobook/$id"
     fun channel(id: String) = "channel/$id"
+    fun channelSettings(only: String? = null) = if (only == null) "channelsettings" else "channelsettings?only=$only"
     fun program(id: String) = "program/$id"
     fun seriesTimer(id: String) = "seriestimer/$id"
     fun album(id: UUID) = "album/$id"
@@ -235,6 +239,7 @@ fun AsterNavHost(signedIn: Boolean) {
                 onAlbum = { nav.navigate(Routes.album(it.id)) },
                 onArtist = { nav.navigate(Routes.artist(it.id)) },
                 onTuneChannel = { nav.navigate(Routes.channel(it)) },
+                onEditChannels = { nav.navigate(Routes.channelSettings(it)) },
                 onProgram = { nav.navigate(Routes.program(it.id.toString())) },
                 onSeriesRule = { nav.navigate(Routes.seriesTimer(it)) },
                     onPlay = { nav.navigate(Routes.player(it)) },
@@ -308,6 +313,11 @@ fun AsterNavHost(signedIn: Boolean) {
             val ruleId = entry.arguments!!.getString("id").orEmpty()
             val vm: SeriesTimerViewModel = viewModel(key = "rule-$ruleId", factory = viewModelFactory { initializer { SeriesTimerViewModel(repo, ruleId) } })
             SeriesTimerScreen(vm, onClose = { nav.popBackStack() })
+        }
+        composable(Routes.CHANNEL_SETTINGS, arguments = listOf(navArgument("only") { type = NavType.StringType; nullable = true; defaultValue = null })) { entry ->
+            val only = entry.arguments?.getString("only")
+            val vm: ChannelSettingsViewModel = viewModel(key = "channel-settings-$only", factory = viewModelFactory { initializer { ChannelSettingsViewModel(app) } })
+            ChannelSettingsScreen(vm, only)
         }
         composable(Routes.CHANNEL, arguments = listOf(navArgument("id") { type = NavType.StringType })) { entry ->
             val channelId = entry.arguments!!.getString("id").orEmpty()
@@ -453,6 +463,7 @@ private fun promotedFor(tabs: List<Tab>, candidates: List<MoreDestination>, widt
 
 @Composable
 private fun MainTabs(
+    onEditChannels: (String?) -> Unit,
     onItem: (BaseItemDto) -> Unit,
     onPlay: (UUID) -> Unit,
     onBook: (Audiobook) -> Unit,
@@ -562,7 +573,7 @@ private fun MainTabs(
                     BackButton { back() }
                 }
                 MoreDestination.Channels -> Box(modifier) {
-                    ChannelsScreen(onTune = onTuneChannel, onOpen = onItem, modifier = Modifier.fillMaxSize(), topInset = 56.dp)
+                    ChannelsScreen(onTune = onTuneChannel, onOpen = onItem, onEdit = onEditChannels, modifier = Modifier.fillMaxSize(), topInset = 56.dp)
                     BackButton { back() }
                 }
                 MoreDestination.LiveTv -> Box(modifier) {
