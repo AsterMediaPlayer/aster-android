@@ -154,8 +154,8 @@ fun ProgramScreen(viewModel: ProgramViewModel, onClose: () -> Unit, onWatch: (UU
         } else {
             AsyncImage(model = repo.programImageUrl(program, 1920), contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
             Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.2f), Color.Black.copy(alpha = 0.75f), Color.Black.copy(alpha = 0.97f)))))
-            val start = program.startDate?.toInstant(ZoneOffset.UTC)?.epochSecond?.toDouble()
-            val end = program.endDate?.toInstant(ZoneOffset.UTC)?.epochSecond?.toDouble()
+            val start = program.startDate?.atZone(java.time.ZoneId.systemDefault())?.toInstant()?.epochSecond?.toDouble()
+            val end = program.endDate?.atZone(java.time.ZoneId.systemDefault())?.toInstant()?.epochSecond?.toDouble()
             val now = System.currentTimeMillis() / 1000.0
             val airing = start != null && end != null && now >= start && now < end
             val future = end != null && end > now

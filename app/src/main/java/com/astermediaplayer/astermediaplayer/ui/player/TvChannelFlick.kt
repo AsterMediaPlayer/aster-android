@@ -120,7 +120,8 @@ class TvFlickModel(val channels: List<FlickChannel>, val currentId: String) {
     }
 
     companion object {
-        private fun LocalDateTime.epoch() = toInstant(ZoneOffset.UTC).epochSecond
+        // The SDK's dates are in the device's own zone.
+        private fun LocalDateTime.epoch() = atZone(ZoneId.systemDefault()).toEpochSecond()
 
         private fun clock(seconds: Double): String =
             DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT).format(java.time.Instant.ofEpochSecond(seconds.toLong()).atZone(ZoneId.systemDefault()))

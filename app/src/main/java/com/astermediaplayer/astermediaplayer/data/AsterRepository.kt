@@ -378,7 +378,8 @@ class AsterRepository(context: Context, private val store: SessionStore) {
         ),
     ).content.items
 
-    private fun utc(seconds: Double): java.time.LocalDateTime = java.time.LocalDateTime.ofEpochSecond(seconds.toLong(), 0, java.time.ZoneOffset.UTC)
+    /** A moment as the SDK wants a date: the device's own zone, which it sends to the server as the instant it is. */
+    private fun utc(seconds: Double): java.time.LocalDateTime = java.time.LocalDateTime.ofInstant(java.time.Instant.ofEpochSecond(seconds.toLong()), java.time.ZoneId.systemDefault())
 
     /** One sheet of a title's trickplay frames (see `TrickplayInfo`); null when the server can't give it. */
     suspend fun trickplaySheet(itemId: UUID, width: Int, index: Int, mediaSourceId: String): ByteArray? = withContext(Dispatchers.IO) {

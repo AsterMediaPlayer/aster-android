@@ -315,7 +315,8 @@ private fun ChannelTile(channel: BaseItemDto, modifier: Modifier, onClick: () ->
     }
 }
 
-private fun LocalDateTime.instant() = toInstant(ZoneOffset.UTC)
+/** The SDK reads the server's UTC times into the device's own zone, so a date is a local time. */
+private fun LocalDateTime.instant() = atZone(ZoneId.systemDefault()).toInstant()
 
 /** How far through a programme it is, 0..1, or null when it isn't on now. */
 fun programProgress(program: BaseItemDto): Float? {
