@@ -22,6 +22,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountCircle
+import androidx.compose.material.icons.filled.Album
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.ClosedCaption
 import androidx.compose.material.icons.filled.Download
@@ -86,6 +87,7 @@ private sealed interface SettingsPage {
     data object Root : SettingsPage
     data object Playback : SettingsPage
     data object Subtitles : SettingsPage
+    data object DiscMenus : SettingsPage
     data object TitlePages : SettingsPage
     data object Downloads : SettingsPage
     data object Account : SettingsPage
@@ -113,6 +115,7 @@ fun SettingsScreen(session: Session?, store: SettingsStore, servers: ServerActio
             SettingsPage.Root -> RootPage(session, ::open)
             SettingsPage.Playback -> PlaybackPage(settings, store, scope)
             SettingsPage.Subtitles -> SubtitlesPage(settings, store, scope)
+            SettingsPage.DiscMenus -> DiscMenusPage(settings, store, scope)
             SettingsPage.TitlePages -> TitlePagesPage(settings, store, scope)
             SettingsPage.Downloads -> DownloadsPage(settings, store, scope)
             SettingsPage.Account -> AccountPage(session, servers, onSignOut, ::open)
@@ -127,6 +130,7 @@ private fun SettingsPage.title(servers: List<SavedServer>) = when (this) {
     SettingsPage.Root -> "Settings"
     SettingsPage.Playback -> "Playback"
     SettingsPage.Subtitles -> "Audio & Subtitles"
+    SettingsPage.DiscMenus -> "Disc Menus"
     SettingsPage.TitlePages -> "Title Pages"
     SettingsPage.Downloads -> "Downloads"
     SettingsPage.Account -> "Account"
@@ -251,6 +255,8 @@ private fun RootPage(session: Session?, open: (SettingsPage) -> Unit) {
     val tv = LocalIsTv.current
     SRow("Playback", icon = Icons.Default.PlayCircle, chevron = true) { open(SettingsPage.Playback) }
     SRow("Audio & Subtitles", icon = Icons.Default.ClosedCaption, chevron = true) { open(SettingsPage.Subtitles) }
+    // Disc menus come from a Jellyfin plugin.
+    if (session?.kind == com.astermediaplayer.astermediaplayer.data.emby.ServerKind.Jellyfin) SRow("Disc Menus", icon = Icons.Default.Album, chevron = true) { open(SettingsPage.DiscMenus) }
     SRow("Title Pages", icon = Icons.Default.MusicNote, chevron = true) { open(SettingsPage.TitlePages) }
     if (!tv) SRow("Downloads", icon = Icons.Default.Download, chevron = true) { open(SettingsPage.Downloads) }
     SGroup(" ")
@@ -270,6 +276,13 @@ private fun PlaybackPage(settings: AppSettings, store: SettingsStore, scope: kot
 private fun SubtitlesPage(settings: AppSettings, store: SettingsStore, scope: kotlinx.coroutines.CoroutineScope) {
     SSwitch("Draw styled ASS/SSA subtitles (libass)", settings.styledSubtitles) { scope.launch { store.setStyledSubtitles(it) } }
     SNote("Draws a track's own fonts, colours and positions, as the Apple apps do, instead of plain text.")
+}
+
+@Composable
+private fun DiscMenusPage(settings: AppSettings, store: SettingsStore, scope: kotlinx.coroutines.CoroutineScope) {
+    SSwitch("Open disc menu when pressing Play", settings.preferDiscMenu) { scope.launch { store.setPreferDiscMenu(it) } }
+    SSwitch("Menu music and sounds", settings.discMenuSounds) { scope.launch { store.setDiscMenuSounds(it) } }
+    SNote("Titles with a JellyDisc menu on the server show a Disc Menu button on their page. Turn on the first option to start those titles at their menu, like putting in the disc.")
 }
 
 @Composable

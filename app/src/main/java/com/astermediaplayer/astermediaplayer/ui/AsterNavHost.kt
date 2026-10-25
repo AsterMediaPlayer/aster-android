@@ -150,6 +150,9 @@ import com.astermediaplayer.astermediaplayer.ui.player.ClipRange
 import com.astermediaplayer.astermediaplayer.ui.player.DirectMedia
 import com.astermediaplayer.astermediaplayer.ui.player.PlayerScreen
 import com.astermediaplayer.astermediaplayer.ui.player.PlayerViewModel
+import com.astermediaplayer.astermediaplayer.data.disc.DiscMenuDocument
+import com.astermediaplayer.astermediaplayer.ui.disc.DiscMenuController
+import com.astermediaplayer.astermediaplayer.ui.disc.DiscMenuScreen
 import com.astermediaplayer.astermediaplayer.ui.search.SearchScreen
 import com.astermediaplayer.astermediaplayer.ui.search.SearchViewModel
 import com.astermediaplayer.astermediaplayer.ui.settings.SettingsScreen
@@ -180,7 +183,8 @@ private object Routes {
     const val MAIN = "main"
     const val LIBRARY = "library/{id}/{name}"
     const val DETAIL = "detail/{id}"
-    const val PLAYER = "player/{id}?start={start}&end={end}&label={label}&begin={begin}"
+    const val PLAYER = "player/{id}?start={start}&end={end}&label={label}&begin={begin}&at={at}&queue={queue}"
+    const val DISC = "disc/{id}"
     const val AUDIOBOOK = "audiobook/{id}"
     const val CHANNEL = "channel/{id}"
     const val CHANNEL_SETTINGS = "channelsettings?only={only}"
@@ -201,6 +205,10 @@ private object Routes {
     fun artist(id: UUID) = "artist/$id"
     fun shelf(id: String) = "audiobookshelf/${android.net.Uri.encode(id)}"
     fun player(id: UUID, fromBeginning: Boolean = false) = if (fromBeginning) "player/$id?begin=true" else "player/$id"
+    fun disc(id: UUID) = "disc/$id"
+    /** From a disc menu: from a point in the item (ticks), and the line of items that follows it. */
+    fun player(id: UUID, atTicks: Long, followedBy: List<UUID>?) =
+        "player/$id?at=$atTicks" + (followedBy?.let { "&queue=" + (it.joinToString(",").ifEmpty { "-" }) } ?: "")
     /** A stretch of an episode, in milliseconds. */
     fun clip(id: UUID, startMs: Long, endMs: Long, label: String) = "player/$id?start=$startMs&end=$endMs&label=${android.net.Uri.encode(label)}"
     fun theme(path: String, title: String, subtitle: String?) =
@@ -293,6 +301,7 @@ fun AsterNavHost(signedIn: Boolean) {
                 DetailScreen(
                     vm, onBack = { nav.popBackStack() }, onPlay = { nav.navigate(Routes.player(it)) }, onItem = ::open,
                     onPlayFromBeginning = { nav.navigate(Routes.player(it, fromBeginning = true)) },
+                    onDiscMenu = { nav.navigate(Routes.disc(it)) },
                     onGoToSeries = { nav.navigate(Routes.detail(it)) },
                     onPlayTheme = { oe ->
                         scope.launch {
@@ -312,6 +321,24 @@ fun AsterNavHost(signedIn: Boolean) {
                         }
                     },
                 )
+            }
+            composable(Routes.DISC, arguments = listOf(navArgument("id") { type = NavType.StringType })) { entry ->
+                val id = parseId(entry.arguments!!.getString("id").orEmpty())
+                if (id == null) { LaunchedEffect(Unit) { nav.popBackStack() }; return@composable }
+                // The menu is fetched afresh as it opens; the controller outlives the player that opens over it.
+                var loaded by remember { mutableStateOf<Pair<DiscMenuDocument, Boolean>?>(null) }
+                LaunchedEffect(id) {
+                    val document = repo.discMenu(id)
+                    if (document == null) nav.popBackStack() else loaded = document to app.settings.current().discMenuSounds
+                }
+                loaded?.let { (document, sounds) ->
+                    val controller: DiscMenuController = viewModel(key = "disc-$id", factory = viewModelFactory { initializer { DiscMenuController(app, repo, document, id, sounds) } })
+                    DiscMenuScreen(
+                        controller,
+                        onPlay = { play -> nav.navigate(Routes.player(play.itemId, play.startTicks.takeIf { it > 0 } ?: -1L, play.followedBy)) },
+                        onClose = { nav.popBackStack() },
+                    )
+                }
             }
             composable(Routes.AUDIOBOOK, arguments = listOf(navArgument("id") { type = NavType.StringType })) { entry ->
                 val id = UUID.fromString(entry.arguments!!.getString("id"))
@@ -407,6 +434,8 @@ fun AsterNavHost(signedIn: Boolean) {
                     navArgument("end") { type = NavType.LongType; defaultValue = -1L },
                     navArgument("label") { type = NavType.StringType; defaultValue = "" },
                     navArgument("begin") { type = NavType.BoolType; defaultValue = false },
+                    navArgument("at") { type = NavType.LongType; defaultValue = -1L },
+                    navArgument("queue") { type = NavType.StringType; defaultValue = "" },
                 ),
                 deepLinks = listOf(navDeepLink { uriPattern = "aster://play/{id}" }),
             ) { entry ->
@@ -414,11 +443,19 @@ fun AsterNavHost(signedIn: Boolean) {
                 val start = entry.arguments!!.getLong("start")
                 val end = entry.arguments!!.getLong("end")
                 val clip = if (start >= 0 && end > start) ClipRange(start, end, entry.arguments!!.getString("label")?.ifEmpty { null }) else null
-                val vm: PlayerViewModel = viewModel(factory = viewModelFactory { initializer { PlayerViewModel(app, repo, app.settings, id, clip, fromBeginning = entry.arguments!!.getBoolean("begin")) } })
+                val at = entry.arguments!!.getLong("at")
+                // A disc menu's line of items: "-" is an empty one (nothing follows), absent is the usual next episode.
+                val line = entry.arguments!!.getString("queue").orEmpty().takeIf { it.isNotEmpty() }?.let { q -> if (q == "-") emptyList() else q.split(',').mapNotNull { runCatching { UUID.fromString(it) }.getOrNull() } }
+                val vm: PlayerViewModel = viewModel(factory = viewModelFactory {
+                    initializer { PlayerViewModel(app, repo, app.settings, id, clip, fromBeginning = entry.arguments!!.getBoolean("begin"), startAtMs = at.takeIf { it >= 0 }?.let { it / 10_000 }, followedBy = line) }
+                })
                 PlayerScreen(
                     vm,
                     onBack = { nav.popBackStack() },
-                    onPlayNext = { next -> nav.navigate(Routes.player(next)) { popUpTo(Routes.PLAYER) { inclusive = true } } },
+                    onPlayNext = { next ->
+                        val route = if (line != null) Routes.player(next, -1L, line.drop(1)) else Routes.player(next)
+                        nav.navigate(route) { popUpTo(Routes.PLAYER) { inclusive = true } }
+                    },
                 )
             }
         }

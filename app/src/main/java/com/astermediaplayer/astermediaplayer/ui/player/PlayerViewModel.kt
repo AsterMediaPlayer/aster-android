@@ -122,6 +122,8 @@ class PlayerViewModel(
     /** Where in the item the schedule has it, and where a clip cut short stops, in milliseconds. */
     startAtMs: Long? = null,
     cutAtMs: Long? = null,
+    /** A disc menu's line of items: what plays after this one (an empty line plays nothing after it); null for the usual next episode. */
+    private val followedBy: List<UUID>? = null,
 ) : ViewModel() {
     private var scheduledStartMs: Long? = startAtMs
     private var currentPlaylistChannel: String? = playlistChannelId
@@ -323,7 +325,7 @@ class PlayerViewModel(
                 val isLive = dto.type == BaseItemKind.TV_CHANNEL
                 val resumeMs = positionMs ?: clip?.startMs ?: scheduledStartMs ?: if (fromBeginning || isLive) 0L else ((dto.userData?.playbackPositionTicks ?: 0L) / TICKS_PER_MS)
                 if (!readOnly && !isLive && item != null && segments.isEmpty()) segments = repo.segments(itemId)
-                if (!readOnly && !isLive && nextEpisodeId == null) nextEpisodeId = findNextEpisode(dto)
+                if (!readOnly && !isLive && nextEpisodeId == null) nextEpisodeId = if (followedBy != null) followedBy.firstOrNull() else findNextEpisode(dto)
 
                 // A failed direct play usually means the device can't decode the source (4K, Dolby Vision, ...),
                 // so the fallback transcode is capped to something every phone can handle.
