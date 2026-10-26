@@ -293,7 +293,13 @@ fun AsterNavHost(signedIn: Boolean) {
                 AuthScreen(vm, onSignedIn = { nav.navigate(Routes.MAIN) { popUpTo(Routes.AUTH) { inclusive = true } } })
             }
             composable(Routes.MAIN) {
-                MainTabs(
+                // Once for each Jellyfin server signed in to (the plugins are Jellyfin's): the welcome screen stands in for the tabs.
+                val seen by app.settings.welcomeSeen.collectAsStateWithLifecycle(initialValue = null)
+                val serverId = repo.currentServerId
+                val welcomeDue = seen != null && serverId != null && repo.serverKind == com.astermediaplayer.astermediaplayer.data.emby.ServerKind.Jellyfin && serverId !in seen.orEmpty()
+                if (seen == null) Box(Modifier.fillMaxSize()) else if (welcomeDue) {
+                    com.astermediaplayer.astermediaplayer.ui.welcome.WelcomeScreen(repo, repo.session?.serverName, onDone = { scope.launch { app.settings.markWelcomeSeen(serverId!!) } })
+                } else MainTabs(
                     onItem = ::open,
                     onBook = { nav.navigate(Routes.audiobook(it.id)) },
                     onShelf = { nav.navigate(Routes.shelf(it.id)) },

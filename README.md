@@ -64,6 +64,7 @@ Aster is developed against Jellyfin 12 and Emby 4.11. Emby support goes through 
 ### Accounts and servers
 - Several servers and users stay signed in, with an optional password to switch to one and a lock after time away from the app.
 - Settings follow the Apple apps' layout: Playback, Audio & Subtitles, Disc Menus, Title Pages, Channels, Server Plugins, Account and About.
+- **Welcome screen**: shown once for each Jellyfin server you sign in to, with what Aster does and what its companion plugins add; an administrator can switch the plugins on from it. Settings ▸ Server Plugins brings it back.
 - **Server Plugins** shows which of Aster's companion plugins are on your server, and for an administrator installs them, turns them on or off, and restarts the server.
 
 ## Companion plugins
@@ -129,6 +130,5 @@ Aster isn't affiliated with or endorsed by the Jellyfin project.
 
 Things the Apple apps have that Android doesn't yet:
 
-- The first-run Welcome screen that introduces the companion plugins.
 - Plex.
 - On Emby: trickplay and Skip Credits, and Live TV is untested.
