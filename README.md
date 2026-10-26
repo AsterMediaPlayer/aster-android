@@ -47,6 +47,7 @@ Aster is developed against Jellyfin 12 and Emby 4.11. Emby support goes through 
 - **Upcoming**: episodes airing soon from the shows in your library.
 - **Skip Intro, Skip Credits and Play Next Episode**, with optional automatic skipping.
 - **Subtitles and audio**: styled ASS/SSA subtitles are drawn with libass; text tracks are drawn by the app; any audio or subtitle track can be switched during playback.
+- **Plays what your device can**: Aster asks the device which video codecs it decodes in hardware (and up to what size and bit depth) and whether it can decode or pass through DTS, TrueHD and Dolby audio, and tells the server, so only what the device can't play is converted.
 - **Quality**: Auto or a fixed quality, with an offer to step down when playback keeps stalling.
 - **Chromecast** (phone): the Cast button in the player hands the title to a Chromecast from where it is, as H.264 (copied when it already is, converted when not) with the text subtitles as separate tracks, and the phone becomes the remote; ending the session picks up on the phone. Picture subtitles are burned in by the server.
 - **Trickplay**: scrub thumbnails on the progress bar, on Jellyfin.
