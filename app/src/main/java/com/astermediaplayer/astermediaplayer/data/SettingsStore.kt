@@ -42,6 +42,8 @@ data class AppSettings(
     val discMenuSounds: Boolean = true,
     /** Minutes of an audiobook saved ahead of the listener on a phone, so a spot with no signal doesn't stop it; 0 for off. */
     val listenAheadMinutes: Int = 30,
+    /** The song card over an opening or ending, and at the start and end of a music video. */
+    val themeCards: Boolean = true,
 )
 
 private val Context.settingsDataStore by preferencesDataStore("aster_settings")
@@ -65,6 +67,7 @@ class SettingsStore(private val context: Context) {
     private val preferDiscMenuKey = booleanPreferencesKey("prefer_disc_menu")
     private val discMenuSoundsKey = booleanPreferencesKey("disc_menu_sounds")
     private val listenAheadKey = intPreferencesKey("listen_ahead_minutes")
+    private val themeCardsKey = booleanPreferencesKey("theme_cards")
     private val welcomeSeenKey = stringSetPreferencesKey("welcome_seen")
 
     val settings: Flow<AppSettings> = context.settingsDataStore.data.map {
@@ -88,6 +91,7 @@ class SettingsStore(private val context: Context) {
             preferDiscMenu = it[preferDiscMenuKey] ?: false,
             discMenuSounds = it[discMenuSoundsKey] ?: true,
             listenAheadMinutes = it[listenAheadKey] ?: 30,
+            themeCards = it[themeCardsKey] ?: true,
         )
     }
 
@@ -106,6 +110,7 @@ class SettingsStore(private val context: Context) {
         "themeMusic" to themeMusicKey,
         "themeVideos" to themeVideosKey,
         "openingSound" to openingSoundKey,
+        "themeCards" to themeCardsKey,
     )
 
     /** The synced settings that have been set on this device, as the server stores them ("true" or "false"); one never set isn't here. */
@@ -132,6 +137,7 @@ class SettingsStore(private val context: Context) {
     suspend fun setThemeCut(cut: ThemeCut) = context.settingsDataStore.edit { it[themeCutKey] = cut.ordinal }
     suspend fun setThemeMusic(on: Boolean) = context.settingsDataStore.edit { it[themeMusicKey] = on }
     suspend fun setThemeVideos(on: Boolean) = context.settingsDataStore.edit { it[themeVideosKey] = on }
+    suspend fun setThemeCards(on: Boolean) = context.settingsDataStore.edit { it[themeCardsKey] = on }
     suspend fun setOpeningSound(on: Boolean) = context.settingsDataStore.edit { it[openingSoundKey] = on }
     suspend fun setDownloadsEnabled(on: Boolean) = context.settingsDataStore.edit { it[downloadsEnabledKey] = on }
     suspend fun setDownloadsSetUp(on: Boolean) = context.settingsDataStore.edit { it[downloadsSetUpKey] = on }
