@@ -288,7 +288,9 @@ fun TypeScreen(
                         ) { FeaturedBanner(state.featured, onItem, onPlay) }
                         Row.Header -> Row(
                             Modifier.fillMaxWidth().then(if (hasHero) Modifier else Modifier.statusBarsPadding())
-                                .padding(horizontal = Lockup.screenPadding).padding(top = if (hasHero) 20.dp else Lockup.screenPadding / 2),
+                                .padding(horizontal = Lockup.screenPadding)
+                                // With no banner above it, a TV's title starts below the "‹ Movies" chip over the top left corner (which ends 107 points down).
+                                .padding(top = if (hasHero) 20.dp else if (tv) (124f * Lockup.tvUnit).dp else Lockup.screenPadding / 2),
                             verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.SpaceBetween,
                         ) {
                             Text(viewModel.title, style = if (tv) Type.pageTitle.copy(fontSize = (76f * Lockup.tvUnit).sp, lineHeight = (90f * Lockup.tvUnit).sp) else Type.pageTitle.copy(fontSize = 34.sp, lineHeight = 41.sp, letterSpacing = 1.0.sp))
