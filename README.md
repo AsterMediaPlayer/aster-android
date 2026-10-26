@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/screenshots/home.jpg" alt="Aster Media Player on Android TV: the Home screen" width="100%">
+</p>
+
 # Aster Media Player for Android
 
 A native Jellyfin and Emby client for Android TV, phones and tablets, written in Kotlin and Jetpack Compose.
@@ -5,6 +9,21 @@ A native Jellyfin and Emby client for Android TV, phones and tablets, written in
 Aster covers movies, TV, anime, music, audiobooks and live TV, and can turn your Jellyfin playlists into TV-style channels. Title pages are laid out like the Apple TV app, with theme music and theme videos, and it plays DVD/Blu-ray-style disc menus from the Aster Disc plugin. It is the Android counterpart of [Aster Media Player for Apple platforms](https://github.com/AsterMediaPlayer/Aster-Media-Player), and follows that app's design and behaviour.
 
 > Aster for Android is in development. It is built and tested mainly on a TV box (an onn. 4K Pro); the phone layouts have had less testing. Expect rough edges, and please report what you find.
+
+## Screenshots
+
+Taken on an Android TV box (an onn. 4K Pro), against a demo server of open-licensed films.
+
+| | |
+| --- | --- |
+| ![Title page](docs/screenshots/detail.jpg) | ![Disc menu](docs/screenshots/disc-menu.jpg) |
+| **Title page**: full-bleed art and logo, extras, and a button for the disc menu | **Disc menus**: Aster Disc menus drawn full screen, here Big Buck Bunny's |
+| ![Music](docs/screenshots/music.jpg) | ![Channels](docs/screenshots/channels.jpg) |
+| **Music**: Now Playing, with what's up next | **Channels (Beta)**: playlists as TV channels in a guide, with music still playing below |
+| ![Channel row](docs/screenshots/channel-row.jpg) | ![Player](docs/screenshots/player.jpg) |
+| **Channel row**: press Up while watching to flick through channels, or Go to Movie | **Player**: scrub bar, chapters, subtitles, quality and speed |
+| ![Welcome](docs/screenshots/welcome.jpg) | |
+| **Welcome**: shown once for each Jellyfin server, with the companion plugins | |
 
 ## Platforms
 
