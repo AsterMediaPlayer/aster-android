@@ -48,8 +48,25 @@ fun AuthScreen(viewModel: AuthViewModel, onSignedIn: () -> Unit) {
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             Text("Aster", style = MaterialTheme.typography.displaySmall, color = MaterialTheme.colorScheme.primary)
-            if (state.connectedServer == null) {
-                Text("Connect to your Jellyfin or Emby server", style = MaterialTheme.typography.titleMedium)
+            if (state.plexCode != null) {
+                Text("Link Aster to Plex", style = MaterialTheme.typography.titleMedium)
+                Text("On any device, go to plex.tv/link, sign in, and enter this code:", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(state.plexCode!!, style = MaterialTheme.typography.displayMedium, color = MaterialTheme.colorScheme.primary)
+                TextButton(onClick = viewModel::cancelPlex) { Text("Cancel") }
+            } else if (state.plexServers != null) {
+                Text("Choose a Plex server", style = MaterialTheme.typography.titleMedium)
+                state.plexServers!!.forEach { server ->
+                    OutlinedButton(onClick = { viewModel.choosePlexServer(server) }, enabled = !state.busy, modifier = Modifier.fillMaxWidth(), contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp)) {
+                        Column(Modifier.weight(1f)) {
+                            Text(server.name, style = MaterialTheme.typography.bodyLarge)
+                            Text(if (server.owned) "Yours" else "Shared with you", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+                if (state.busy) CircularProgressIndicator(Modifier.padding(2.dp))
+                TextButton(onClick = viewModel::cancelPlex) { Text("Cancel") }
+            } else if (state.connectedServer == null) {
+                Text("Connect to your Jellyfin or Emby server, or sign in with Plex", style = MaterialTheme.typography.titleMedium)
                 OutlinedTextField(
                     value = state.serverInput, onValueChange = viewModel::setServer,
                     label = { Text("Server address") }, placeholder = { Text("jellyfin.example.com:8096") },
@@ -61,6 +78,7 @@ fun AuthScreen(viewModel: AuthViewModel, onSignedIn: () -> Unit) {
                     onClick = viewModel::connect, enabled = !state.busy && state.serverInput.isNotBlank(),
                     modifier = Modifier.fillMaxWidth(),
                 ) { if (state.busy) CircularProgressIndicator(Modifier.padding(2.dp)) else Text("Connect") }
+                OutlinedButton(onClick = viewModel::startPlex, enabled = !state.busy, modifier = Modifier.fillMaxWidth()) { Text("Sign in with Plex") }
                 // Servers already signed in to: back to one without typing it.
                 if (servers.isNotEmpty()) {
                     Text("Your Servers", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 10.dp))
