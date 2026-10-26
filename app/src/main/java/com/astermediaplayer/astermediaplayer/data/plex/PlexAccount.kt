@@ -28,7 +28,7 @@ data class PlexConnection(val uri: String, val address: String?, val port: Int?,
 
     companion object {
         fun fromJson(o: JSONObject) = PlexConnection(
-            o.getString("uri"), o.optString("address").ifEmpty { null }, if (o.has("port")) o.getInt("port") else null,
+            o.getString("uri"), o.str("address"), if (o.has("port") && !o.isNull("port")) o.getInt("port") else null,
             o.optBoolean("local"), o.optBoolean("relay"),
         )
     }
@@ -115,31 +115,34 @@ class PlexAccount(private val device: PlexDevice, private val http: OkHttpClient
 
     suspend fun accountName(token: String): Pair<Long, String> {
         val o = JSONObject(send("api/v2/user", token = token))
-        return o.getLong("id") to (o.optString("title").ifEmpty { o.optString("username") }.ifEmpty { "Plex" })
+        return o.getLong("id") to (o.str("title") ?: o.str("username") ?: "Plex")
     }
 
     /** The servers this account can use, its own first. */
     suspend fun servers(token: String): List<PlexResource> =
         parseResources(send("api/v2/resources", query = mapOf("includeHttps" to "1", "includeRelay" to "1"), token = token))
 
-    private fun pin(o: JSONObject) = PlexPin(o.getLong("id"), o.getString("code"), o.optString("authToken").ifEmpty { null }, if (o.has("expiresIn") && !o.isNull("expiresIn")) o.getInt("expiresIn") else null)
+    private fun pin(o: JSONObject) = parsePin(o)
 
     companion object {
         val DEFAULT_HTTP: OkHttpClient = OkHttpClient.Builder().connectTimeout(20, TimeUnit.SECONDS).readTimeout(20, TimeUnit.SECONDS).build()
 
+        /** A link code's reply: until the code is entered its `authToken` is a JSON null, which `optString` would read as the text "null". */
+        fun parsePin(o: JSONObject) = PlexPin(o.getLong("id"), o.getString("code"), o.str("authToken"), if (o.has("expiresIn") && !o.isNull("expiresIn")) o.getInt("expiresIn") else null)
+
         /** plex.tv's resource list, keeping the devices that are servers, the account's own first. */
         fun parseResources(json: String): List<PlexResource> {
             val array = JSONArray(json)
-            val all = List(array.length()) { array.getJSONObject(it) }.filter { o -> o.optString("provides").split(",").contains("server") }.map { o ->
+            val all = List(array.length()) { array.getJSONObject(it) }.filter { o -> (o.str("provides") ?: "").split(",").contains("server") }.map { o ->
                 val connections = o.optJSONArray("connections")?.let { a ->
                     List(a.length()) { i ->
                         val c = a.getJSONObject(i)
-                        PlexConnection(c.getString("uri"), c.optString("address").ifEmpty { null }, if (c.has("port")) c.getInt("port") else null, c.optBoolean("local"), c.optBoolean("relay"))
+                        PlexConnection(c.getString("uri"), c.str("address"), if (c.has("port") && !c.isNull("port")) c.getInt("port") else null, c.optBoolean("local"), c.optBoolean("relay"))
                     }
                 }.orEmpty()
                 PlexResource(
-                    o.getString("name"), o.getString("clientIdentifier"), o.optString("accessToken").ifEmpty { null },
-                    o.optBoolean("owned"), o.optString("productVersion").ifEmpty { null }, connections,
+                    o.getString("name"), o.getString("clientIdentifier"), o.str("accessToken"),
+                    o.optBoolean("owned"), o.str("productVersion"), connections,
                 )
             }
             return all.sortedByDescending { it.owned }

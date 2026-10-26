@@ -65,4 +65,20 @@ class PlexAccountTest {
         assertEquals("application/json", headers["Accept"])
         assertEquals(null, PlexDevice("client-1", "Pixel").headers(null)["X-Plex-Token"])
     }
+
+    @Test fun aLinkCodeBeforeAndAfter() {
+        val waiting = PlexAccount.parsePin(JSONObject("""{"id":123,"code":"ABCD","clientIdentifier":"c","authToken":null,"expiresIn":1800}"""))
+        assertEquals("ABCD", waiting.code)
+        // A JSON null is no token (org.json would read it as the text "null").
+        assertEquals(null, waiting.authToken)
+        assertEquals(1800, waiting.expiresInSeconds)
+        val linked = PlexAccount.parsePin(JSONObject("""{"id":123,"code":"ABCD","authToken":"tok","expiresIn":1700}"""))
+        assertEquals("tok", linked.authToken)
+    }
+
+    @Test fun nullsInAServerListAreNothing() {
+        val servers = PlexAccount.parseResources("""[{"name":"S","provides":"server","clientIdentifier":"c","accessToken":null,"productVersion":null,"owned":true,"connections":[{"uri":"http://a:1","address":null,"port":null,"local":true,"relay":false}]}]""")
+        assertEquals(null, servers.single().accessToken)
+        assertEquals(null, servers.single().connections.single().address)
+    }
 }
