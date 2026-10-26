@@ -419,11 +419,14 @@ private fun ServerPage(id: String, servers: ServerActions, open: (SettingsPage) 
     else SRow("Switch to This Server") {
         if (server.asksPasswordToSwitch) asking = true else scope.launch { repo.switchTo(server); servers.onSwitched() }
     }
-    SSwitch("Ask for Password to Switch", server.asksPasswordToSwitch) { scope.launch { repo.setAsksPasswordToSwitch(id, it) } }
-    SNote("Switching to this server asks for ${server.session.userName}'s password first, checked by the server, so others on this device can't switch to it.")
-    SGroup(" ")
-    SRow("Lock After", SavedServer.lockTitle(server.lockAfterMinutes), chevron = true) { open(SettingsPage.LockAfter(id)) }
-    SNote("After this long away from Aster, coming back to this server asks for ${server.session.userName}'s password.")
+    // A password to switch or unlock is the server's own, checked by the server: Plex's sign-in has none to ask for.
+    if (server.session.kind != com.astermediaplayer.astermediaplayer.data.emby.ServerKind.Plex) {
+        SSwitch("Ask for Password to Switch", server.asksPasswordToSwitch) { scope.launch { repo.setAsksPasswordToSwitch(id, it) } }
+        SNote("Switching to this server asks for ${server.session.userName}'s password first, checked by the server, so others on this device can't switch to it.")
+        SGroup(" ")
+        SRow("Lock After", SavedServer.lockTitle(server.lockAfterMinutes), chevron = true) { open(SettingsPage.LockAfter(id)) }
+        SNote("After this long away from Aster, coming back to this server asks for ${server.session.userName}'s password.")
+    }
     if (!inUse) {
         SGroup(" ")
         SRow("Remove Server", destructive = true) { scope.launch { repo.removeServer(id); back() } }

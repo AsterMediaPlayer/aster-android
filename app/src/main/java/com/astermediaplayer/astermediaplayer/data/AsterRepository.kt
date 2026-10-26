@@ -6,6 +6,15 @@ import org.jellyfin.sdk.api.client.ApiClient
 import com.astermediaplayer.astermediaplayer.data.emby.ServerApiClient
 import com.astermediaplayer.astermediaplayer.data.emby.EmbyIds
 import com.astermediaplayer.astermediaplayer.data.emby.ServerKind
+import com.astermediaplayer.astermediaplayer.data.plex.OkHttpPlexTransport
+import com.astermediaplayer.astermediaplayer.data.plex.PlexAccount
+import com.astermediaplayer.astermediaplayer.data.plex.PlexApiClient
+import com.astermediaplayer.astermediaplayer.data.plex.PlexConnectionRace
+import com.astermediaplayer.astermediaplayer.data.plex.PlexDevice
+import com.astermediaplayer.astermediaplayer.data.plex.PlexLink
+import com.astermediaplayer.astermediaplayer.data.plex.PlexMapper
+import com.astermediaplayer.astermediaplayer.data.plex.PlexPin
+import com.astermediaplayer.astermediaplayer.data.plex.PlexResource
 import org.jellyfin.sdk.api.client.extensions.artistApi
 import org.jellyfin.sdk.api.client.extensions.audioApi
 import org.jellyfin.sdk.api.client.extensions.instantMixApi
@@ -93,14 +102,53 @@ class AsterRepository(context: Context, private val store: SessionStore) {
     var serverKind: ServerKind = ServerKind.Jellyfin
         private set
 
-    /** An id as the server writes it: on Emby, the number an id the app carries as a UUID stands for. */
+    /** An id as the server writes it: on Emby and Plex, the number an id the app carries as a UUID stands for. */
     fun wire(id: UUID): String = wire(id.toString())
-    fun wire(id: String): String = if (serverKind == ServerKind.Emby) EmbyIds.decode(id) else id
+    fun wire(id: String): String = when (serverKind) {
+        ServerKind.Emby -> EmbyIds.decode(id)
+        ServerKind.Plex -> com.astermediaplayer.astermediaplayer.data.plex.PlexMapper.plexId(id)
+        else -> id
+    }
 
     /** The SDK's client for [url], made to speak Emby when the server is one, and to keep its requests off the main thread. */
     private fun connect(url: String, token: String? = null, kind: ServerKind = serverKind): ApiClient {
         val base = jellyfin.createApi(baseUrl = url, accessToken = token)
+        // Plex shares nothing with Jellyfin's API: its own client answers the same calls from Plex's.
+        if (kind == ServerKind.Plex && token != null) return PlexApiClient(base, OkHttpPlexTransport(url, token, plexDevice), plexDevice)
         return ServerApiClient(base, kind) { session?.userId }
+    }
+
+    private val plexDevice: PlexDevice by lazy { jellyfin.createApi().deviceInfo.let { PlexDevice(it.id, it.name) } }
+    private val plexAccount: PlexAccount by lazy { PlexAccount(plexDevice) }
+
+    // MARK: Plex sign-in (plex.tv)
+
+    /** A new link code to show: the viewer enters it at plex.tv/link. */
+    suspend fun plexStartLink(): PlexPin = plexAccount.startLink()
+
+    /** The account's token once the code has been entered; null until then. */
+    suspend fun plexLinkedToken(pin: PlexPin): String? = plexAccount.linkedToken(pin)
+
+    /** The servers the account can use, its own first. */
+    suspend fun plexServers(accountToken: String): List<PlexResource> = plexAccount.servers(accountToken)
+
+    /** Signs in to one of the account's servers, at the first of its addresses that answers. */
+    suspend fun signInWithPlex(resource: PlexResource, accountToken: String) {
+        val token = resource.accessToken ?: accountToken
+        val connection = PlexConnectionRace.fastest(resource.rankedConnections, token, plexDevice)
+            ?: throw IllegalStateException("${resource.name} isn't answering. Check that it's on; away from home, it also needs Remote Access turned on (in Plex's settings for the server, under Remote Access).")
+        val (accountId, accountName) = plexAccount.accountName(accountToken)
+        val saved = Session(
+            connection.uri.trimEnd('/'), token, PlexMapper.id(accountId.toString()), accountName, ServerKind.Plex, resource.name,
+            PlexLink(accountToken, resource.clientIdentifier, resource.connections),
+        )
+        store.save(saved)
+        serverKind = ServerKind.Plex
+        client = connect(saved.serverUrl, token, ServerKind.Plex)
+        session = saved
+        animeLibraryCache = null
+        remember(saved)
+        _locked.value = false
     }
     var session: Session? = null
         private set
@@ -1136,6 +1184,7 @@ class AsterRepository(context: Context, private val store: SessionStore) {
      * from its cache. Called in the background, never in the way of playback.
      */
     suspend fun subtitleCues(itemId: UUID, mediaSourceId: String, streamIndex: Int): List<SubtitleCue> = withContext(Dispatchers.IO) {
+        (client as? PlexApiClient)?.let { return@withContext it.subtitleCues(itemId.toString(), streamIndex) }
         val url = "${serverUrl.trimEnd('/')}/Videos/${wire(itemId)}/$mediaSourceId/Subtitles/$streamIndex/Stream.js"
         subtitleHttp.newCall(Request.Builder().url(url).header("Authorization", authorizationHeader()).build()).execute().use { response ->
             check(response.isSuccessful) { "The server answered ${response.code} for subtitle track $streamIndex" }

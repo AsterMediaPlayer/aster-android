@@ -14,6 +14,7 @@ import org.jellyfin.sdk.model.api.AuthenticationResult
 import org.jellyfin.sdk.model.api.BaseItemDto
 import org.jellyfin.sdk.model.api.BaseItemDtoQueryResult
 import org.jellyfin.sdk.model.api.PlaybackInfoResponse
+import org.jellyfin.sdk.model.api.SearchHintResult
 import org.jellyfin.sdk.model.api.UserDto
 import org.jellyfin.sdk.model.api.UserItemDataDto
 
@@ -33,6 +34,7 @@ object EmbyShapes {
     private fun modelFor(json: JsonElement): SerialDescriptor? = when (json) {
         is JsonObject -> when {
             "Items" in json && "TotalRecordCount" in json -> BaseItemDtoQueryResult.serializer().descriptor
+            "SearchHints" in json -> SearchHintResult.serializer().descriptor
             "AccessToken" in json && "User" in json -> AuthenticationResult.serializer().descriptor
             "MediaSources" in json && "PlaySessionId" in json -> PlaybackInfoResponse.serializer().descriptor
             "Policy" in json || "HasPassword" in json -> UserDto.serializer().descriptor

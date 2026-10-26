@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import org.jellyfin.sdk.model.api.UserDto
+import com.astermediaplayer.astermediaplayer.data.plex.PlexResource
 
 data class AuthState(
     val serverInput: String = "",
@@ -27,12 +28,18 @@ data class AuthState(
     val signedIn: Boolean = false,
     /** A saved server that asks for its password before switching to it. */
     val asking: SavedServer? = null,
+    /** The code to enter at plex.tv/link while signing in with Plex. */
+    val plexCode: String? = null,
+    /** The Plex account's servers, to pick from once the code is entered; null until then. */
+    val plexServers: List<PlexResource>? = null,
 )
 
 class AuthViewModel(private val repo: AsterRepository, private val onServerChanged: () -> Unit = {}) : ViewModel() {
     private val _state = MutableStateFlow(AuthState())
     val state: StateFlow<AuthState> = _state.asStateFlow()
     private var quickConnectJob: Job? = null
+    private var plexJob: Job? = null
+    private var plexToken: String? = null
 
     /** The servers already signed in to: back to one without typing it. */
     val servers: StateFlow<List<SavedServer>> = repo.savedServers
@@ -134,6 +141,58 @@ class AuthViewModel(private val repo: AsterRepository, private val onServerChang
                 _state.update { it.copy(quickConnectCode = null, error = "Quick Connect failed: ${e.userMessage()}") }
             }
         }
+    }
+
+    /** Shows a code to enter at plex.tv/link, polls until it is, then lists the account's servers (or signs in to the only one). */
+    fun startPlex() {
+        plexJob?.cancel()
+        plexJob = viewModelScope.launch {
+            try {
+                _state.update { it.copy(busy = true, error = null) }
+                val pin = repo.plexStartLink()
+                _state.update { it.copy(busy = false, plexCode = pin.code) }
+                // The code lasts a while (15 minutes or so); asked about every couple of seconds until it's been entered.
+                val deadline = System.currentTimeMillis() + (pin.expiresInSeconds ?: 900) * 1000L
+                var token: String? = null
+                while (token == null) {
+                    if (System.currentTimeMillis() > deadline) throw IllegalStateException("The code ran out. Try again for a new one.")
+                    delay(2_000)
+                    token = runCatching { repo.plexLinkedToken(pin) }.getOrNull()
+                }
+                plexToken = token
+                val servers = repo.plexServers(token)
+                if (servers.isEmpty()) throw IllegalStateException("This Plex account has no servers.")
+                if (servers.size == 1) choosePlexServer(servers.single())
+                else _state.update { it.copy(plexCode = null, plexServers = servers) }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _state.update { it.copy(busy = false, plexCode = null, plexServers = null, error = e.userMessage()) }
+            }
+        }
+    }
+
+    fun choosePlexServer(server: PlexResource) {
+        val token = plexToken ?: return
+        if (_state.value.busy) return
+        _state.update { it.copy(busy = true, plexCode = null, error = null) }
+        plexJob = viewModelScope.launch {
+            try {
+                repo.signInWithPlex(server, token)
+                onServerChanged()
+                _state.update { it.copy(busy = false, plexServers = null, signedIn = true) }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _state.update { it.copy(busy = false, error = e.userMessage()) }
+            }
+        }
+    }
+
+    fun cancelPlex() {
+        plexJob?.cancel()
+        plexToken = null
+        _state.update { it.copy(busy = false, plexCode = null, plexServers = null, error = null) }
     }
 
     fun cancelQuickConnect() {

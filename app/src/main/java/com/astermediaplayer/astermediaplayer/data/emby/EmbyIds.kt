@@ -4,7 +4,7 @@ import java.util.regex.Pattern
 
 /** Which kind of server this is: Jellyfin, or Emby, whose routes and ids differ a little. */
 enum class ServerKind(val raw: String, val displayName: String) {
-    Jellyfin("jellyfin", "Jellyfin"), Emby("emby", "Emby");
+    Jellyfin("jellyfin", "Jellyfin"), Emby("emby", "Emby"), Plex("plex", "Plex");
 
     companion object {
         fun of(raw: String?) = entries.firstOrNull { it.raw == raw } ?: Jellyfin
