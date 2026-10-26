@@ -213,6 +213,38 @@ class PlayerViewModel(
     private var playSessionId: String? = null
     private var playMethod = PlayMethod.DIRECT_PLAY
     private var segments: List<MediaSegmentDto> = emptyList()
+
+    private val _themeMoments = MutableStateFlow<List<com.astermediaplayer.astermediaplayer.data.ThemeMoment>>(emptyList())
+    /** The song cards for what's playing: an episode's openings and endings, or a music video's whole. */
+    val themeMoments: StateFlow<List<com.astermediaplayer.astermediaplayer.data.ThemeMoment>> = _themeMoments.asStateFlow()
+
+    /**
+     * The episode's OP and ED chapters give the cards at once (an opening can start the episode); the plugin's themes fill in the song
+     * when they come. A music video's card covers all of it. Never in the way of playback.
+     */
+    private fun loadThemeCards(dto: BaseItemDto) {
+        _themeMoments.value = emptyList()
+        if (!appSettings.themeCards || clip != null) return
+        viewModelScope.launch {
+            when (dto.type) {
+                BaseItemKind.EPISODE -> {
+                    _themeMoments.value = com.astermediaplayer.astermediaplayer.data.ThemeCards.forEpisode(dto, emptyList(), emptyList())
+                    val themes = runCatching { repo.opEdThemes(dto.id) }.getOrNull().orEmpty()
+                    if (themes.isNotEmpty()) _themeMoments.value = com.astermediaplayer.astermediaplayer.data.ThemeCards.forEpisode(dto, themes, segments)
+                }
+                BaseItemKind.MUSIC_VIDEO -> {
+                    val theme = runCatching { repo.opEdThemeForLibraryItem(dto.id) }.getOrNull()
+                    val season = theme?.seasonId?.let { id -> runCatching { repo.item(parseUuidLoose(id)).name }.getOrNull() }
+                    _themeMoments.value = com.astermediaplayer.astermediaplayer.data.ThemeCards.forMusicVideo(dto, theme, season)
+                }
+                else -> Unit
+            }
+        }
+    }
+
+    /** The plugin writes ids with or without dashes. */
+    private fun parseUuidLoose(id: String): UUID =
+        UUID.fromString(if (id.length == 32) "${id.substring(0, 8)}-${id.substring(8, 12)}-${id.substring(12, 16)}-${id.substring(16, 20)}-${id.substring(20)}" else id)
     private var nextEpisodeId: UUID? = null
     private var tickJob: Job? = null
     private var reported = false
@@ -452,6 +484,7 @@ class PlayerViewModel(
                 player.playWhenReady = true
                 startCues()
                 refreshSubtitles()
+                loadThemeCards(dto)
                 _state.update {
                     it.copy(
                         title = clip?.label ?: dto.name.orEmpty(),

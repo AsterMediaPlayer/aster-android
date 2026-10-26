@@ -96,6 +96,8 @@ fun PlayerScreen(
     var speedMenu by remember { mutableStateOf(false) }
     var playerView by remember { mutableStateOf<PlayerView?>(null) }
     val exo by viewModel.activePlayer.collectAsStateWithLifecycle()
+    val themeMoments by viewModel.themeMoments.collectAsStateWithLifecycle()
+    var tvControlsHeight by remember { mutableStateOf(0.dp) }
     val clock = rememberPlayerClock(exo)
     val scope = rememberCoroutineScope()
 
@@ -177,6 +179,9 @@ fun PlayerScreen(
             modifier = Modifier.fillMaxSize(),
         )
 
+        // The song card over an opening or ending (or a music video), above the controls while they're up.
+        ThemeCardOverlay(themeMoments, clock.position, if (isTv) tvControlsHeight else if (controlsVisible) 150.dp else 0.dp)
+
         // A tap on the picture shows or hides the controls; a double-tap on either side skips 10 seconds; a pinch fills the screen or fits it.
         if (!isTv) Box(
             Modifier.fillMaxSize().pinchToFill { fills = it; reveal() }.pointerInput(canSeek) {
@@ -210,7 +215,7 @@ fun PlayerScreen(
         val shade by animateFloatAsState(if (controlsVisible) 1f else 0f, tween(250), label = "controls")
         if (isTv) {
             // Not while the stall card or an error is up: their buttons take the remote.
-            if (state.error == null && state.qualityOffer == null) TvPlayerControls(state, viewModel, clock, canSeek, onGoTo)
+            if (state.error == null && state.qualityOffer == null) TvPlayerControls(state, viewModel, clock, canSeek, onGoTo, onControlsHeight = { tvControlsHeight = it })
         } else if (shade > 0f) Box(Modifier.fillMaxSize().alpha(shade)) {
             // Darkens the edges so white text reads over a bright picture.
             Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0f to Color.Black.copy(alpha = 0.6f), 0.35f to Color.Transparent, 0.65f to Color.Transparent, 1f to Color.Black.copy(alpha = 0.7f))))

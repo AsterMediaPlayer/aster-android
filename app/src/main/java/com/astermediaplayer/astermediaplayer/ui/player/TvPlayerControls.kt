@@ -87,11 +87,18 @@ fun TvPlayerControls(
     canSeek: Boolean,
     /** Plays a title from the library on its own, off the channel (the flick's Go to Episode). */
     onGoTo: (UUID) -> Unit = {},
+    /** Told how far up the controls reach (zero while they're hidden), so the song card sits above them. */
+    onControlsHeight: (androidx.compose.ui.unit.Dp) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val exo = viewModel.player
     val focusManager = LocalFocusManager.current
     var mode by remember { mutableStateOf(TvMode.Transport) }
+    // How far up the controls reach, for the song card to sit above them.
+    val u = com.astermediaplayer.astermediaplayer.ui.theme.Lockup.tvUnit
+    LaunchedEffect(mode) {
+        onControlsHeight(when (mode) { TvMode.Hidden -> 0.dp; TvMode.Transport -> (380f * u).dp; TvMode.Panel -> (430f * u).dp; TvMode.Channels -> (440f * u).dp })
+    }
     var tab by remember { mutableStateOf(PanelTab.Quality) }
     // Counts presses, so each one restarts the fade.
     var activity by remember { mutableIntStateOf(0) }
