@@ -539,6 +539,17 @@ class AsterRepository(context: Context, private val store: SessionStore) {
         }.getOrNull()
     }
 
+    /** An Emby title's scrub thumbnails as a BIF file (see `BifFile`), or null when the server can't give it. */
+    suspend fun embyBif(itemId: UUID, mediaSourceId: String, width: Int = 320): ByteArray? = withContext(Dispatchers.IO) {
+        runCatching {
+            val url = "${serverUrl.trimEnd('/')}/Videos/${wire(itemId)}/index.bif?MediaSourceId=$mediaSourceId&Width=$width"
+            http.newCall(Request.Builder().url(url).header("Authorization", authorizationHeader()).build()).execute().use { r ->
+                // A long film's file runs to tens of megabytes; one far bigger than that isn't worth holding.
+                if (r.isSuccessful && r.body.contentLength() <= 80_000_000L) r.body.bytes() else null
+            }
+        }.getOrNull()
+    }
+
     /** A title's trickplay listing, which the plain item fetch leaves out. */
     suspend fun trickplayOf(id: UUID): BaseItemDto? = runCatching {
         api.libraryApi.getItems(GetItemsRequest(userId = userId, ids = listOf(id), fields = listOf(ItemFields.TRICKPLAY))).content.items.firstOrNull()

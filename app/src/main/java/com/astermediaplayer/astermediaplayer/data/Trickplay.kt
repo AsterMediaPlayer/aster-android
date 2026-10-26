@@ -66,13 +66,13 @@ class ScrubPreviewSource private constructor(
     private val itemId: UUID,
     private val mediaSourceId: String,
     private val info: TrickplayInfo,
-) {
+) : ScrubPreview {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val sheets = LinkedHashMap<Int, BitmapRegionDecoder>()
     private val loading = HashMap<Int, Deferred<BitmapRegionDecoder?>>()
     private val lock = Mutex()
 
-    suspend fun frame(seconds: Double): Bitmap? {
+    override suspend fun frame(seconds: Double): Bitmap? {
         val cell = info.cell(seconds) ?: return null
         val decoder = sheet(cell.sheet) ?: return null
         val area = info.area(cell)
@@ -106,7 +106,7 @@ class ScrubPreviewSource private constructor(
     }
 
     /** Lets the sheets go when the player does. */
-    fun release() {
+    override fun release() {
         scope.cancel()
         runCatching { sheets.values.forEach { it.recycle() }; sheets.clear() }
     }
