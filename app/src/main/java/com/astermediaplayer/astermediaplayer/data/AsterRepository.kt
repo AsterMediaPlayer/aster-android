@@ -1073,7 +1073,7 @@ class AsterRepository(context: Context, private val store: SessionStore) {
             mediaSourceId = mediaSourceId,
             audioStreamIndex = audioStreamIndex,
             subtitleStreamIndex = subtitleStreamIndex,
-            deviceProfile = if (cast) AndroidDeviceProfile.cast(maxBitrate) else AndroidDeviceProfile.build(maxBitrate),
+            deviceProfile = if (cast) AndroidDeviceProfile.cast(maxBitrate) else AndroidDeviceProfile.build(maxBitrate, copyHevc = !forceTranscode),
             enableDirectPlay = !forceTranscode,
             enableDirectStream = !forceTranscode,
             enableTranscoding = true,
