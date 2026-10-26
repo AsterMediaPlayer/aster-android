@@ -286,7 +286,7 @@ class PlayerViewModel(
     private var seeking = false
 
     /** The frames shown above the timeline while scrubbing, when the server has made them for this title. */
-    private var scrub: com.astermediaplayer.astermediaplayer.data.ScrubPreviewSource? = null
+    private var scrub: com.astermediaplayer.astermediaplayer.data.ScrubPreview? = null
     private var scrubFor: UUID? = null
 
     /** The picture for a point on the timeline, or null (the bubble then shows just the time). */
@@ -296,6 +296,11 @@ class PlayerViewModel(
         if (scrubFor == forItem) return
         scrubFor = forItem
         scrub?.release(); scrub = null
+        // Emby keeps its scrub frames in a BIF file; Jellyfin lists trickplay sheets on the item.
+        if (repo.serverKind == com.astermediaplayer.astermediaplayer.data.emby.ServerKind.Emby) {
+            mediaSourceId?.let { scrub = com.astermediaplayer.astermediaplayer.data.BifScrubPreview(repo, forItem, it) }
+            return
+        }
         viewModelScope.launch {
             val dto = repo.trickplayOf(forItem) ?: return@launch
             if (scrubFor == forItem) scrub = com.astermediaplayer.astermediaplayer.data.ScrubPreviewSource.create(repo, dto, mediaSourceId)

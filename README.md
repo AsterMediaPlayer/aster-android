@@ -31,6 +31,7 @@ Requires Android 8.0 (API 26) or later.
 | Home, libraries, title pages, search, playback | ✓ | ✓ |
 | Skip Intro | ✓ (media segments) | ✓ (intro chapter markers) |
 | Skip Credits | ✓ | |
+| Scrub thumbnails | ✓ (trickplay) | ✓ (preview thumbnails, once Emby has made them) |
 | Openings and endings from chapter markers | ✓ | ✓ |
 | Live TV and recordings | ✓ | not tested |
 | Channels (beta), Disc Menus, Server Plugins | ✓ | |
@@ -50,7 +51,7 @@ Aster is developed against Jellyfin 12 and Emby 4.11. Emby support goes through 
 - **Plays what your device can**: Aster asks the device which video codecs it decodes in hardware (and up to what size and bit depth) and whether it can decode or pass through DTS, TrueHD and Dolby audio, and tells the server, so only what the device can't play is converted.
 - **Quality**: Auto or a fixed quality, with an offer to step down when playback keeps stalling.
 - **Chromecast** (phone): the Cast button in the player hands the title to a Chromecast from where it is, as H.264 (copied when it already is, converted when not) with the text subtitles as separate tracks, and the phone becomes the remote; ending the session picks up on the phone. Picture subtitles are burned in by the server.
-- **Trickplay**: scrub thumbnails on the progress bar, on Jellyfin.
+- **Trickplay**: scrub thumbnails on the progress bar: Jellyfin's trickplay images, or on Emby its video preview thumbnails (turn on "video preview thumbnail extraction" in the library's settings, and Emby makes them when its scheduled task runs).
 - **Add to Playlist**: from any movie, episode, show or season, to an existing video playlist or a new one.
 - **Disc menus**: the Aster Disc plugin's menus, drawn full screen with their backgrounds, trailers, layers, themes, scene selection, paging, music and button sounds. Play, extras, chapters and whole shows play from the menu, and you come back to where you left it.
 
@@ -105,7 +106,7 @@ Built with [Jetpack Compose](https://developer.android.com/jetpack/compose), [Me
 
 ## Testing
 
-The unit tests cover the disc menu rules (against the plugin's conformance vectors), Emby's id and response translation (against responses from a real Emby 4.11 server), intro and credits markers, openings and endings from chapters, and the subtitle, trickplay and schedule logic.
+The unit tests cover the disc menu rules (against the plugin's conformance vectors), Emby's id and response translation (against responses from a real Emby 4.11 server), intro and credits markers, openings and endings from chapters, and the subtitle, trickplay (including Emby's BIF files) and schedule logic.
 
 ## Built with, and licenses
 
@@ -132,4 +133,4 @@ Aster isn't affiliated with or endorsed by the Jellyfin project.
 Things the Apple apps have that Android doesn't yet:
 
 - Plex.
-- On Emby: trickplay and Skip Credits, and Live TV is untested.
+- On Emby: Skip Credits, and Live TV is untested.
