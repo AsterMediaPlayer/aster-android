@@ -5,6 +5,7 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -64,6 +65,7 @@ class SettingsStore(private val context: Context) {
     private val preferDiscMenuKey = booleanPreferencesKey("prefer_disc_menu")
     private val discMenuSoundsKey = booleanPreferencesKey("disc_menu_sounds")
     private val listenAheadKey = intPreferencesKey("listen_ahead_minutes")
+    private val welcomeSeenKey = stringSetPreferencesKey("welcome_seen")
 
     val settings: Flow<AppSettings> = context.settingsDataStore.data.map {
         AppSettings(
@@ -117,6 +119,11 @@ class SettingsStore(private val context: Context) {
             for ((name, key) in synced) values[name]?.toBooleanStrictOrNull()?.let { prefs[key] = it }
         }
     }
+
+    /** The saved servers ([SavedServer.id]) whose welcome screen has been seen. */
+    val welcomeSeen: Flow<Set<String>> = context.settingsDataStore.data.map { it[welcomeSeenKey] ?: emptySet() }
+    suspend fun markWelcomeSeen(serverId: String) = context.settingsDataStore.edit { it[welcomeSeenKey] = (it[welcomeSeenKey] ?: emptySet()) + serverId }
+    suspend fun showWelcomeAgain(serverId: String) = context.settingsDataStore.edit { it[welcomeSeenKey] = (it[welcomeSeenKey] ?: emptySet()) - serverId }
 
     suspend fun setQualityIndex(index: Int) = context.settingsDataStore.edit { it[qualityKey] = index }
     suspend fun setAutoSkipSegments(on: Boolean) = context.settingsDataStore.edit { it[autoSkipKey] = on }

@@ -123,7 +123,7 @@ fun SettingsScreen(session: Session?, store: SettingsStore, servers: ServerActio
             SettingsPage.Subtitles -> SubtitlesPage(settings, store, scope)
             SettingsPage.DiscMenus -> DiscMenusPage(settings, store, scope)
             SettingsPage.TitlePages -> TitlePagesPage(settings, store, scope)
-            SettingsPage.ServerPlugins -> ServerPluginsPage(servers.repo)
+            SettingsPage.ServerPlugins -> ServerPluginsPage(servers.repo, store)
             SettingsPage.Downloads -> DownloadsPage(settings, store, scope)
             SettingsPage.Account -> AccountPage(session, servers, onSignOut, ::open)
             SettingsPage.About -> AboutPage()
@@ -318,7 +318,7 @@ private fun TitlePagesPage(settings: AppSettings, store: SettingsStore, scope: k
 
 /** Aster's companion plugins on the server: a switch each for an administrator, else whether they're there. */
 @Composable
-private fun ServerPluginsPage(repo: com.astermediaplayer.astermediaplayer.data.AsterRepository) {
+private fun ServerPluginsPage(repo: com.astermediaplayer.astermediaplayer.data.AsterRepository, store: SettingsStore) {
     val model = remember { com.astermediaplayer.astermediaplayer.data.ServerPluginsModel(repo) }
     val scope = rememberCoroutineScope()
     var confirming by remember { mutableStateOf(false) }
@@ -352,6 +352,12 @@ private fun ServerPluginsPage(repo: com.astermediaplayer.astermediaplayer.data.A
     SGroup(" ")
     SNote("Aster Aurora, for the web: brings as much of Aster as it can to Jellyfin in your browser, with big hero banners, trailers playing behind titles, and more. Once Aster's repository is on your server, you'll find it in the plugin catalogue in Jellyfin's dashboard.")
     if (!admin) SNote("Want these? Ask whoever runs your server. They can switch them on from Aster in a few seconds, or add this repository under Plugins ▸ Repositories in Jellyfin's dashboard: ${com.astermediaplayer.astermediaplayer.data.AsterPlugin.REPOSITORY_URL}")
+    // Brings the welcome screen back for this server, in place of the tabs.
+    repo.currentServerId?.let { id ->
+        SGroup(" ")
+        SRow("Show Welcome Screen") { scope.launch { store.showWelcomeAgain(id) } }
+        SNote("What Aster does, and what these plugins add, as it first appeared when you signed in.")
+    }
     if (confirming) androidx.compose.material3.AlertDialog(
         onDismissRequest = { confirming = false },
         title = { Text("Restart your server now?") }, text = { Text("Anyone watching will be paused for about a minute.") },
