@@ -105,6 +105,26 @@ Built with [Jetpack Compose](https://developer.android.com/jetpack/compose), [Me
 
 The unit tests cover the disc menu rules (against the plugin's conformance vectors), Emby's id and response translation (against responses from a real Emby 4.11 server), intro and credits markers, openings and endings from chapters, and the subtitle, trickplay and schedule logic.
 
+## Built with, and licenses
+
+| Component | License |
+| --- | --- |
+| [Media3 / ExoPlayer](https://github.com/androidx/media) | Apache-2.0 |
+| [libass-android](https://github.com/peerless2012/libass-android) | MIT |
+| ↳ [libass](https://github.com/libass/libass) | ISC |
+| [Jellyfin Kotlin SDK](https://github.com/jellyfin/jellyfin-sdk-kotlin) | LGPL-3.0, used as an unmodified library |
+| [Coil](https://github.com/coil-kt/coil), [OkHttp](https://square.github.io/okhttp/), Jetpack Compose | Apache-2.0 |
+| Google Cast SDK | Google's [terms](https://developers.google.com/cast/docs/terms) |
+| [Inter](https://rsms.me/inter/) (typeface, see `licenses/`) | SIL OFL 1.1 |
+
+## License
+
+Aster for Android is licensed under the [Mozilla Public License 2.0](LICENSE), the same as the Apple app. You're free to use, modify and redistribute it. If you distribute a modified version, the files of Aster you changed must stay available under the MPL. New files you add can use any license. The components above keep their own licenses.
+
+The Aster name and app icon aren't covered by the license. If you publish your own build, for example on Google Play, give it a different name and icon so people don't confuse it with the official app.
+
+Aster isn't affiliated with or endorsed by the Jellyfin project.
+
 ## Not yet in Android
 
 Things the Apple apps have that Android doesn't yet:
