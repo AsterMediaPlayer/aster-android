@@ -1,7 +1,6 @@
 package com.astermediaplayer.astermediaplayer.ui.player
 
 import android.app.Activity
-import android.content.pm.ActivityInfo
 import android.view.ViewGroup
 import androidx.annotation.OptIn
 import androidx.compose.foundation.background
@@ -134,13 +133,12 @@ fun PlayerScreen(
     LaunchedEffect(viewModel) { viewModel.playNext.collect(onPlayNext) }
     LaunchedEffect(viewModel) { viewModel.finished.collect { onBack() } }
 
-    // Landscape, full-screen, screen-on while playing; everything is restored when leaving.
+    // Full-screen while playing, with the bars restored when leaving. The orientation is the device's own: a phone held upright
+    // plays upright (the picture fits the width) and turns with the phone when its rotation is on.
     DisposableEffect(activity) {
         val window = activity?.window
-        // Play Next brings the next player up before the last one is gone, so the orientation to
-        // come back to is the one from before the first of them.
-        if (PlayerWindow.users++ == 0) PlayerWindow.previousOrientation = activity?.requestedOrientation
-        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+        // Play Next brings the next player up before the last one is gone, so the bars come back only when the last one goes.
+        PlayerWindow.users++
         if (window != null) {
             WindowCompat.setDecorFitsSystemWindows(window, false)
             WindowInsetsControllerCompat(window, window.decorView).apply {
@@ -150,7 +148,6 @@ fun PlayerScreen(
         }
         onDispose {
             if (--PlayerWindow.users > 0) return@onDispose
-            PlayerWindow.previousOrientation?.let { activity?.requestedOrientation = it }
             if (window != null) WindowInsetsControllerCompat(window, window.decorView).show(WindowInsetsCompat.Type.systemBars())
         }
     }
@@ -357,10 +354,9 @@ fun PlayerScreen(
     }
 }
 
-/** How many player screens are up at once (two, briefly, on Play Next) and the orientation from before them. */
+/** How many player screens are up at once (two, briefly, on Play Next). */
 private object PlayerWindow {
     var users = 0
-    var previousOrientation: Int? = null
 }
 
 /** A bottom-row control: just its icon, as the Apple apps' icon-only buttons. */
