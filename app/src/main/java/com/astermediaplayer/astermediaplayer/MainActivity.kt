@@ -36,6 +36,7 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
         )
         val repo = (application as AsterApp).repository
         com.astermediaplayer.astermediaplayer.ui.player.AudioCapabilities.log(this)
+        com.astermediaplayer.astermediaplayer.data.DeviceCapabilities.log()
         if (isTelevision(this)) {
             // One Apple TV point is this many dp (text: sp) here, on this screen's own pixels.
             val metrics = resources.displayMetrics

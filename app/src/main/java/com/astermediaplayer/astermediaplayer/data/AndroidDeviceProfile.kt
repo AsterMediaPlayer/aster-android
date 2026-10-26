@@ -19,26 +19,12 @@ import org.jellyfin.sdk.model.api.TranscodingProfile
  * the Android counterpart of `DeviceProfile.appleTV` in the iOS app.
  */
 object AndroidDeviceProfile {
-    /** The emulator only has software AV1 decoding, and its frames come out green and doubled, so the server converts AV1 for it. */
-    private val isEmulator: Boolean
-        get() = android.os.Build.HARDWARE.let { it.contains("ranchu") || it.contains("goldfish") } ||
-            android.os.Build.FINGERPRINT.contains("generic")
-
     /**
-     * Whether the device decodes 10-bit HEVC (what most releases are) in hardware. A software decoder, the emulator's
-     * for one, fails on it or can't keep up, so a transcode there converts the picture to H.264 as well.
+     * Built from what the device reports ([DeviceCapabilities]): the video codecs it decodes, up to the size and bit depth it
+     * manages, and the surround audio it can decode or pass through. [copyHevc]: a transcode may keep an HEVC picture (the
+     * server copies it, converting only the audio) where the device decodes it; off for a retry after a failed play and for
+     * burned-in subtitles, which re-encode.
      */
-    private val hardwareHevc: Boolean by lazy {
-        runCatching {
-            android.media.MediaCodecList(android.media.MediaCodecList.ALL_CODECS).codecInfos.any { info ->
-                !info.isEncoder && !info.name.startsWith("c2.android.") && !info.name.startsWith("OMX.google.") &&
-                    info.supportedTypes.any { it.equals("video/hevc", ignoreCase = true) } &&
-                    info.getCapabilitiesForType("video/hevc").profileLevels.any { it.profile == android.media.MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10 }
-            }
-        }.getOrDefault(false)
-    }
-
-    /** [copyHevc]: a transcode may keep an HEVC picture (the server copies it, converting only the audio) where the device decodes it; off for a retry after a failed play and for burned-in subtitles, which re-encode. */
     fun build(maxBitrate: Int, copyHevc: Boolean = true) = DeviceProfile(
         name = "Aster Android",
         maxStreamingBitrate = maxBitrate,
@@ -48,8 +34,8 @@ object AndroidDeviceProfile {
             DirectPlayProfile(
                 container = "mp4,m4v,mkv,webm",
                 type = DlnaProfileType.VIDEO,
-                videoCodec = if (isEmulator) "h264,hevc,vp9" else "h264,hevc,vp9,av1",
-                audioCodec = "aac,mp3,opus,flac,vorbis,ac3,eac3,dts,truehd",
+                videoCodec = DeviceCapabilities.video.joinToString(",") { it.codec },
+                audioCodec = (listOf("aac", "mp3", "opus", "flac", "vorbis") + DeviceCapabilities.surroundAudio()).joinToString(","),
             ),
             DirectPlayProfile(
                 container = "mp3,aac,flac,ogg,opus,m4a,m4b",
@@ -61,7 +47,7 @@ object AndroidDeviceProfile {
                 container = "ts",
                 type = DlnaProfileType.VIDEO,
                 // HEVC is allowed so a title whose audio needs converting keeps its picture: the server copies the video rather than re-encoding it.
-                videoCodec = if (copyHevc && hardwareHevc) "hevc,h264" else "h264",
+                videoCodec = if (copyHevc && DeviceCapabilities.video("hevc") != null) "hevc,h264" else "h264",
                 audioCodec = "aac",
                 protocol = MediaStreamProtocol.HLS,
                 context = EncodingContext.STREAMING,
@@ -99,7 +85,18 @@ object AndroidDeviceProfile {
             SubtitleProfile("dvbsub", SubtitleDeliveryMethod.EMBED),
         ),
         containerProfiles = emptyList(),
-        codecProfiles = emptyList(),
+        // The size and bit depth each decoder manages; a file beyond them is converted rather than failing to play.
+        codecProfiles = DeviceCapabilities.video.map { decoder ->
+            CodecProfile(
+                CodecType.VIDEO,
+                listOf(
+                    ProfileCondition(ProfileConditionType.LESS_THAN_EQUAL, ProfileConditionValue.WIDTH, decoder.maxWidth.toString(), true),
+                    // Not required: a file whose bit depth isn't known still plays.
+                    ProfileCondition(ProfileConditionType.LESS_THAN_EQUAL, ProfileConditionValue.VIDEO_BIT_DEPTH, if (decoder.tenBit) "10" else "8", false),
+                ),
+                emptyList(), decoder.codec, null, null,
+            )
+        },
     )
 
     /**
