@@ -38,6 +38,17 @@ data class ThemeInfo(
             )
         }
 
+        /** From AnimeThemes, when the server has no OP/ED plugin. */
+        fun of(known: KnownTheme, series: String, seasonName: String?): ThemeInfo {
+            val parts = listOfNotNull(seasonName, known.episodes?.let { "Episodes $it" })
+            return ThemeInfo(
+                kicker = "${if (known.isOpening) "Opening" else "Ending"} ${known.sequence}", title = known.songTitle ?: series,
+                artists = known.artists.takeIf { it.isNotEmpty() }?.joinToString(", "),
+                series = if (known.songTitle == null) null else series,
+                detail = parts.takeIf { it.isNotEmpty() }?.joinToString(" · "),
+            )
+        }
+
         /** An opening or ending found in an episode's chapters, which say where but not which song. */
         fun of(clip: ThemeClip, series: String): ThemeInfo = ThemeInfo(
             kicker = (if (clip.opening) "Opening" else "Ending") + if (clip.number > 1) " ${clip.number}" else "",
@@ -74,17 +85,18 @@ object ThemeCards {
      * song (so a show's few-second intro gets no card), or at any length when the plugin says a theme plays in it. The plugin names
      * the song when it knows it.
      */
-    fun forEpisode(episode: BaseItemDto, plugin: List<OpEdTheme>, segments: List<MediaSegmentDto>): List<ThemeMoment> {
+    fun forEpisode(episode: BaseItemDto, plugin: List<OpEdTheme>, segments: List<MediaSegmentDto>, known: List<KnownTheme> = emptyList()): List<ThemeMoment> {
         if (episode.type != BaseItemKind.EPISODE) return emptyList()
         val series = episode.seriesName ?: episode.name.orEmpty()
         val playing = plugin.filter { it.playsInEpisode == true }
+        val knownHere = known.filter { it.plays(episode.indexNumber) }
         class Found(val opening: Boolean, val start: Double, val end: Double, val clip: ThemeClip?)
         val found = OpeningsEndings.find(listOf(episode)).map { Found(it.opening, it.startMs / 1000.0, it.endMs / 1000.0, it) }.toMutableList()
         if (found.isEmpty()) {
             for (s in segments) {
                 if (s.type != MediaSegmentType.INTRO && s.type != MediaSegmentType.OUTRO) continue
                 val length = (s.endTicks - s.startTicks) / 10_000_000.0
-                if (length <= 0 || (playing.isEmpty() && length !in SONG_LENGTH)) continue
+                if (length <= 0 || (playing.isEmpty() && knownHere.isEmpty() && length !in SONG_LENGTH)) continue
                 found += Found(s.type == MediaSegmentType.INTRO, s.startTicks / 10_000_000.0, s.endTicks / 10_000_000.0, null)
             }
         }
@@ -92,6 +104,7 @@ object ThemeCards {
             val theme = playing.firstOrNull { it.isOpening == f.opening }
             val info = when {
                 theme != null -> ThemeInfo.of(theme, series, episode.seasonName)
+                knownHere.firstOrNull { it.isOpening == f.opening } != null -> ThemeInfo.of(knownHere.first { it.isOpening == f.opening }, series, episode.seasonName)
                 f.clip != null -> ThemeInfo.of(f.clip, series)
                 else -> ThemeInfo(if (f.opening) "Opening" else "Ending", series, detail = com.astermediaplayer.astermediaplayer.data.downloads.DownloadStore.episodeCode(episode))
             }

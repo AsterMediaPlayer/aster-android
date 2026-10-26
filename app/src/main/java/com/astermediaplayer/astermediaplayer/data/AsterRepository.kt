@@ -865,6 +865,18 @@ class AsterRepository(context: Context, private val store: SessionStore) {
         List(themes.length()) { OpEdTheme.fromJson(themes.getJSONObject(it)) }
     }
 
+    /**
+     * An episode's openings and endings from AnimeThemes, for a server without the OP/ED plugin: its season's AniDB id finds the show
+     * exactly where the server has one (Jellyfin with Shoko), else its name and the year the season began.
+     */
+    suspend fun knownThemes(episode: BaseItemDto): List<KnownTheme> {
+        val series = episode.seriesName ?: return emptyList()
+        val season = episode.seasonId?.let { runCatching { item(it) }.getOrNull() }
+        val aniDb = season?.providerIds?.entries?.firstOrNull { it.key.equals("AniDB", ignoreCase = true) }?.value
+        val year = season?.productionYear ?: season?.premiereDate?.year ?: episode.premiereDate?.year ?: episode.productionYear
+        return AnimeThemesLookup.themes(http, aniDb, series, year)
+    }
+
     /** The theme a published music video (or song) is, from the OP/ED plugin; null for any other item, or without the plugin. */
     suspend fun opEdThemeForLibraryItem(itemId: UUID): OpEdTheme? =
         if (serverKind != ServerKind.Jellyfin) null else opEdGet("/OpEd/LibraryItems/${wire(itemId)}/Theme")?.let { OpEdTheme.fromJson(it) }
