@@ -229,6 +229,7 @@ class PlayerViewModel(
             when (dto.type) {
                 BaseItemKind.EPISODE -> {
                     _themeMoments.value = com.astermediaplayer.astermediaplayer.data.ThemeCards.forEpisode(dto, emptyList(), segments)
+                    android.util.Log.d("Aster", "Song cards: ${_themeMoments.value.size} from ${dto.chapters.orEmpty().size} chapters (${dto.chapters.orEmpty().joinToString { it.name.orEmpty() }}) and ${segments.size} markers; season ${dto.parentIndexNumber}")
                     // The plugin names the song; without it (no answer, as on Plex and Emby), AnimeThemes does, for anime.
                     val plugin = runCatching { repo.opEdThemes(dto.id) }.getOrNull()
                     val anime = _themeMoments.value.isNotEmpty() || dto.genres.orEmpty().any { it.equals("Anime", ignoreCase = true) }

@@ -530,7 +530,7 @@ private fun DetailBody(
                     if (isTv) TvTabBar(tabs.map { it.label }, tabs.indexOf(tab)) { selectedTab = tabs[it].name; enterSection++ }
                     else SegmentedControl(tabs.map { it.label }, tabs.indexOf(tab)) { selectedTab = tabs[it].name }
                     when (tab) {
-                        DetailTab.Episodes -> EpisodesSection(content, viewModel, onPlay, sectionLead)
+                        DetailTab.Episodes -> EpisodesSection(content, viewModel, onItem, sectionLead)
                         DetailTab.Music -> MusicSection(content, onPlayTheme)
                         DetailTab.Extras -> Shelf("Extras", content.extras, landscape = true, firstCardFocus = sectionLead, onItem = { onPlay(it.id) })
                         DetailTab.Related -> Shelf("Related", content.similar, landscape = true, firstCardFocus = sectionLead, onItem = onItem)
@@ -538,7 +538,7 @@ private fun DetailBody(
                     }
                 } else {
                     // A movie's or an episode's page: one shelf after another.
-                    if (item.type == BaseItemKind.EPISODE) EpisodeStrip(content.seasonEpisodes, item.id, playCenterPx, onPlay)
+                    if (item.type == BaseItemKind.EPISODE) EpisodeStrip(content.seasonEpisodes, item.id, playCenterPx, onItem)
                     if (content.openingsEndings.isNotEmpty()) MusicSection(content, onPlayTheme)
                     Shelf("Extras", content.extras, landscape = true, onItem = { onPlay(it.id) })
                     Shelf("Related", content.similar, landscape = true, onItem = onItem)
@@ -769,7 +769,7 @@ private fun SegmentedControl(labels: List<String>, selected: Int, onSelect: (Int
 }
 
 @Composable
-private fun EpisodesSection(content: DetailContent, viewModel: DetailViewModel, onPlay: (UUID) -> Unit, firstCardFocus: FocusRequester? = null) {
+private fun EpisodesSection(content: DetailContent, viewModel: DetailViewModel, onItem: (BaseItemDto) -> Unit, firstCardFocus: FocusRequester? = null) {
     Column(verticalArrangement = Arrangement.spacedBy(DetailMetrics.seasonShelfSpacing)) {
         if (content.seasons.size > 1) {
             LazyRow(
@@ -789,7 +789,7 @@ private fun EpisodesSection(content: DetailContent, viewModel: DetailViewModel, 
                 }
             }
         }
-        Shelf("Episodes", content.episodes, landscape = true, firstCardFocus = firstCardFocus, onItem = { onPlay(it.id) }, showSeriesTitle = false)
+        Shelf("Episodes", content.episodes, landscape = true, firstCardFocus = firstCardFocus, onItem = onItem, showSeriesTitle = false)
     }
 }
 
@@ -798,7 +798,7 @@ private fun EpisodesSection(content: DetailContent, viewModel: DetailViewModel, 
  * button (the one before it, on a season's last), as near as the row can scroll.
  */
 @Composable
-private fun EpisodeStrip(season: List<BaseItemDto>, currentId: UUID, playCenterPx: Float?, onPlay: (UUID) -> Unit) {
+private fun EpisodeStrip(season: List<BaseItemDto>, currentId: UUID, playCenterPx: Float?, onItem: (BaseItemDto) -> Unit) {
     val episodes = season.filter { it.id != currentId }
     if (episodes.isEmpty()) return
     val index = season.indexOfFirst { it.id == currentId }
@@ -815,7 +815,7 @@ private fun EpisodeStrip(season: List<BaseItemDto>, currentId: UUID, playCenterP
             state.scrollBy((cardStart - (center - card / 2)).coerceAtLeast(0f))
         }
     }
-    Shelf("Episodes", episodes, landscape = true, onItem = { onPlay(it.id) }, listState = state, showSeriesTitle = false)
+    Shelf("Episodes", episodes, landscape = true, onItem = onItem, listState = state, showSeriesTitle = false)
 }
 
 /**
