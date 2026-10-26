@@ -160,8 +160,8 @@ object OpeningsEndings {
     private val openingWords = setOf("op", "opening")
     private val endingWords = setOf("ed", "ending")
     // "Intro" and "Outro"/"Credits" are used only when an episode has no definite one, since many releases call the cold open "Intro".
-    private val looseOpeningWords = setOf("intro")
-    private val looseEndingWords = setOf("outro", "credits")
+    private val looseOpeningWords = setOf("intro", "theme", "title", "titles")
+    private val looseEndingWords = setOf("outro", "credits", "end")
 
     /** Clips shorter or longer than this aren't really an OP or ED, so they're left out. */
     private val durationRange = 30_000L..210_000L

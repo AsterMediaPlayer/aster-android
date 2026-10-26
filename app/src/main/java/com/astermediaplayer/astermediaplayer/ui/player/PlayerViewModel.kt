@@ -228,7 +228,7 @@ class PlayerViewModel(
         viewModelScope.launch {
             when (dto.type) {
                 BaseItemKind.EPISODE -> {
-                    _themeMoments.value = com.astermediaplayer.astermediaplayer.data.ThemeCards.forEpisode(dto, emptyList(), emptyList())
+                    _themeMoments.value = com.astermediaplayer.astermediaplayer.data.ThemeCards.forEpisode(dto, emptyList(), segments)
                     val themes = runCatching { repo.opEdThemes(dto.id) }.getOrNull().orEmpty()
                     if (themes.isNotEmpty()) _themeMoments.value = com.astermediaplayer.astermediaplayer.data.ThemeCards.forEpisode(dto, themes, segments)
                 }

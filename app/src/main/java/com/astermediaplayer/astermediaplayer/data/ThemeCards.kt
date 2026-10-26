@@ -54,6 +54,9 @@ object ThemeCards {
     /** How long the card stays: for the first seconds of a theme and, when it's long enough for two, its last. */
     const val SHOW_FOR = 16.0
 
+    /** How long a marked intro or credits is to count as a song when nothing says a theme plays. */
+    private val SONG_LENGTH = 60.0..210.0
+
     /** Whether the card is up at [seconds] in a theme from [start] to [end] (NaN when the end isn't known). */
     fun visible(seconds: Double, start: Double, end: Double): Boolean {
         if (!seconds.isFinite()) return false
@@ -66,9 +69,10 @@ object ThemeCards {
     }
 
     /**
-     * Where an episode's openings and endings are, and what the card says. Placed by its OP and ED chapters; with none, by its skip
-     * markers, but only when the plugin says a theme plays in it, so an ordinary show's intro gets no song card. The plugin names the
-     * song when it knows it.
+     * Where an episode's openings and endings are, and what the card says. Placed by its chapters, best effort: the usual names, then
+     * looser ones ("Theme", "Titles", "End Credits"); with none, by the server's intro and credits markers when they're as long as a
+     * song (so a show's few-second intro gets no card), or at any length when the plugin says a theme plays in it. The plugin names
+     * the song when it knows it.
      */
     fun forEpisode(episode: BaseItemDto, plugin: List<OpEdTheme>, segments: List<MediaSegmentDto>): List<ThemeMoment> {
         if (episode.type != BaseItemKind.EPISODE) return emptyList()
@@ -76,10 +80,12 @@ object ThemeCards {
         val playing = plugin.filter { it.playsInEpisode == true }
         class Found(val opening: Boolean, val start: Double, val end: Double, val clip: ThemeClip?)
         val found = OpeningsEndings.find(listOf(episode)).map { Found(it.opening, it.startMs / 1000.0, it.endMs / 1000.0, it) }.toMutableList()
-        if (found.isEmpty() && playing.isNotEmpty()) {
+        if (found.isEmpty()) {
             for (s in segments) {
-                if ((s.type == MediaSegmentType.INTRO || s.type == MediaSegmentType.OUTRO) && s.endTicks > s.startTicks)
-                    found += Found(s.type == MediaSegmentType.INTRO, s.startTicks / 10_000_000.0, s.endTicks / 10_000_000.0, null)
+                if (s.type != MediaSegmentType.INTRO && s.type != MediaSegmentType.OUTRO) continue
+                val length = (s.endTicks - s.startTicks) / 10_000_000.0
+                if (length <= 0 || (playing.isEmpty() && length !in SONG_LENGTH)) continue
+                found += Found(s.type == MediaSegmentType.INTRO, s.startTicks / 10_000_000.0, s.endTicks / 10_000_000.0, null)
             }
         }
         return found.map { f ->

@@ -74,14 +74,22 @@ class ThemeCardsTest {
         assertEquals("Frieren", other.single().info.title)
     }
 
-    @Test fun skipMarkersPlaceAThemeOnlyWhenThePluginSaysOnePlays() {
-        val marker = MediaSegmentDto(id = UUID.randomUUID(), itemId = UUID.randomUUID(), type = MediaSegmentType.INTRO, startTicks = 60 * 10_000_000L, endTicks = 150 * 10_000_000L)
-        val plain = episode(emptyList())
-        // An ordinary show's intro gets no card.
-        assertTrue(ThemeCards.forEpisode(plain, emptyList(), listOf(marker)).isEmpty())
-        val placed = ThemeCards.forEpisode(plain, listOf(theme()), listOf(marker))
-        assertEquals(60.0 to 150.0, placed.single().startSec to placed.single().endSec)
-        assertEquals("Yuusha", placed.single().info.title)
+    @Test fun skipMarkersPlaceAThemeWhenAsLongAsASongOrThePluginSaysOnePlays() {
+        fun marker(type: MediaSegmentType, from: Long, to: Long) = MediaSegmentDto(id = UUID.randomUUID(), itemId = UUID.randomUUID(), type = type, startTicks = from * 10_000_000L, endTicks = to * 10_000_000L)
+        val plain = episode(listOf("Chapter 1" to 0, "Chapter 2" to 300))
+        // A few-second intro is no song.
+        assertTrue(ThemeCards.forEpisode(plain, emptyList(), listOf(marker(MediaSegmentType.INTRO, 10, 30))).isEmpty())
+        // One as long as an opening is, with the show named and no song.
+        val placed = ThemeCards.forEpisode(plain, emptyList(), listOf(marker(MediaSegmentType.INTRO, 60, 150), marker(MediaSegmentType.OUTRO, 1300, 1390))).map { it.startSec to it.endSec }
+        assertEquals(listOf(60.0 to 150.0, 1300.0 to 1390.0), placed)
+        // Short, but the plugin says a theme plays: that names it.
+        val named = ThemeCards.forEpisode(plain, listOf(theme()), listOf(marker(MediaSegmentType.INTRO, 10, 30)))
+        assertEquals("Yuusha", named.single().info.title)
+    }
+
+    @Test fun looserChapterNamesCount() {
+        val moments = ThemeCards.forEpisode(episode(listOf("Cold Open" to 0, "Theme Song" to 90, "Part A" to 180, "End Credits" to 1350)), emptyList(), emptyList())
+        assertEquals(listOf(90.0, 1350.0), moments.map { it.startSec })
     }
 
     @Test fun aMusicVideoHasOneCardOverItsWhole() {
