@@ -4,7 +4,7 @@
 
 # Aster Media Player for Android
 
-A native Jellyfin and Emby client for Android TV, phones and tablets, written in Kotlin and Jetpack Compose.
+A native Jellyfin, Emby and Plex client for Android TV, phones and tablets, written in Kotlin and Jetpack Compose.
 
 Aster covers movies, TV, anime, music, audiobooks and live TV, and can turn your Jellyfin playlists into TV-style channels. Title pages are laid out like the Apple TV app, with theme music and theme videos, and it plays DVD/Blu-ray-style disc menus from the Aster Disc plugin. It is the Android counterpart of [Aster Media Player for Apple platforms](https://github.com/AsterMediaPlayer/Aster-Media-Player), and follows that app's design and behaviour.
 
@@ -43,20 +43,21 @@ Requires Android 8.0 (API 26) or later.
 
 ## Servers
 
-| | Jellyfin | Emby |
-| --- | :---: | :---: |
-| Sign in with a password, saved servers, switching | ✓ | ✓ |
-| Quick Connect | ✓ | |
-| Home, libraries, title pages, search, playback | ✓ | ✓ |
-| Skip Intro | ✓ (media segments) | ✓ (intro chapter markers) |
-| Skip Credits | ✓ | |
-| Scrub thumbnails | ✓ (trickplay) | ✓ (preview thumbnails, once Emby has made them) |
-| Openings and endings from chapter markers | ✓ | ✓ |
-| Live TV and recordings | ✓ | not tested |
-| Channels (beta), Disc Menus, Server Plugins | ✓ | |
-| OP/ED plugin themes (song, artist, full version, music video) | ✓ | |
+| | Jellyfin | Emby | Plex |
+| --- | :---: | :---: | :---: |
+| Sign in with a password, saved servers, switching | ✓ | ✓ | ✓ (link code from plex.tv/link) |
+| Quick Connect | ✓ | | |
+| Home, libraries, title pages, search, playback | ✓ | ✓ | ✓ (movies and TV) |
+| Skip Intro | ✓ (media segments) | ✓ (intro chapter markers) | ✓ (Plex's markers) |
+| Skip Credits | ✓ | | ✓ (Plex's markers) |
+| Scrub thumbnails | ✓ (trickplay) | ✓ (preview thumbnails, once Emby has made them) | |
+| Openings and endings from chapter markers | ✓ | ✓ | ✓ |
+| Song card with the song and artist | ✓ (OP/ED plugin) | ✓ (AnimeThemes) | ✓ (AnimeThemes) |
+| Live TV and recordings | ✓ | not tested | |
+| Channels (beta), Disc Menus, Server Plugins | ✓ | | |
+| OP/ED plugin themes (song, artist, full version, music video) | ✓ | | |
 
-Aster is developed against Jellyfin 12 and Emby 4.11. Emby support goes through a translation layer that maps Emby's numeric ids and older routes onto the Jellyfin SDK, so some Jellyfin-only features are hidden on Emby.
+Aster is developed against Jellyfin 12 and Emby 4.11. Emby support goes through a translation layer that maps Emby's numeric ids and older routes onto the Jellyfin SDK, so some Jellyfin-only features are hidden on Emby. Plex goes through the same idea: a client that answers the SDK's calls from Plex's own API, so the screens are the same. Plex support is a first pass, covering movies and TV; music, photos and Live TV aren't there yet.
 
 ## Features
 
@@ -71,6 +72,7 @@ Aster is developed against Jellyfin 12 and Emby 4.11. Emby support goes through 
 - **Quality**: Auto or a fixed quality, with an offer to step down when playback keeps stalling.
 - **Chromecast** (phone): the Cast button in the player hands the title to a Chromecast from where it is, as H.264 (copied when it already is, converted when not) with the text subtitles as separate tracks, and the phone becomes the remote; ending the session picks up on the phone. Picture subtitles are burned in by the server.
 - **Trickplay**: scrub thumbnails on the progress bar: Jellyfin's trickplay images, or on Emby its video preview thumbnails (turn on "video preview thumbnail extraction" in the library's settings, and Emby makes them when its scheduled task runs).
+- **Song card**: while an opening or ending plays (or at the start and end of a music video), a card in the lower left names the song, its artists and the show. The OP/ED plugin gives the details; without it (Plex, Emby) they come from [AnimeThemes](https://animethemes.moe), found by the season's AniDB id or the show's name and year. Openings and endings are placed from the episode's chapters, best effort, or from the server's intro and credits markers. Settings ▸ Playback turns it off.
 - **Add to Playlist**: from any movie, episode, show or season, to an existing video playlist or a new one.
 - **Disc menus**: the Aster Disc plugin's menus, drawn full screen with their backgrounds, trailers, layers, themes, scene selection, paging, music and button sounds. Play, extras, chapters and whole shows play from the menu, and you come back to where you left it.
 
@@ -125,7 +127,7 @@ Built with [Jetpack Compose](https://developer.android.com/jetpack/compose), [Me
 
 ## Testing
 
-The unit tests cover the disc menu rules (against the plugin's conformance vectors), Emby's id and response translation (against responses from a real Emby 4.11 server), intro and credits markers, openings and endings from chapters, and the subtitle, trickplay (including Emby's BIF files) and schedule logic.
+The unit tests cover the disc menu rules (against the plugin's conformance vectors), Emby's id and response translation (against responses from a real Emby 4.11 server), intro and credits markers, openings and endings from chapters, the song card's timing and AnimeThemes lookup, Plex's response translation, and the subtitle, trickplay (including Emby's BIF files) and schedule logic.
 
 ## Built with, and licenses
 
@@ -151,5 +153,5 @@ Aster isn't affiliated with or endorsed by the Jellyfin project.
 
 Things the Apple apps have that Android doesn't yet:
 
-- Plex.
+- Plex: music, photos and Live TV, scrub thumbnails, and Plex-specific features beyond a first pass at movies and TV.
 - On Emby: Skip Credits, and Live TV is untested.
