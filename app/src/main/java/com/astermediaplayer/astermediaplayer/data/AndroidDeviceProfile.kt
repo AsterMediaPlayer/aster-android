@@ -24,7 +24,22 @@ object AndroidDeviceProfile {
         get() = android.os.Build.HARDWARE.let { it.contains("ranchu") || it.contains("goldfish") } ||
             android.os.Build.FINGERPRINT.contains("generic")
 
-    fun build(maxBitrate: Int) = DeviceProfile(
+    /**
+     * Whether the device decodes 10-bit HEVC (what most releases are) in hardware. A software decoder, the emulator's
+     * for one, fails on it or can't keep up, so a transcode there converts the picture to H.264 as well.
+     */
+    private val hardwareHevc: Boolean by lazy {
+        runCatching {
+            android.media.MediaCodecList(android.media.MediaCodecList.ALL_CODECS).codecInfos.any { info ->
+                !info.isEncoder && !info.name.startsWith("c2.android.") && !info.name.startsWith("OMX.google.") &&
+                    info.supportedTypes.any { it.equals("video/hevc", ignoreCase = true) } &&
+                    info.getCapabilitiesForType("video/hevc").profileLevels.any { it.profile == android.media.MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10 }
+            }
+        }.getOrDefault(false)
+    }
+
+    /** [copyHevc]: a transcode may keep an HEVC picture (the server copies it, converting only the audio) where the device decodes it; off for a retry after a failed play and for burned-in subtitles, which re-encode. */
+    fun build(maxBitrate: Int, copyHevc: Boolean = true) = DeviceProfile(
         name = "Aster Android",
         maxStreamingBitrate = maxBitrate,
         maxStaticBitrate = maxBitrate,
@@ -46,7 +61,7 @@ object AndroidDeviceProfile {
                 container = "ts",
                 type = DlnaProfileType.VIDEO,
                 // HEVC is allowed so a title whose audio needs converting keeps its picture: the server copies the video rather than re-encoding it.
-                videoCodec = "hevc,h264",
+                videoCodec = if (copyHevc && hardwareHevc) "hevc,h264" else "h264",
                 audioCodec = "aac",
                 protocol = MediaStreamProtocol.HLS,
                 context = EncodingContext.STREAMING,
