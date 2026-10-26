@@ -229,8 +229,11 @@ class PlayerViewModel(
             when (dto.type) {
                 BaseItemKind.EPISODE -> {
                     _themeMoments.value = com.astermediaplayer.astermediaplayer.data.ThemeCards.forEpisode(dto, emptyList(), segments)
-                    val themes = runCatching { repo.opEdThemes(dto.id) }.getOrNull().orEmpty()
-                    if (themes.isNotEmpty()) _themeMoments.value = com.astermediaplayer.astermediaplayer.data.ThemeCards.forEpisode(dto, themes, segments)
+                    // The plugin names the song; without it (no answer, as on Plex and Emby), AnimeThemes does, for anime.
+                    val plugin = runCatching { repo.opEdThemes(dto.id) }.getOrNull()
+                    val anime = _themeMoments.value.isNotEmpty() || dto.genres.orEmpty().any { it.equals("Anime", ignoreCase = true) }
+                    val known = if (plugin == null && anime) runCatching { repo.knownThemes(dto) }.getOrNull().orEmpty() else emptyList()
+                    if (!plugin.isNullOrEmpty() || known.isNotEmpty()) _themeMoments.value = com.astermediaplayer.astermediaplayer.data.ThemeCards.forEpisode(dto, plugin.orEmpty(), segments, known)
                 }
                 BaseItemKind.MUSIC_VIDEO -> {
                     val theme = runCatching { repo.opEdThemeForLibraryItem(dto.id) }.getOrNull()

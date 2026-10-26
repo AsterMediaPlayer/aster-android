@@ -109,3 +109,32 @@ class ThemeCardsTest {
         assertTrue(ThemeCards.forMusicVideo(video.copy(type = BaseItemKind.MOVIE), null).isEmpty())
     }
 }
+
+class AnimeThemesTest {
+    private val anime = org.json.JSONObject("""{"name":"Zom 100","slug":"zom_100","year":2023,"animethemes":[
+        {"type":"OP","sequence":null,"song":{"title":"Song of the Dead","performances":[{"artist":{"name":"KANA-BOON"}}]},"animethemeentries":[{"episodes":"1-11"}]},
+        {"type":"ED","sequence":1,"song":null,"animethemeentries":[{"episodes":null}]},
+        {"type":"IN","sequence":1,"song":{"title":"Insert"},"animethemeentries":[]}]}""")
+
+    @Test fun readsOpeningsAndEndings() {
+        val themes = AnimeThemesLookup.themes(anime)
+        assertEquals(2, themes.size)
+        assertEquals(KnownTheme(true, 1, "Song of the Dead", listOf("KANA-BOON"), "1-11"), themes[0])
+        assertNull(themes[1].songTitle)
+        assertNull(themes[1].episodes)
+    }
+
+    @Test fun episodeRanges() {
+        val t = KnownTheme(true, 1, null, emptyList(), "1-6, 8-, 20")
+        assertTrue(t.plays(3)); assertFalse(t.plays(7)); assertTrue(t.plays(40)); assertTrue(t.plays(null))
+        assertTrue(t.copy(episodes = null).plays(7))
+    }
+
+    @Test fun aKnownThemeNamesTheCard() {
+        val info = ThemeInfo.of(AnimeThemesLookup.themes(anime)[0], "Zom 100", "Season 1")
+        assertEquals("Opening 1", info.kicker)
+        assertEquals("Song of the Dead", info.title)
+        assertEquals("KANA-BOON", info.artists)
+        assertEquals("Season 1 · Episodes 1-11", info.detail)
+    }
+}
