@@ -282,7 +282,7 @@ private fun RootPage(session: Session?, openChannels: () -> Unit, open: (Setting
 private fun PlaybackPage(settings: AppSettings, store: SettingsStore, scope: kotlinx.coroutines.CoroutineScope) {
     SChoice("Default quality", Qualities.map { it.label }, settings.qualityIndex) { scope.launch { store.setQualityIndex(it) } }
     SChoice("Opening and ending version", ThemeCut.entries.map { it.settingTitle }, ThemeCut.entries.indexOf(settings.themeCut)) { scope.launch { store.setThemeCut(ThemeCut.entries[it]) } }
-    SSwitch("Skip intros and credits automatically", settings.autoSkipSegments) { scope.launch { store.setAutoSkipSegments(it) } }
+    SSwitch("Skip intros automatically", settings.autoSkipSegments) { scope.launch { store.setAutoSkipSegments(it) } }
     SSwitch("Play the next episode automatically", settings.autoPlayNext) { scope.launch { store.setAutoPlayNext(it) } }
     SSwitch("Song card at openings and endings", settings.themeCards) { scope.launch { store.setThemeCards(it) } }
     SNote("While an opening or ending plays, a card shows the song, its artists and the show; a music video gets one at its start and end.")
