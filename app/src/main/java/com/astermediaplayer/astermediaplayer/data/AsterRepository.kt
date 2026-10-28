@@ -742,6 +742,16 @@ class AsterRepository(context: Context, private val store: SessionStore) {
     suspend fun playlistItems(playlistId: UUID): List<BaseItemDto> =
         api.playlistApi.getPlaylistItems(playlistId = playlistId, userId = userId).content.items
 
+    /** Takes entries out of a playlist, by their place in it ([BaseItemDto.playlistItemId]), not the titles' own ids. */
+    suspend fun removeFromPlaylist(playlistId: UUID, entryIds: List<String>) {
+        serverRequest("DELETE", "/Playlists/${wire(playlistId)}/Items?entryIds=${entryIds.joinToString(",")}")
+    }
+
+    /** Moves a playlist's entry to [newIndex]. */
+    suspend fun movePlaylistItem(playlistId: UUID, entryId: String, newIndex: Int) {
+        serverRequest("POST", "/Playlists/${wire(playlistId)}/Items/$entryId/Move/$newIndex")
+    }
+
     /** Songs the server thinks go with an item: a song, album, artist or genre. */
     suspend fun instantMix(itemId: UUID, limit: Int = 100): List<BaseItemDto> =
         api.instantMixApi.getInstantMixFromItem(itemId = itemId, userId = userId, limit = limit).content.items
