@@ -27,6 +27,12 @@ import com.astermediaplayer.astermediaplayer.ui.theme.MinimalBringIntoView
 @OptIn(ExperimentalFoundationApi::class)
 // A FragmentActivity (a ComponentActivity with fragments) because the Cast button opens its device list as a dialog fragment.
 class MainActivity : androidx.fragment.app.FragmentActivity() {
+    // Leaving the app with a video playing takes it into picture in picture (Android 12 does this by itself).
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        com.astermediaplayer.astermediaplayer.ui.player.PictureInPicture.onUserLeaveHint(this)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // The app is dark whatever the system theme is, so the bars always get light icons.

@@ -32,6 +32,7 @@ import androidx.compose.material.icons.filled.LibraryBooks
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Sensors
 import androidx.compose.material3.IconButton
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -224,6 +225,14 @@ fun AsterNavHost(signedIn: Boolean) {
     val app = LocalContext.current.applicationContext as AsterApp
     val repo = app.repository
     val nav = rememberNavController()
+    // There's one main activity (so the launcher brings back a video in picture in picture rather than opening another), so
+    // a link that comes while the app is open arrives here, not as a new activity.
+    val activity = LocalContext.current as? androidx.activity.ComponentActivity
+    DisposableEffect(activity, nav) {
+        val listener = androidx.core.util.Consumer<android.content.Intent> { intent -> if (intent.data != null) nav.handleDeepLink(intent) }
+        activity?.addOnNewIntentListener(listener)
+        onDispose { activity?.removeOnNewIntentListener(listener) }
+    }
     val scope = rememberCoroutineScope()
 
     fun open(item: BaseItemDto) = when (item.type) {
