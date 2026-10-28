@@ -38,6 +38,11 @@ import org.jellyfin.sdk.model.api.ImageType
 import org.jellyfin.sdk.model.api.MediaSegmentType
 import org.jellyfin.sdk.model.api.MediaStream
 import org.jellyfin.sdk.model.api.MediaStreamType
+import org.jellyfin.sdk.model.api.PlayMethod
+import org.jellyfin.sdk.model.api.PlaybackOrder
+import org.jellyfin.sdk.model.api.PlaybackStartInfo
+import org.jellyfin.sdk.model.api.PlaybackStopInfo
+import org.jellyfin.sdk.model.api.RepeatMode
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -99,6 +104,8 @@ data class DownloadRecord(
     val waiting: Boolean = false,
     /** A book's place: which part, with [positionTicks] into it. */
     val positionPart: Int = 0,
+    /** When that place was noted, so listening done offline goes to the server only when it.s newer than what the server heard. */
+    val positionUpdated: Long = 0,
 ) {
     val isEpisode: Boolean get() = kind == DownloadKind.Video && subtitle != null && title != subtitle
 }
@@ -399,24 +406,41 @@ class DownloadStore(private val context: Context, private val repo: AsterReposit
         return runCatching {
             val o = JSONObject(File(folder(record.id), "book.json").readText())
             val parts = o.getJSONArray("parts").let { a -> List(a.length()) { i -> bookJson.decodeFromString(BaseItemDto.serializer(), a.getString(i)) } }
-            // Listening done offline is newer than what the server last heard: parts before it are finished, the one it's in is partway.
-            fun State(part: BaseItemDto, played: Boolean, ticks: Long) = part.copy(
-                userData = part.userData?.copy(played = played, playbackPositionTicks = ticks)
-                    ?: org.jellyfin.sdk.model.api.UserItemDataDto(playbackPositionTicks = ticks, playCount = 0, isFavorite = false, played = played, key = part.id.toString(), itemId = part.id),
-            )
-            val placed = parts.mapIndexed { i, part ->
-                when {
-                    record.positionTicks <= 0L && record.positionPart == 0 -> part
-                    i < record.positionPart -> State(part, played = true, ticks = 0)
-                    i == record.positionPart -> State(part, played = false, ticks = record.positionTicks)
-                    else -> part
-                }
-            }
             Audiobook(
                 id = UUID.fromString(record.id), title = o.getString("title"), author = o.string("author"), series = o.string("series"),
-                seriesIndex = if (o.isNull("seriesIndex")) null else o.getInt("seriesIndex"), parts = placed,
+                seriesIndex = if (o.isNull("seriesIndex")) null else o.getInt("seriesIndex"), parts = placed(parts, record),
             )
         }.onFailure { android.util.Log.w("Aster", "Saved book unreadable", it) }.getOrNull()
+    }
+
+    /** [book] from the server, at the place listening got to on this device when that's newer than what the server heard. */
+    fun withLocalProgress(book: Audiobook): Audiobook {
+        val record = record(book.id.toString())?.takeIf { it.kind == DownloadKind.Book && it.positionUpdated > 0 } ?: return book
+        val part = book.parts.getOrNull(record.positionPart) ?: return book
+        return if (heardSince(part, record)) book else book.copy(parts = placed(book.parts, record))
+    }
+
+    /** Whether the server heard of [part] after this device noted [record]'s place, give or take a minute. */
+    private fun heardSince(part: BaseItemDto, record: DownloadRecord): Boolean {
+        val heard = part.userData?.lastPlayedDate?.atZone(java.time.ZoneId.systemDefault())?.toInstant()?.toEpochMilli() ?: return false
+        // A minute's grace: online, the server heard as it happened.
+        return heard + 60_000 >= record.positionUpdated
+    }
+
+    /** [parts] at [record]'s place: the parts before it finished, the one it's in partway. */
+    private fun placed(parts: List<BaseItemDto>, record: DownloadRecord): List<BaseItemDto> {
+        fun State(part: BaseItemDto, played: Boolean, ticks: Long) = part.copy(
+            userData = part.userData?.copy(played = played, playbackPositionTicks = ticks)
+                ?: org.jellyfin.sdk.model.api.UserItemDataDto(playbackPositionTicks = ticks, playCount = 0, isFavorite = false, played = played, key = part.id.toString(), itemId = part.id),
+        )
+        return parts.mapIndexed { i, part ->
+            when {
+                record.positionTicks <= 0L && record.positionPart == 0 -> part
+                i < record.positionPart -> State(part, played = true, ticks = 0)
+                i == record.positionPart -> State(part, played = false, ticks = record.positionTicks)
+                else -> part
+            }
+        }
     }
 
     /** What the book page and player show for a book: its downloaded copy when there is one and the library hasn't got it. */
@@ -426,7 +450,33 @@ class DownloadStore(private val context: Context, private val repo: AsterReposit
     fun noteBookProgress(bookId: UUID, part: Int, seconds: Double) {
         val id = bookId.toString()
         if (record(id)?.kind != DownloadKind.Book) return
-        mutate { list -> list.map { if (it.id == id) it.copy(positionPart = part, positionTicks = (seconds * 10_000_000).toLong()) else it } }
+        mutate { list -> list.map { if (it.id == id) it.copy(positionPart = part, positionTicks = (seconds * 10_000_000).toLong(), positionUpdated = System.currentTimeMillis()) else it } }
+    }
+
+    /**
+     * Hands listening done on this device to the server where it's newer than what the server has ([books] holds what it
+     * has), so every device agrees, as the Apple apps do. It goes as a short playback session at the saved place, which is
+     * how Jellyfin records a position.
+     */
+    fun syncBooks(books: List<Audiobook>) {
+        val byId = books.associateBy { it.id.toString() }
+        val saved = _records.value.filter { it.kind == DownloadKind.Book && it.positionUpdated > 0 }
+        if (saved.isEmpty()) return
+        scope.launch {
+            for (record in saved) {
+                val part = byId[record.id]?.parts?.getOrNull(record.positionPart) ?: continue
+                if (heardSince(part, record)) continue
+                val session = UUID.randomUUID().toString()
+                repo.reportStart(
+                    PlaybackStartInfo(
+                        canSeek = true, itemId = part.id, playSessionId = session, playMethod = PlayMethod.DIRECT_PLAY,
+                        isPaused = true, isMuted = false, positionTicks = record.positionTicks,
+                        repeatMode = RepeatMode.REPEAT_NONE, playbackOrder = PlaybackOrder.DEFAULT,
+                    ),
+                )
+                repo.reportStopped(PlaybackStopInfo(itemId = part.id, playSessionId = session, positionTicks = record.positionTicks, failed = false))
+            }
+        }
     }
 
     /** Remembers where viewing got to, for resuming offline. */
@@ -519,7 +569,7 @@ class DownloadStore(private val context: Context, private val repo: AsterReposit
             put("id", r.id); put("kind", r.kind.name); put("title", r.title); put("subtitle", r.subtitle); put("state", r.state.name)
             put("progress", r.progress); put("quality", r.quality); put("expectedBytes", r.expectedBytes); put("bytesOnDisk", r.bytesOnDisk)
             put("audioTitle", r.audioTitle); put("runTimeTicks", r.runTimeTicks); put("positionTicks", r.positionTicks); put("added", r.added)
-            put("errorMessage", r.errorMessage); put("uri", r.uri); put("author", r.author); put("positionPart", r.positionPart)
+            put("errorMessage", r.errorMessage); put("uri", r.uri); put("author", r.author); put("positionPart", r.positionPart); put("positionUpdated", r.positionUpdated)
             put("parts", JSONArray(r.parts)); put("partWeights", JSONArray(r.partWeights))
             put("segments", JSONArray().also { a -> r.segments.forEach { a.put(JSONArray(listOf(if (it.intro) 1 else 0, it.startTicks, it.endTicks))) } })
             put("subtitleFile", r.subtitleFile); put("subtitleMime", r.subtitleMime); put("subtitleLanguage", r.subtitleLanguage); put("subtitleLabel", r.subtitleLabel)
@@ -530,7 +580,7 @@ class DownloadStore(private val context: Context, private val repo: AsterReposit
             state = DownloadState.valueOf(o.getString("state")), progress = o.optDouble("progress"), quality = o.string("quality"),
             expectedBytes = o.optLong("expectedBytes"), bytesOnDisk = o.optLong("bytesOnDisk"), audioTitle = o.string("audioTitle"),
             runTimeTicks = o.optLong("runTimeTicks"), positionTicks = o.optLong("positionTicks"), added = o.optLong("added"),
-            errorMessage = o.string("errorMessage"), uri = o.string("uri"), author = o.string("author"), positionPart = o.optInt("positionPart"),
+            errorMessage = o.string("errorMessage"), uri = o.string("uri"), author = o.string("author"), positionPart = o.optInt("positionPart"), positionUpdated = o.optLong("positionUpdated"),
             parts = o.getJSONArray("parts").let { a -> List(a.length()) { a.getString(it) } },
             partWeights = o.getJSONArray("partWeights").let { a -> List(a.length()) { a.getDouble(it) } },
             segments = o.getJSONArray("segments").let { a -> List(a.length()) { i -> a.getJSONArray(i).let { SavedSegment(it.getInt(0) == 1, it.getLong(1), it.getLong(2)) } } },
