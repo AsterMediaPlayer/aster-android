@@ -2,6 +2,10 @@ package com.astermediaplayer.astermediaplayer.ui.components
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.layout.size
@@ -54,10 +58,28 @@ import org.jellyfin.sdk.model.api.BaseItemDto
 import org.jellyfin.sdk.model.api.BaseItemKind
 import org.jellyfin.sdk.model.api.ImageType
 
-/** A card's tap. On a TV the focus draws the card's own lift and shadow, so the default highlight over the whole card (label too) is off. */
+/**
+ * A card's tap, and its long press (holding Select on a TV) when it has one. On a TV the focus draws the card's own lift and
+ * shadow, so the default highlight over the whole card (label too) is off.
+ */
 @Composable
-internal fun Modifier.cardClickable(onClick: () -> Unit): Modifier =
-    if (LocalIsTv.current) clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onClick) else clickable(onClick = onClick)
+internal fun Modifier.cardClickable(onClick: () -> Unit, onLongClick: (() -> Unit)? = null): Modifier =
+    if (LocalIsTv.current) combinedClickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onLongClick = onLongClick, onClick = onClick)
+    else combinedClickable(onLongClick = onLongClick, onClick = onClick)
+
+/**
+ * A title card with its long-press menu ([ItemActionsMenu]) where the title has one. [content] draws the card from the item
+ * as last changed by the menu, so marking it watched or a favourite shows at once.
+ */
+@Composable
+private fun CardWithActions(item: BaseItemDto, modifier: Modifier, content: @Composable (shown: BaseItemDto, onLongClick: (() -> Unit)?) -> Unit) {
+    var shown by remember(item) { mutableStateOf(item) }
+    var menu by remember { mutableStateOf(false) }
+    Box(modifier) {
+        content(shown, if (hasItemActions(item)) ({ menu = true }) else null)
+        if (menu) ItemActionsMenu(shown, expanded = true, onDismiss = { menu = false }, onChange = { shown = it })
+    }
+}
 
 @Composable
 private fun repo() = (LocalContext.current.applicationContext as AsterApp).repository
@@ -110,9 +132,9 @@ private fun CardLabel(title: String, subtitle: String?, width: Dp) {
 }
 
 @Composable
-fun PosterCard(item: BaseItemDto, onClick: () -> Unit, modifier: Modifier = Modifier) {
+fun PosterCard(item: BaseItemDto, onClick: () -> Unit, modifier: Modifier = Modifier) = CardWithActions(item, modifier) { item, onLongClick ->
     val url = repo().imageUrl(item, ImageType.PRIMARY, 400)
-    Column(modifier.width(Lockup.posterWidth).tvFocus(Lockup.cornerRadius, lift = 1.08f, ring = false, pictureAspect = Lockup.POSTER_ASPECT).cardClickable(onClick), verticalArrangement = Arrangement.spacedBy(Lockup.cardLabelSpacing)) {
+    Column(Modifier.width(Lockup.posterWidth).tvFocus(Lockup.cornerRadius, lift = 1.08f, ring = false, pictureAspect = Lockup.POSTER_ASPECT).cardClickable(onClick, onLongClick), verticalArrangement = Arrangement.spacedBy(Lockup.cardLabelSpacing)) {
         Box(Modifier.fillMaxWidth().aspectRatio(Lockup.POSTER_ASPECT).clip(RoundedCornerShape(Lockup.cornerRadius))) {
             AsyncImage(model = url, contentDescription = item.name, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
             item.progress()?.let { ProgressBar(it, Modifier.align(Alignment.BottomCenter).padding(horizontal = 12.dp).padding(bottom = 10.dp)) }
@@ -128,14 +150,14 @@ fun LandscapeCard(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     showSeriesTitle: Boolean = true,
-) {
+) = CardWithActions(item, modifier) { item, onLongClick ->
     val repo = repo()
     val url = if (item.type == BaseItemKind.EPISODE && item.imageTags?.containsKey(ImageType.PRIMARY) == true) {
         repo.imageUrl(item, ImageType.PRIMARY, 600)
     } else {
         repo.imageUrl(item, ImageType.BACKDROP, 600) ?: repo.imageUrl(item, ImageType.PRIMARY, 600)
     }
-    Column(modifier.width(Lockup.landscapeWidth).tvFocus(Lockup.cornerRadius, lift = 1.08f, ring = false, pictureAspect = Lockup.LANDSCAPE_ASPECT).cardClickable(onClick), verticalArrangement = Arrangement.spacedBy(Lockup.cardLabelSpacing)) {
+    Column(Modifier.width(Lockup.landscapeWidth).tvFocus(Lockup.cornerRadius, lift = 1.08f, ring = false, pictureAspect = Lockup.LANDSCAPE_ASPECT).cardClickable(onClick, onLongClick), verticalArrangement = Arrangement.spacedBy(Lockup.cardLabelSpacing)) {
         Box(Modifier.fillMaxWidth().aspectRatio(Lockup.LANDSCAPE_ASPECT).clip(RoundedCornerShape(Lockup.cornerRadius))) {
             AsyncImage(model = url, contentDescription = item.name, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
             item.progress()?.let { ProgressBar(it, Modifier.align(Alignment.BottomCenter).padding(horizontal = 14.dp).padding(bottom = 12.dp)) }
