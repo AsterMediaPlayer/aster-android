@@ -353,7 +353,10 @@ fun PlayerScreen(
         state.error?.let { message ->
             Column(Modifier.align(Alignment.Center).padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(message, color = Color.White)
-                Button(onClick = onBack, modifier = Modifier.padding(top = 12.dp)) { Text("Close") }
+                Row(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Button(onClick = viewModel::retry) { Text("Try Again") }
+                    Button(onClick = onBack) { Text("Close") }
+                }
             }
         }
     }
