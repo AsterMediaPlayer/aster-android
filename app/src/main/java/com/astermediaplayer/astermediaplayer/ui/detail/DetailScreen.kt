@@ -24,6 +24,7 @@ import androidx.compose.material.icons.filled.Star
 import androidx.compose.ui.graphics.vector.ImageVector
 import com.astermediaplayer.astermediaplayer.ui.components.MetaLine
 import com.astermediaplayer.astermediaplayer.ui.components.episodeCode
+import com.astermediaplayer.astermediaplayer.ui.components.cardClickable
 import com.astermediaplayer.astermediaplayer.ui.components.remainingText
 import com.astermediaplayer.astermediaplayer.ui.theme.ButtonGrey
 import androidx.compose.foundation.layout.ColumnScope
@@ -535,7 +536,7 @@ private fun DetailBody(
                         DetailTab.Music -> MusicSection(content, onPlayTheme)
                         DetailTab.Extras -> Shelf("Extras", content.extras, landscape = true, firstCardFocus = sectionLead, onItem = { onPlay(it.id) })
                         DetailTab.Related -> Shelf("Related", content.similar, landscape = true, firstCardFocus = sectionLead, onItem = onItem)
-                        DetailTab.Details -> DetailsSection(item, repo)
+                        DetailTab.Details -> DetailsSection(item, repo, onItem)
                     }
                 } else {
                     // A movie's or an episode's page: one shelf after another.
@@ -543,7 +544,7 @@ private fun DetailBody(
                     if (content.openingsEndings.isNotEmpty()) MusicSection(content, onPlayTheme)
                     Shelf("Extras", content.extras, landscape = true, onItem = { onPlay(it.id) })
                     Shelf("Related", content.similar, landscape = true, onItem = onItem)
-                    DetailsSection(item, repo)
+                    DetailsSection(item, repo, onItem)
                 }
             }
         }
@@ -987,14 +988,14 @@ private fun parseDiscUuid(id: String): UUID? = com.astermediaplayer.astermediapl
 
 /** Who's in it, and the facts about it. */
 @Composable
-private fun DetailsSection(item: BaseItemDto, repo: AsterRepository) {
-    CastRow(item.people.orEmpty(), repo)
+private fun DetailsSection(item: BaseItemDto, repo: AsterRepository, onItem: (BaseItemDto) -> Unit) {
+    CastRow(item.people.orEmpty(), repo, onItem)
     InformationSection(item)
 }
 
 /** Cast and crew in a row of round photos. */
 @Composable
-private fun CastRow(people: List<BaseItemPerson>, repo: AsterRepository) {
+private fun CastRow(people: List<BaseItemPerson>, repo: AsterRepository, onItem: (BaseItemDto) -> Unit) {
     val cast = people.take(40)
     if (cast.isEmpty()) return
     Column(verticalArrangement = Arrangement.spacedBy(Lockup.shelfTitleSpacing)) {
@@ -1004,7 +1005,9 @@ private fun CastRow(people: List<BaseItemPerson>, repo: AsterRepository) {
             horizontalArrangement = Arrangement.spacedBy(Lockup.personSpacing),
         ) {
             items(cast, key = { "${it.id}-${it.role}-${it.type}" }) { person ->
-                Column(Modifier.width(Lockup.personWidth), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(Lockup.personLabelSpacing)) {
+                // Opens their page, as a minimal person item: the page reads the rest.
+                val open = { onItem(BaseItemDto(id = person.id, type = BaseItemKind.PERSON, name = person.name)) }
+                Column(Modifier.width(Lockup.personWidth).tvFocus(Lockup.personPhotoSize / 2, lift = 1.08f, ring = false, pictureAspect = 1f).cardClickable(open), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(Lockup.personLabelSpacing)) {
                     Box(Modifier.size(Lockup.personPhotoSize).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceVariant)) {
                         AsyncImage(
                             model = repo.personImageUrl(person, 240), contentDescription = null,
