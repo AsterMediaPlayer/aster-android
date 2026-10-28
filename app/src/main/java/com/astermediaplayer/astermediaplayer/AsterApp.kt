@@ -25,7 +25,7 @@ class AsterApp : Application(), SingletonImageLoader.Factory {
     val settingsSync: com.astermediaplayer.astermediaplayer.data.SettingsSync by lazy { com.astermediaplayer.astermediaplayer.data.SettingsSync(repository, settings) }
     val themePlayer: ThemePlayer by lazy { ThemePlayer(this, repository) }
     val themeDeck: com.astermediaplayer.astermediaplayer.ui.player.ThemeDeck by lazy { com.astermediaplayer.astermediaplayer.ui.player.ThemeDeck(repository, themePlayer) }
-    val audiobookLibrary: AudiobookLibrary by lazy { AudiobookLibrary(repository) }
+    val audiobookLibrary: AudiobookLibrary by lazy { AudiobookLibrary(repository, downloads) }
     @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
     val downloads: DownloadStore by lazy { DownloadStore(this, repository, settings) }
     val channels: ChannelsModel by lazy { ChannelsModel(repository) }

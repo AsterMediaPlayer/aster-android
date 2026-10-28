@@ -3,6 +3,7 @@ package com.astermediaplayer.astermediaplayer.ui.audiobooks
 import com.astermediaplayer.astermediaplayer.data.AsterRepository
 import com.astermediaplayer.astermediaplayer.data.Audiobook
 import com.astermediaplayer.astermediaplayer.data.AudiobookShelf
+import com.astermediaplayer.astermediaplayer.data.downloads.DownloadStore
 import com.astermediaplayer.astermediaplayer.ui.library.TitleSections
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -42,7 +43,7 @@ data class AudiobookLibraryState(
 }
 
 /** The server's audiobooks, shared by the Audiobooks tab and the pages it opens. */
-class AudiobookLibrary(private val repo: AsterRepository) {
+class AudiobookLibrary(private val repo: AsterRepository, private val downloads: DownloadStore) {
     private val _state = MutableStateFlow(AudiobookLibraryState())
     val state: StateFlow<AudiobookLibraryState> = _state.asStateFlow()
 
@@ -54,7 +55,10 @@ class AudiobookLibrary(private val repo: AsterRepository) {
         if (_state.value.loading) return
         _state.update { it.copy(loading = true, error = null) }
         try {
-            val books = repo.audiobooks(repo.bookLibraries())
+            val fromServer = repo.audiobooks(repo.bookLibraries())
+            // Listening done offline counts, and goes to the server.
+            downloads.syncBooks(fromServer)
+            val books = fromServer.map(downloads::withLocalProgress)
             val collator = Collator.getInstance().apply { strength = Collator.PRIMARY }
             _state.value = AudiobookLibraryState(books.sortedWith { a, b -> collator.compare(sortTitle(a), sortTitle(b)) }, loaded = true)
         } catch (e: Exception) {
