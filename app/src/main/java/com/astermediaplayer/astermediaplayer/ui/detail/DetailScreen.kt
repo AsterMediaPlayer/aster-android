@@ -107,6 +107,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -640,7 +641,7 @@ private fun DetailInfo(
             Text("Up next: " + listOfNotNull(next.episodeCode(), next.name).joinToString(" · "), style = Type.callout, color = SecondaryText)
         }
         Column(Modifier.padding(top = if (tv) (8f * u).dp else 8.dp), verticalArrangement = Arrangement.spacedBy(DetailMetrics.actionRowSpacing)) {
-            // A phone can't fit every action across, so they wrap onto another line; a TV's fit, and its buttons lift past the row's edge.
+            // A phone can't fit every action across, so the row scrolls sideways; a TV's fits, and its buttons lift past the row's edge.
             ActionRow(tv, u) {
                 if (target != null) {
                     ActionButton(
@@ -741,8 +742,10 @@ internal fun ActionButton(title: String, icon: ImageVector, modifier: Modifier =
     }
 }
 
-/** The title page's buttons: one row on a TV, lines that wrap on a phone, so none is hidden off the edge. */
-@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+/**
+ * The title page's buttons in a row. A phone's scrolls sideways out to the screen's edges, as the iPhone's does with its
+ * clipping off, so the next button shows cut by the edge rather than vanishing at the margin, and it's plain there's more.
+ */
 @Composable
 private fun ActionRow(tv: Boolean, u: Float, content: @Composable () -> Unit) {
     if (tv) Row(
@@ -750,10 +753,18 @@ private fun ActionRow(tv: Boolean, u: Float, content: @Composable () -> Unit) {
         Modifier.heightIn(min = (79f * u).dp),
         horizontalArrangement = Arrangement.spacedBy((20f * u).dp), verticalAlignment = Alignment.CenterVertically,
     ) { content() }
-    else androidx.compose.foundation.layout.FlowRow(
-        horizontalArrangement = Arrangement.spacedBy(DetailMetrics.actionSpacing),
-        verticalArrangement = Arrangement.spacedBy(DetailMetrics.actionRowSpacing),
-        itemVerticalAlignment = Alignment.CenterVertically,
+    else Row(
+        Modifier
+            // Out past the page's margins on both sides...
+            .layout { measurable, constraints ->
+                val margin = Lockup.screenPadding.roundToPx()
+                val placeable = measurable.measure(constraints.copy(minWidth = constraints.minWidth + 2 * margin, maxWidth = constraints.maxWidth + 2 * margin))
+                layout(placeable.width - 2 * margin, placeable.height) { placeable.place(-margin, 0) }
+            }
+            .horizontalScroll(rememberScrollState())
+            // ...with the first button still on the margin until it's scrolled.
+            .padding(horizontal = Lockup.screenPadding),
+        horizontalArrangement = Arrangement.spacedBy(DetailMetrics.actionSpacing), verticalAlignment = Alignment.CenterVertically,
     ) { content() }
 }
 
