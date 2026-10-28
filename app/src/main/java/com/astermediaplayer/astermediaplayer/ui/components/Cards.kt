@@ -72,14 +72,26 @@ internal fun Modifier.cardClickable(onClick: () -> Unit, onLongClick: (() -> Uni
  * as last changed by the menu, so marking it watched or a favourite shows at once.
  */
 @Composable
-private fun CardWithActions(item: BaseItemDto, modifier: Modifier, content: @Composable (shown: BaseItemDto, onLongClick: (() -> Unit)?) -> Unit) {
+private fun CardWithActions(
+    item: BaseItemDto,
+    modifier: Modifier,
+    customMenu: CardMenu? = null,
+    content: @Composable (shown: BaseItemDto, onLongClick: (() -> Unit)?) -> Unit,
+) {
     var shown by remember(item) { mutableStateOf(item) }
     var menu by remember { mutableStateOf(false) }
     Box(modifier) {
-        content(shown, if (hasItemActions(item)) ({ menu = true }) else null)
-        if (menu) ItemActionsMenu(shown, expanded = true, onDismiss = { menu = false }, onChange = { shown = it })
+        content(shown, if (customMenu != null || hasItemActions(item)) ({ menu = true }) else null)
+        when {
+            !menu -> {}
+            customMenu != null -> com.astermediaplayer.astermediaplayer.ui.detail.MenuHost(expanded = true, onDismiss = { menu = false }) { customMenu { menu = false } }
+            else -> ItemActionsMenu(shown, expanded = true, onDismiss = { menu = false }, onChange = { shown = it })
+        }
     }
 }
+
+/** A page's own long-press menu for a card, in place of [ItemActionsMenu]; it's handed what closes it. */
+typealias CardMenu = @Composable androidx.compose.foundation.layout.ColumnScope.(dismiss: () -> Unit) -> Unit
 
 @Composable
 private fun repo() = (LocalContext.current.applicationContext as AsterApp).repository
@@ -150,7 +162,9 @@ fun LandscapeCard(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     showSeriesTitle: Boolean = true,
-) = CardWithActions(item, modifier) { item, onLongClick ->
+    /** What its long press offers, when not the usual menu. */
+    menu: CardMenu? = null,
+) = CardWithActions(item, modifier, menu) { item, onLongClick ->
     val repo = repo()
     val url = if (item.type == BaseItemKind.EPISODE && item.imageTags?.containsKey(ImageType.PRIMARY) == true) {
         repo.imageUrl(item, ImageType.PRIMARY, 600)

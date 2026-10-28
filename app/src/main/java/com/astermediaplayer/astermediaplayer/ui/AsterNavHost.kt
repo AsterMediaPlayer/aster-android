@@ -189,6 +189,7 @@ private object Routes {
     const val LIBRARY = "library/{id}/{name}"
     const val DETAIL = "detail/{id}"
     const val PERSON = "person/{id}"
+    const val PLAYLIST = "playlist/{id}"
     const val PLAYER = "player/{id}?start={start}&end={end}&label={label}&begin={begin}&at={at}&queue={queue}"
     const val DISC = "disc/{id}"
     const val AUDIOBOOK = "audiobook/{id}"
@@ -203,6 +204,7 @@ private object Routes {
     fun library(id: UUID, name: String) = "library/$id/${android.net.Uri.encode(name)}"
     fun detail(id: UUID) = "detail/$id"
     fun person(id: UUID) = "person/$id"
+    fun playlist(id: UUID) = "playlist/$id"
     fun audiobook(id: UUID) = "audiobook/$id"
     fun channel(id: String) = "channel/$id"
     fun channelSettings(only: String? = null) = if (only == null) "channelsettings" else "channelsettings?only=$only"
@@ -240,6 +242,8 @@ fun AsterNavHost(signedIn: Boolean) {
     fun open(item: BaseItemDto) = when (item.type) {
         BaseItemKind.COLLECTION_FOLDER, BaseItemKind.USER_VIEW -> nav.navigate(Routes.library(item.id, item.name.orEmpty()))
         BaseItemKind.PERSON -> nav.navigate(Routes.person(item.id))
+        // A music playlist opens as an album does; any other is a playlist of movies and episodes.
+        BaseItemKind.PLAYLIST -> nav.navigate(if (item.mediaType == org.jellyfin.sdk.model.api.MediaType.AUDIO) Routes.album(item.id) else Routes.playlist(item.id))
         else -> nav.navigate(Routes.detail(item.id))
     }
 
@@ -341,6 +345,15 @@ fun AsterNavHost(signedIn: Boolean) {
                 val id = parseId(entry.arguments!!.getString("id").orEmpty())
                 if (id == null) { LaunchedEffect(Unit) { nav.popBackStack() }; return@composable }
                 com.astermediaplayer.astermediaplayer.ui.library.PersonScreen(repo, id, onItem = ::open, onBack = { nav.popBackStack() })
+            }
+            composable(Routes.PLAYLIST, arguments = listOf(navArgument("id") { type = NavType.StringType })) { entry ->
+                val id = parseId(entry.arguments!!.getString("id").orEmpty())
+                if (id == null) { LaunchedEffect(Unit) { nav.popBackStack() }; return@composable }
+                com.astermediaplayer.astermediaplayer.ui.library.VideoPlaylistScreen(
+                    repo, id, onItem = ::open, onBack = { nav.popBackStack() },
+                    // The first from its start, the rest after it in turn.
+                    onPlay = { ids -> ids.firstOrNull()?.let { nav.navigate(Routes.player(it, 0L, ids.drop(1))) } },
+                )
             }
             composable(
                 Routes.LIBRARY,
