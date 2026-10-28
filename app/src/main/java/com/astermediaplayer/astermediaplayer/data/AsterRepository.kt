@@ -428,6 +428,18 @@ class AsterRepository(context: Context, private val store: SessionStore) {
     suspend fun isAdministrator(): Boolean =
         runCatching { api.userApi.getCurrentUser().content.policy?.isAdministrator == true }.getOrDefault(false)
 
+    /** The user's settings on the server (Jellyfin's or Emby's), as it sent them; null on Plex, which has none. */
+    suspend fun userConfiguration(): org.json.JSONObject? {
+        if (serverKind == ServerKind.Plex) return null
+        return org.json.JSONObject(serverRequest("GET", "/Users/$userIdForServer")).optJSONObject("Configuration")
+    }
+
+    /** Changes the user's settings on the server: [configuration] is posted whole, so the fields not changed stay as they were. */
+    suspend fun updateUserConfiguration(configuration: org.json.JSONObject) {
+        val path = if (serverKind == ServerKind.Emby) "/Users/$userIdForServer/Configuration" else "/Users/Configuration?userId=$userIdForServer"
+        serverRequest("POST", path, configuration.toString())
+    }
+
     /**
      * Sets an item's tags, as the Apple apps do: its own record read back with the tags replaced and posted, so everything
      * else on it stays as it was. The server refuses anyone but an administrator.
