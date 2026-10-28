@@ -1162,6 +1162,8 @@ class AsterRepository(context: Context, private val store: SessionStore) {
         audioStreamIndex: Int? = null,
         subtitleStreamIndex: Int? = null,
         forceTranscode: Boolean = false,
+        /** A fresh encode that copies nothing from the file, the last stream tried when the others won't play. */
+        mostCompatible: Boolean = false,
         cast: Boolean = false,
     ): PlaybackInfoResponse = api.mediaInfoApi.getPostedPlaybackInfo(
         itemId,
@@ -1177,6 +1179,8 @@ class AsterRepository(context: Context, private val store: SessionStore) {
             enableDirectStream = !forceTranscode,
             enableTranscoding = true,
             autoOpenLiveStream = true,
+            allowVideoStreamCopy = !mostCompatible,
+            allowAudioStreamCopy = !mostCompatible,
         ),
     ).content
 

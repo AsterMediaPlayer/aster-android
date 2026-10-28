@@ -282,17 +282,54 @@ class PlayerViewModel(
         }
 
         override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
-            // Direct play can fail on codecs this device lacks; retry once through the server's transcode.
-            if (playMethod == PlayMethod.DIRECT_PLAY && _state.value.quality == Qualities.first() && !forcedTranscode) {
-                forcedTranscode = true
-                start(player.currentPosition, forceTranscode = true)
-            } else {
-                android.util.Log.e("Aster", "Playback failed", error)
-                _state.update { it.copy(loading = false, error = "This video couldn't be played on this device (${error.errorCodeName})") }
+            // The streams tried in turn, each asking the server for something safer, as on the Apple apps.
+            when {
+                // A channel that fails to start (a tuner still being let go, an encode not ready) gets one fresh stream.
+                _state.value.live && !liveRetried -> {
+                    liveRetried = true
+                    val live = liveStreamId
+                    liveStreamId = null
+                    viewModelScope.launch {
+                        if (live != null) runCatching { repo.closeLiveStream(live) }
+                        start(null)
+                    }
+                }
+                // Direct play can fail on codecs this device lacks: the server's transcode.
+                playMethod == PlayMethod.DIRECT_PLAY && !forcedTranscode -> {
+                    forcedTranscode = true
+                    start(player.currentPosition, forceTranscode = true)
+                }
+                // A transcode that copied the file's video or audio can still fail: a fresh H.264 and AAC encode.
+                playMethod == PlayMethod.TRANSCODE && !mostCompatible && offline == null -> {
+                    forcedTranscode = true
+                    mostCompatible = true
+                    start(player.currentPosition, forceTranscode = true)
+                }
+                else -> {
+                    android.util.Log.e("Aster", "Playback failed", error)
+                    _state.update { it.copy(loading = false, error = "This video couldn't be played on this device (${error.errorCodeName})") }
+                }
             }
         }
     }
     private var forcedTranscode = false
+    /** The last stream tried: one encoded afresh as H.264 and AAC, copying nothing from the file. */
+    private var mostCompatible = false
+    private var liveRetried = false
+
+    /** From the error's Retry: the stream asked for again from where it stopped, starting over with the best one. */
+    fun retry() {
+        val at = if (hasStarted) player.currentPosition else null
+        resetFallback()
+        start(at)
+    }
+
+    private fun resetFallback() {
+        forcedTranscode = false
+        mostCompatible = false
+        liveRetried = false
+    }
+
     /** Intros already skipped automatically, so seeking back into one plays it. */
     private val autoSkipped = mutableSetOf<UUID>()
 
@@ -427,6 +464,7 @@ class PlayerViewModel(
                     // A burned-in track is made by the server as it encodes, so it can't be a direct play.
                     subtitleStreamIndex = burnedIn ?: if (noBurnIn) -1 else null,
                     forceTranscode = fallback || burnedIn != null,
+                    mostCompatible = mostCompatible,
                     cast = casting,
                 )
                 scheduledStartMs = null
@@ -550,7 +588,7 @@ class PlayerViewModel(
         mediaSourceId = null
         reported = false
         stopped = false
-        forcedTranscode = false
+        resetFallback()
         itemId = dto.id
         scheduledStartMs = segment.startTicks / TICKS_PER_MS
         cutMs = segment.cutTicks?.let { it / TICKS_PER_MS }
@@ -575,7 +613,7 @@ class PlayerViewModel(
         mediaSourceId = null
         reported = false
         stopped = false
-        forcedTranscode = false
+        resetFallback()
         itemId = channelId
         _channelId.value = channelId
         start(null)
@@ -584,7 +622,7 @@ class PlayerViewModel(
     fun setQuality(quality: Quality) {
         if (quality == _state.value.quality) return
         _state.update { it.copy(quality = quality) }
-        forcedTranscode = false
+        resetFallback()
         start(player.currentPosition)
     }
 
