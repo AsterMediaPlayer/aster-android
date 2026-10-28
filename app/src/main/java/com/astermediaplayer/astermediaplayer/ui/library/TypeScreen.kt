@@ -285,7 +285,7 @@ fun TypeScreen(
                                     true
                                 } else false
                             } else Modifier,
-                        ) { FeaturedBanner(state.featured, onItem, onPlay) }
+                        ) { FeaturedBanner(state.featured, onItem) }
                         Row.Header -> Row(
                             Modifier.fillMaxWidth().then(if (hasHero) Modifier else Modifier.statusBarsPadding())
                                 .padding(horizontal = Lockup.screenPadding)

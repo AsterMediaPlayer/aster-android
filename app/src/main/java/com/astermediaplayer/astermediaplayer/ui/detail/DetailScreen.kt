@@ -604,6 +604,13 @@ private fun DetailInfo(
     val context = LocalContext.current
     val menuId = content.discMenuId
     val preferDisc = (LocalContext.current.applicationContext as AsterApp).settings.settings.collectAsStateWithLifecycle(initialValue = AppSettings()).value.preferDiscMenu
+    // Opened from a banner's Play: play now, as the Play button would, with this page behind.
+    LaunchedEffect(item.id) {
+        val app = context.applicationContext as AsterApp
+        if (app.playOnOpen != item.id) return@LaunchedEffect
+        app.playOnOpen = null
+        if (app.settings.current().preferDiscMenu && menuId != null) onDiscMenu(menuId) else target?.let { onPlay(it.id) }
+    }
 
     val tv = LocalIsTv.current
     val u = Lockup.tvUnit
