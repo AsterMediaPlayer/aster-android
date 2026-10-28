@@ -83,6 +83,10 @@ data class PlayerUiState(
     val skip: SkipPrompt? = null,
     /** Near the end of an episode with another after it: Play Next Episode is on offer. */
     val upNextOffered: Boolean = false,
+    /** The episode ended and this one is next: its card holds the screen. */
+    val upNext: BaseItemDto? = null,
+    /** Seconds until the card plays it, while autoplay is on. */
+    val countdown: Int? = null,
     val quality: Quality = Qualities.first(),
     val transcoding: Boolean = false,
     val chapters: List<Chapter> = emptyList(),
@@ -912,6 +916,7 @@ class PlayerViewModel(
     /** Plays the next episode now, from Play Next Episode: this one stops here. */
     fun playNextNow() {
         val next = nextEpisodeId ?: return
+        countdownJob?.cancel()
         reportStopped()
         _playNext.tryEmit(next)
     }
@@ -945,7 +950,32 @@ class PlayerViewModel(
         if (currentPlaylistChannel != null) { tuneNext(); return }
         if (readOnly) _finished.tryEmit(Unit)
         reportStopped()
-        if (appSettings.autoPlayNext) nextEpisodeId?.let { _playNext.tryEmit(it) }
+        val next = nextEpisodeId ?: return
+        // A line of titles from a disc menu plays straight on, as a disc does.
+        if (followedBy != null) { if (appSettings.autoPlayNext) _playNext.tryEmit(next); return }
+        // The next episode's card holds the screen, counting down to play it when autoplay is on, as on the Apple apps.
+        viewModelScope.launch {
+            val episode = runCatching { repo.item(next) }.getOrNull()
+            if (episode == null) { if (appSettings.autoPlayNext) _playNext.tryEmit(next); return@launch }
+            val autoplay = appSettings.autoPlayNext
+            _state.update { it.copy(upNext = episode, countdown = if (autoplay) UP_NEXT_SECONDS else null, upNextOffered = false, skip = null) }
+            if (autoplay) countdownJob = viewModelScope.launch {
+                for (remaining in UP_NEXT_SECONDS - 1 downTo 0) {
+                    delay(1_000)
+                    _state.update { it.copy(countdown = remaining) }
+                }
+                playNextNow()
+            }
+        }
+    }
+
+    private var countdownJob: Job? = null
+
+    /** Done on the Up Next card: no next episode, and the player closes. */
+    fun dismissUpNext() {
+        countdownJob?.cancel()
+        _state.update { it.copy(upNext = null, countdown = null) }
+        _finished.tryEmit(Unit)
     }
 
     private fun reportProgress() {
@@ -1011,6 +1041,8 @@ class PlayerViewModel(
         /** libass needs external subtitle ids that can't collide with the container's own track ids. */
         const val SUBTITLE_ID_BASE = 128
         const val FALLBACK_BITRATE = 8_000_000
+        /** How long the Up Next card counts down, as on the Apple apps. */
+        const val UP_NEXT_SECONDS = 10
         const val HTTP_TIMEOUT_MS = 30_000
     }
 }

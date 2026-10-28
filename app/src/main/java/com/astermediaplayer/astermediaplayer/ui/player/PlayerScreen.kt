@@ -24,11 +24,14 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 import com.astermediaplayer.astermediaplayer.ui.theme.LocalIsTv
 import com.astermediaplayer.astermediaplayer.ui.theme.Type
+import com.astermediaplayer.astermediaplayer.ui.components.episodeCode
 import kotlinx.coroutines.delay
 import kotlin.math.max
 import androidx.compose.foundation.layout.Box
@@ -40,6 +43,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Audiotrack
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Bookmarks
 import androidx.compose.material.icons.filled.HighQuality
 import androidx.compose.material.icons.filled.Subtitles
@@ -216,8 +221,8 @@ fun PlayerScreen(
 
         val shade by animateFloatAsState(if (controlsVisible) 1f else 0f, tween(250), label = "controls")
         if (isTv) {
-            // Not while the stall card or an error is up: their buttons take the remote.
-            if (state.error == null && state.qualityOffer == null) TvPlayerControls(state, viewModel, clock, canSeek, onGoTo, onControlsHeight = { tvControlsHeight = it })
+            // Not while the stall card, an error or the Up Next card is up: their buttons take the remote.
+            if (state.error == null && state.qualityOffer == null && state.upNext == null) TvPlayerControls(state, viewModel, clock, canSeek, onGoTo, onControlsHeight = { tvControlsHeight = it })
         } else if (shade > 0f) Box(Modifier.fillMaxSize().alpha(shade)) {
             // Darkens the edges so white text reads over a bright picture.
             Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0f to Color.Black.copy(alpha = 0.6f), 0.35f to Color.Transparent, 0.65f to Color.Transparent, 1f to Color.Black.copy(alpha = 0.7f))))
@@ -370,6 +375,49 @@ fun PlayerScreen(
                     Button(onClick = viewModel::retry) { Text("Try Again") }
                     Button(onClick = onBack) { Text("Close") }
                 }
+            }
+        }
+
+        state.upNext?.let { episode ->
+            UpNextCard(episode, state.countdown, onPlayNext = viewModel::playNextNow, onDone = viewModel::dismissUpNext)
+        }
+    }
+}
+
+/** Shown when an episode ends: the next one, with a countdown while autoplay is on. The Apple apps' `UpNextCard`. */
+@Composable
+private fun UpNextCard(episode: org.jellyfin.sdk.model.api.BaseItemDto, countdown: Int?, onPlayNext: () -> Unit, onDone: () -> Unit) {
+    val repo = (LocalContext.current.applicationContext as com.astermediaplayer.astermediaplayer.AsterApp).repository
+    val tv = LocalIsTv.current
+    val u = com.astermediaplayer.astermediaplayer.ui.theme.Lockup.tvUnit
+    val play = remember { androidx.compose.ui.focus.FocusRequester() }
+    // The remote starts on Play Next; Back is Done.
+    LaunchedEffect(Unit) { runCatching { play.requestFocus() } }
+    androidx.activity.compose.BackHandler(onBack = onDone)
+    val art = repo.imageUrl(episode, org.jellyfin.sdk.model.api.ImageType.PRIMARY, 1920)
+        ?: repo.imageUrl(episode, org.jellyfin.sdk.model.api.ImageType.BACKDROP, 1920)
+    Box(Modifier.fillMaxSize().background(Color.Black)) {
+        coil3.compose.AsyncImage(model = art, contentDescription = null, contentScale = androidx.compose.ui.layout.ContentScale.Crop, modifier = Modifier.fillMaxSize())
+        Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0f to Color.Black.copy(alpha = 0.2f), 0.5f to Color.Black.copy(alpha = 0.75f), 1f to Color.Black.copy(alpha = 0.95f))))
+        Column(
+            Modifier.align(Alignment.BottomStart)
+                .then(if (tv) Modifier.padding(start = (90f * u).dp, end = (90f * u).dp, bottom = (80f * u).dp) else Modifier.padding(horizontal = 16.dp, vertical = 32.dp)),
+            verticalArrangement = Arrangement.spacedBy(if (tv) (14f * u).dp else 10.dp),
+        ) {
+            Text("Up Next", style = Type.headline, color = Color.White.copy(alpha = 0.6f))
+            episode.seriesName?.let { Text(it, style = Type.title3.copy(fontWeight = FontWeight.SemiBold), color = Color.White.copy(alpha = 0.6f)) }
+            Text(
+                episode.name.orEmpty(), color = Color.White, maxLines = 2,
+                style = if (tv) Type.title3.copy(fontSize = (56f * u).sp, lineHeight = (64f * u).sp, fontWeight = FontWeight.Bold) else Type.title3.copy(fontSize = 30.sp, lineHeight = 36.sp, fontWeight = FontWeight.Bold),
+            )
+            episode.episodeCode()?.let { Text(it, style = Type.headline, color = Color.White.copy(alpha = 0.6f)) }
+            episode.overview?.let { Text(it, style = Type.callout, color = Color.White, maxLines = 3, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 1000.dp)) }
+            Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+                com.astermediaplayer.astermediaplayer.ui.detail.ActionButton(
+                    countdown?.let { "Play Next in ${it}s" } ?: "Play Next", Icons.Default.PlayArrow,
+                    modifier = Modifier.focusRequester(play), prominent = true, onClick = onPlayNext,
+                )
+                com.astermediaplayer.astermediaplayer.ui.detail.ActionButton("Done", Icons.Default.Close, onClick = onDone)
             }
         }
     }
