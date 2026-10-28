@@ -437,6 +437,18 @@ class AsterRepository(context: Context, private val store: SessionStore) {
         api.itemUpdateApi.updateItem(itemId, record.copy(tags = tags))
     }
 
+    /**
+     * Renames channel tags from the app's earlier name, "asterfin:…", to "aster:…" on every playlist that still has them,
+     * as the Apple apps do when an administrator signs in. Old tags are read meanwhile, so a failure here only leaves them.
+     */
+    suspend fun convertOldChannelTags() {
+        if (serverKind != ServerKind.Jellyfin || !isAdministrator()) return
+        for (playlist in runCatching { videoPlaylists() }.getOrDefault(emptyList())) {
+            val tags = com.astermediaplayer.astermediaplayer.data.channels.ChannelTagParsing.converted(playlist.tags) ?: continue
+            runCatching { setTags(playlist.id, tags) }
+        }
+    }
+
     // MARK: Channel sources
 
     /** The user's video playlists, with their tags: the channels among them are tagged `aster:channel`. */
