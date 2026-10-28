@@ -103,7 +103,7 @@ fun UpcomingScreen(viewModel: UpcomingViewModel, onItem: (BaseItemDto) -> Unit, 
             val dayByEpisode = s.value.flatMap { (day, episodes) -> episodes.map { it.id to day } }.toMap()
             Column(modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(bottom = TabBarClearance), verticalArrangement = Arrangement.spacedBy(20.dp)) {
                 FeaturedBanner(
-                    featured, onItem, onPlay,
+                    featured, onItem,
                     tag = { e -> dayByEpisode[e.id]?.let { UpcomingSchedule.countdown(it) } },
                     action = { e -> if (UpcomingSchedule.isAvailable(e)) HeroAction("Watch Now", Icons.Default.PlayArrow) else HeroAction("Go to Show", Icons.Default.Tv) },
                     destination = UpcomingSchedule::destination,

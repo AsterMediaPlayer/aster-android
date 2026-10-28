@@ -29,6 +29,8 @@ class AsterApp : Application(), SingletonImageLoader.Factory {
     @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
     val downloads: DownloadStore by lazy { DownloadStore(this, repository, settings) }
     val channels: ChannelsModel by lazy { ChannelsModel(repository) }
+    /** A title whose page should start playing once it opens: a banner's Play, so closing the player leaves the viewer on that page. */
+    var playOnOpen: java.util.UUID? = null
     val audiobooks: AudiobookPlayer by lazy {
         AudiobookPlayer(this, repository).also { it.onStart = { themePlayer.hide(evenIfShowing = true); music.stop() } }
     }

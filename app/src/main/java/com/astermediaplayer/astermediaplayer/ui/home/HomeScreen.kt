@@ -182,7 +182,7 @@ fun HomeScreen(
         is Load.Failed -> ErrorBox(s.message, { viewModel.load() }, modifier)
         is Load.Ready -> PullToRefreshBox(isRefreshing = refreshing, onRefresh = { viewModel.load(refresh = true) }, modifier = modifier.fillMaxSize()) {
             Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(bottom = TabBarClearance), verticalArrangement = Arrangement.spacedBy(if (LocalIsTv.current) Lockup.sectionSpacing else 20.dp)) {
-                if (s.value.featured.isNotEmpty()) FeaturedBanner(s.value.featured, onItem, onPlay)
+                if (s.value.featured.isNotEmpty()) FeaturedBanner(s.value.featured, onItem)
                 Shelf("Continue Watching", s.value.resume, landscape = true, onItem = onItem)
                 Shelf("Up Next", s.value.nextUp, landscape = true, onItem = onItem)
                 Shelf("Recently Added Movies", s.value.movies, landscape = true, onItem = onItem)
@@ -208,10 +208,9 @@ data class HeroAction(val title: String, val icon: androidx.compose.ui.graphics.
 fun FeaturedBanner(
     items: List<BaseItemDto>,
     onItem: (BaseItemDto) -> Unit,
-    onPlay: (UUID) -> Unit,
     /** A short label over a page's title, e.g. Upcoming's countdown. */
     tag: (BaseItemDto) -> String? = { null },
-    /** A page with an action only opens (its destination); one without plays. */
+    /** A page with an action only opens (its destination); one without opens and plays. */
     action: (BaseItemDto) -> HeroAction? = { null },
     /** What selecting a page opens; the page's own title unless given. */
     destination: (BaseItemDto) -> BaseItemDto = { it },
@@ -242,7 +241,7 @@ fun FeaturedBanner(
             else { if (event.type == KeyEventType.KeyDown) { refocusPage = target; scope.launch { pager.animateScrollToPage(target) } }; true }
         },
     ) {
-        HorizontalPager(pager, Modifier.fillMaxSize()) { page -> FeaturedPage(items[page], onItem, onPlay, tag(items[page]), action(items[page]), destination, autofocus = page == 0, focusNow = page == refocusPage && page == pager.settledPage, onFocused = { refocusPage = -1 }) }
+        HorizontalPager(pager, Modifier.fillMaxSize()) { page -> FeaturedPage(items[page], onItem, tag(items[page]), action(items[page]), destination, autofocus = page == 0, focusNow = page == refocusPage && page == pager.settledPage, onFocused = { refocusPage = -1 }) }
         if (items.size > 1) {
             // Capsule of dots at the bottom right, in line with the Play button's bottom.
             // On the Apple TV the dots are small and bare, low in the right corner (its hero, measured).
@@ -263,7 +262,7 @@ fun FeaturedBanner(
 }
 
 @Composable
-private fun FeaturedPage(item: BaseItemDto, onItem: (BaseItemDto) -> Unit, onPlay: (UUID) -> Unit, tag: String?, action: HeroAction?, destination: (BaseItemDto) -> BaseItemDto, autofocus: Boolean, focusNow: Boolean, onFocused: () -> Unit) {
+private fun FeaturedPage(item: BaseItemDto, onItem: (BaseItemDto) -> Unit, tag: String?, action: HeroAction?, destination: (BaseItemDto) -> BaseItemDto, autofocus: Boolean, focusNow: Boolean, onFocused: () -> Unit) {
     val isTv = LocalIsTv.current
     val focus = remember { FocusRequester() }
     // On a TV the Play button is where the remote starts; the first page asks for it, later pages keep whatever has focus.
@@ -277,6 +276,14 @@ private fun FeaturedPage(item: BaseItemDto, onItem: (BaseItemDto) -> Unit, onPla
     val logo = repo.imageUrl(item, ImageType.LOGO, 800)
     val playable = item.type != BaseItemKind.SERIES
     val remaining = remainingText(item)
+    val app = LocalContext.current.applicationContext as AsterApp
+    // Play and Resume open the title's page, which starts playing at once, so closing the player leaves the viewer on that
+    // page, as on the Apple apps. A page with its own button (Upcoming's) only opens.
+    fun select() {
+        val target = destination(item)
+        if (action == null) app.playOnOpen = target.id
+        onItem(target)
+    }
     // On its side a phone is about 400dp tall, so the page is smaller all round and keeps the Play button its full height.
     val compact = LocalConfiguration.current.screenHeightDp < 500
 
@@ -298,7 +305,7 @@ private fun FeaturedPage(item: BaseItemDto, onItem: (BaseItemDto) -> Unit, onPla
         }
         if (isTv) TvHeroContent(
             item, tag, logo, label, if (action == null && playable) remaining else null, action?.icon ?: Icons.Default.PlayArrow, focus,
-            onClick = { if (action != null) onItem(destination(item)) else if (playable) onPlay(item.id) else onItem(item) },
+            onClick = { select() },
         ) else Column(
             Modifier.align(Alignment.BottomStart).fillMaxWidth().padding(horizontal = Lockup.screenPadding).padding(bottom = if (compact) 96.dp else 125.dp),
             verticalArrangement = Arrangement.spacedBy(if (compact) 10.dp else 18.dp),
@@ -329,7 +336,7 @@ private fun FeaturedPage(item: BaseItemDto, onItem: (BaseItemDto) -> Unit, onPla
             }
             Row(
                 Modifier.focusRequester(focus).tvFocus(40.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.9f))
-                    .clickable { if (action != null) onItem(destination(item)) else if (playable) onPlay(item.id) else onItem(item) }.padding(horizontal = 28.dp, vertical = 14.dp),
+                    .clickable { select() }.padding(horizontal = 28.dp, vertical = 14.dp),
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp),
             ) {
                 Icon(action?.icon ?: Icons.Default.PlayArrow, null, tint = Color.Black, modifier = Modifier.size(17.dp))

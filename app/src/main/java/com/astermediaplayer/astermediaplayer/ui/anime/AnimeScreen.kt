@@ -104,7 +104,7 @@ fun AnimeScreen(
         is Load.Failed -> ErrorBox(s.message, viewModel::load, modifier)
         is Load.Ready -> Column(modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(bottom = TabBarClearance), verticalArrangement = Arrangement.spacedBy(if (LocalIsTv.current) Lockup.sectionSpacing else 20.dp)) {
             if (s.value.featured.isNotEmpty()) {
-                FeaturedBanner(s.value.featured, onItem, onPlay)
+                FeaturedBanner(s.value.featured, onItem)
             } else {
                 Text(
                     "Anime", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold,
