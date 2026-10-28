@@ -298,7 +298,12 @@ fun AsterNavHost(signedIn: Boolean) {
         },
     ) {
         // The pages remember what had focus, so Back from the Now Playing panel lands where you were.
-        androidx.compose.runtime.CompositionLocalProvider(com.astermediaplayer.astermediaplayer.ui.detail.LocalPageFocus provides pageFocus) {
+        // And a card's long-press menu plays and opens titles through them.
+        val itemActions = remember(nav) { com.astermediaplayer.astermediaplayer.ui.components.ItemActions(play = { id, fromBeginning -> nav.navigate(Routes.player(id, fromBeginning)) }, open = { open(it) }) }
+        androidx.compose.runtime.CompositionLocalProvider(
+            com.astermediaplayer.astermediaplayer.ui.detail.LocalPageFocus provides pageFocus,
+            com.astermediaplayer.astermediaplayer.ui.components.LocalItemActions provides itemActions,
+        ) {
         NavHost(nav, startDestination = if (signedIn) Routes.MAIN else Routes.AUTH, modifier = Modifier.fillMaxSize().focusRequester(pageFocus).focusRestorer()) {
             composable(Routes.AUTH) {
                 val vm: AuthViewModel = viewModel(factory = viewModelFactory { initializer { AuthViewModel(repo, app::resetForServerChange) } })
