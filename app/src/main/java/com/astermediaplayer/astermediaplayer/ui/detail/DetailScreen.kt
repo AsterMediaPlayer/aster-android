@@ -640,12 +640,8 @@ private fun DetailInfo(
             Text("Up next: " + listOfNotNull(next.episodeCode(), next.name).joinToString(" · "), style = Type.callout, color = SecondaryText)
         }
         Column(Modifier.padding(top = if (tv) (8f * u).dp else 8.dp), verticalArrangement = Arrangement.spacedBy(DetailMetrics.actionRowSpacing)) {
-            // A phone can't fit every action across, so the row scrolls sideways; a TV's fits, and its buttons lift past the row's edge.
-            Row(
-                // A TV row is as tall as its focused Play pill (79 points) even once focus has left it, so the page above doesn't shift.
-                if (tv) Modifier.heightIn(min = (79f * u).dp) else Modifier.horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(if (tv) (20f * u).dp else DetailMetrics.actionSpacing), verticalAlignment = Alignment.CenterVertically,
-            ) {
+            // A phone can't fit every action across, so they wrap onto another line; a TV's fit, and its buttons lift past the row's edge.
+            ActionRow(tv, u) {
                 if (target != null) {
                     ActionButton(
                         when {
@@ -743,6 +739,22 @@ internal fun ActionButton(title: String, icon: ImageVector, modifier: Modifier =
         Icon(icon, null, tint = color, modifier = Modifier.size(17.dp))
         Text(title, style = Type.headline, color = color, maxLines = 1, softWrap = false)
     }
+}
+
+/** The title page's buttons: one row on a TV, lines that wrap on a phone, so none is hidden off the edge. */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+private fun ActionRow(tv: Boolean, u: Float, content: @Composable () -> Unit) {
+    if (tv) Row(
+        // As tall as its focused Play pill (79 points) even once focus has left it, so the page above doesn't shift.
+        Modifier.heightIn(min = (79f * u).dp),
+        horizontalArrangement = Arrangement.spacedBy((20f * u).dp), verticalAlignment = Alignment.CenterVertically,
+    ) { content() }
+    else androidx.compose.foundation.layout.FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(DetailMetrics.actionSpacing),
+        verticalArrangement = Arrangement.spacedBy(DetailMetrics.actionRowSpacing),
+        itemVerticalAlignment = Alignment.CenterVertically,
+    ) { content() }
 }
 
 /** Heart, watched and more: a capsule as tall as the text buttons. */
