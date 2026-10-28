@@ -23,10 +23,19 @@ class PlaybackService : MediaSessionService() {
         sync()
     }
 
-    /** Publishes whichever players exist: the audiobook player and the music player each get a session. */
+    /**
+     * Publishes whichever players exist: the audiobook player, the music player and the video open each get a session.
+     * A video's goes when its player closes.
+     */
     private fun sync() {
         val app = application as AsterApp
-        listOfNotNull("audiobook" to app.audiobooks.player, "music" to app.music.player).forEach { (id, player) ->
+        val wanted = listOf("audiobook" to app.audiobooks.player, "music" to app.music.player, "video" to app.videoPlayer)
+        val keep = wanted.mapNotNull { it.second }.toSet()
+        sessions.keys.filter { it !in keep }.forEach { gone ->
+            sessions.remove(gone)?.let { removeSession(it); it.release() }
+        }
+        if (sessions.isEmpty() && keep.isEmpty()) { stopSelf(); return }
+        wanted.forEach { (id, player) ->
             if (player == null || sessions.containsKey(player)) return@forEach
             val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
             val built = MediaSession.Builder(this, player).setId(id).setSessionActivity(open).build()
