@@ -1220,7 +1220,7 @@ class AsterRepository(context: Context, private val store: SessionStore) {
             return@runCatching com.astermediaplayer.astermediaplayer.data.emby.EmbyMarkers.segments(item, itemId)
         }
         api.mediaSegmentApi.getItemSegments(
-            itemId, listOf(MediaSegmentType.INTRO, MediaSegmentType.OUTRO),
+            itemId, listOf(MediaSegmentType.INTRO, MediaSegmentType.OUTRO, MediaSegmentType.RECAP, MediaSegmentType.PREVIEW, MediaSegmentType.COMMERCIAL),
         ).content.items
     }.getOrDefault(emptyList())
 

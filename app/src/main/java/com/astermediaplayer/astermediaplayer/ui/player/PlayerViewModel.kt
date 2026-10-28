@@ -293,7 +293,8 @@ class PlayerViewModel(
         }
     }
     private var forcedTranscode = false
-    private var autoSkipped: SkipPrompt? = null
+    /** Intros already skipped automatically, so seeking back into one plays it. */
+    private val autoSkipped = mutableSetOf<UUID>()
 
     /** The server's picture-based subtitle burned into the video (PGS, VobSub), when the viewer chose one. */
     private var burnedIn: Int? = null
@@ -766,16 +767,25 @@ class PlayerViewModel(
         }
         val prompt = segment?.let {
             SkipPrompt(
-                label = if (it.type == MediaSegmentType.INTRO) "Skip Intro" else "Skip Credits",
+                label = skipLabel(it.type),
                 targetMs = it.endTicks / TICKS_PER_MS,
             )
         }
-        if (prompt != null && appSettings.autoSkipSegments && prompt != autoSkipped) {
-            autoSkipped = prompt
-            player.seekTo(prompt.targetMs)
+        // Only intros skip themselves, as on the Apple apps: skipping the credits would pass the Up Next offer.
+        if (segment != null && appSettings.autoSkipSegments && segment.type == MediaSegmentType.INTRO && autoSkipped.add(segment.id)) {
+            player.seekTo(segment.endTicks / TICKS_PER_MS)
             return
         }
         if (prompt != _state.value.skip) _state.update { it.copy(skip = prompt) }
+    }
+
+    private fun skipLabel(type: MediaSegmentType): String = when (type) {
+        MediaSegmentType.INTRO -> "Skip Intro"
+        MediaSegmentType.OUTRO -> "Skip Credits"
+        MediaSegmentType.RECAP -> "Skip Recap"
+        MediaSegmentType.PREVIEW -> "Skip Preview"
+        MediaSegmentType.COMMERCIAL -> "Skip Ad"
+        else -> "Skip"
     }
 
     /** From the credits if the server marked them, else the last 30 seconds or 8%, whichever starts later. */
