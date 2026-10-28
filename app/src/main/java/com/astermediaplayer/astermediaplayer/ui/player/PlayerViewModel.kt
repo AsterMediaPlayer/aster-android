@@ -212,6 +212,42 @@ class PlayerViewModel(
     val activePlayer: StateFlow<Player> = _activePlayer.asStateFlow()
     val player: Player get() = _activePlayer.value
 
+    private val app = context.applicationContext as com.astermediaplayer.astermediaplayer.AsterApp
+
+    /**
+     * This device's player as the media session sees it (the notification, the lock screen, headphones, a watch). A channel
+     * or live TV has no skipping or scrubbing there, as in the Apple apps, so everyone stays on the same moment.
+     */
+    private val sessionPlayer = object : androidx.media3.common.ForwardingPlayer(localPlayer) {
+        override fun getAvailableCommands(): Player.Commands {
+            val commands = super.getAvailableCommands()
+            if (!_state.value.live && !_state.value.channel) return commands
+            return commands.buildUpon().removeAll(
+                Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM, Player.COMMAND_SEEK_BACK, Player.COMMAND_SEEK_FORWARD,
+                Player.COMMAND_SEEK_TO_PREVIOUS, Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM,
+                Player.COMMAND_SEEK_TO_NEXT, Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM,
+            ).build()
+        }
+
+        override fun isCommandAvailable(command: Int) = availableCommands.contains(command)
+    }
+    private var published = false
+
+    /** Hands the video to the media session, once what it is (a channel or not) is known. */
+    private fun publishSession() {
+        if (published) return
+        published = true
+        app.videoPlayer = sessionPlayer
+        app.startService(android.content.Intent(app, PlaybackService::class.java))
+    }
+
+    private fun withdrawSession() {
+        if (!published) return
+        published = false
+        if (app.videoPlayer === sessionPlayer) app.videoPlayer = null
+        runCatching { app.startService(android.content.Intent(app, PlaybackService::class.java)) }
+    }
+
     private var item: BaseItemDto? = null
     /** Playing a download from the device: nothing here asks the server. */
     private var offline: com.astermediaplayer.astermediaplayer.data.downloads.DownloadRecord? = null
@@ -520,7 +556,12 @@ class PlayerViewModel(
                 player.setMediaItem(
                     MediaItem.Builder()
                         .setUri(url)
-                        .setMediaMetadata(androidx.media3.common.MediaMetadata.Builder().setTitle(dto.name).setSubtitle(if (dto.type == BaseItemKind.EPISODE) dto.seriesName else null).build())
+                        .setMediaMetadata(
+                            androidx.media3.common.MediaMetadata.Builder().setTitle(dto.name).setSubtitle(if (dto.type == BaseItemKind.EPISODE) dto.seriesName else null)
+                                // For the notification and the lock screen.
+                                .setArtist(if (dto.type == BaseItemKind.EPISODE) dto.seriesName else null)
+                                .setArtworkUri(repo.imageUrl(dto, org.jellyfin.sdk.model.api.ImageType.PRIMARY, 600)?.let(android.net.Uri::parse)).build(),
+                        )
                         .setSubtitleConfigurations(
                             if (!casting) emptyList() else externalText.map {
                                 MediaItem.SubtitleConfiguration.Builder(android.net.Uri.parse(repo.withApiKey(repo.absoluteUrl(it.deliveryUrl!!.replace(Regex("/Stream\\.[A-Za-z0-9]+"), "/Stream.vtt")))))
@@ -842,6 +883,7 @@ class PlayerViewModel(
     }
 
     private fun startTicking() {
+        publishSession()
         if (tickJob?.isActive == true) return
         tickJob = viewModelScope.launch {
             var sinceReport = 0
@@ -1012,6 +1054,7 @@ class PlayerViewModel(
     override fun onCleared() {
         scrub?.release()
         reportStopped()
+        withdrawSession()
         tickJob?.cancel()
         player.removeListener(listener)
         cast?.release()
