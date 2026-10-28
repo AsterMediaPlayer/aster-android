@@ -9,6 +9,7 @@ import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.FastOutLinearInEasing
 import androidx.compose.animation.core.LinearOutSlowInEasing
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -56,6 +57,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
@@ -162,7 +165,12 @@ fun DiscMenuScreen(controller: DiscMenuController, onPlay: (DiscPlay) -> Unit, o
                 },
                 label = "discScreen",
                 modifier = Modifier.fillMaxSize(),
-            ) { shown -> DiscScreenView(shown.screen, controller, style, shown.generation) }
+            ) { shown ->
+                val wipe = animate && shown.screen.transitionStyle == "wipe"
+                Box(if (wipe) Modifier.fillMaxSize().then(wipeIn(forward, duration)) else Modifier.fillMaxSize()) {
+                    DiscScreenView(shown.screen, controller, style, shown.generation)
+                }
+            }
         }
         if (!LocalIsTv.current) {
             // Below the status bar, which the page draws under.
@@ -199,6 +207,19 @@ private fun handleKey(controller: DiscMenuController, e: androidx.compose.ui.inp
     return true
 }
 
+/** A wipe (§5.4): the arriving screen revealed from the leading side going forward, the trailing side going back. */
+@Composable
+private fun androidx.compose.animation.AnimatedVisibilityScope.wipeIn(forward: Boolean, ms: Int): Modifier {
+    val progress by transition.animateFloat({ tween(ms, easing = LinearOutSlowInEasing) }, label = "wipe") {
+        if (it == androidx.compose.animation.EnterExitState.PreEnter) 0f else 1f
+    }
+    return Modifier.drawWithContent {
+        val shown = size.width * progress
+        if (forward) clipRect(right = shown) { this@drawWithContent.drawContent() }
+        else clipRect(left = size.width - shown) { this@drawWithContent.drawContent() }
+    }
+}
+
 /** Screen transitions (§5.4): the leaving screen eases in while the arriving one eases out, together. */
 private fun transitionFor(style: String, forward: Boolean, ms: Int): androidx.compose.animation.ContentTransform {
     val s = if (forward) 1 else -1
@@ -211,8 +232,8 @@ private fun transitionFor(style: String, forward: Boolean, ms: Int): androidx.co
         "slide" -> (fadeIn(inSpec) + slideInHorizontally(inT()) { (it * 0.08f * s).toInt() }) togetherWith (fadeOut(outSpec) + slideOutHorizontally(outT()) { (-it * 0.08f * s).toInt() })
         "rise" -> (fadeIn(inSpec) + slideInVertically(inT()) { (it * 0.06f * s).toInt() }) togetherWith (fadeOut(outSpec) + slideOutVertically(outT()) { (-it * 0.06f * s).toInt() })
         "zoom" -> (fadeIn(inSpec) + scaleIn(inSpec, if (forward) 0.92f else 1.08f)) togetherWith (fadeOut(outSpec) + scaleOut(outSpec, if (forward) 1.08f else 0.92f))
-        // A wipe reveals from one side; a fade is the nearest thing here.
-        "wipe" -> fadeIn(inSpec) togetherWith fadeOut(outSpec)
+        // The arriving screen is revealed by [wipeIn], drawn on top of the leaving one as it fades.
+        "wipe" -> EnterTransition.None togetherWith fadeOut(outSpec)
         else -> EnterTransition.None togetherWith ExitTransition.None
     }
 }
