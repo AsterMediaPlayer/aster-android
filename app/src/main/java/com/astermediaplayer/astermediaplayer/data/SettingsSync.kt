@@ -1,6 +1,7 @@
 package com.astermediaplayer.astermediaplayer.data
 
 import android.util.Log
+import com.astermediaplayer.astermediaplayer.data.emby.ServerKind
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -42,6 +43,8 @@ class SettingsSync(private val repo: AsterRepository, private val settings: Sett
     private suspend fun pullLocked() {
         val id = repo.currentServerId ?: return
         if (owner != id) { owner = id; serverValues = mutableMapOf(); hasPulled = false }
+        // Plex has no display preferences to keep them in, so there they stay on the device, as on the Apple apps.
+        if (repo.serverKind == ServerKind.Plex) return
         watch()
         val remote = runCatching { fetch() }.onFailure { Log.w("Aster", "Settings sync: couldn't read the server's settings: $it") }.getOrNull() ?: return
         val local = settings.syncedValues.first()
