@@ -82,3 +82,48 @@ object SubtitleLabels {
         }
     }
 }
+
+/** One entry of the player's audio menu: a track in the file the player switches itself, or one the server streams. */
+data class AudioChoice(
+    val label: String,
+    val selected: Boolean,
+    /** The audio track in the player's current tracks, in a direct play. */
+    val group: Int? = null,
+    /** The server's index of the track, which a converted stream is asked for again with. */
+    val serverIndex: Int? = null,
+)
+
+/** How audio tracks are named in the menu, as the Apple apps do: "English · EAC3 5.1", "Commentary · English · AAC Stereo". */
+object AudioLabels {
+    fun codec(mimeType: String?): String? = when (mimeType) {
+        MimeTypes.AUDIO_AAC -> "AAC"
+        MimeTypes.AUDIO_AC3 -> "AC3"
+        MimeTypes.AUDIO_E_AC3 -> "EAC3"
+        MimeTypes.AUDIO_E_AC3_JOC -> "Atmos"
+        MimeTypes.AUDIO_TRUEHD -> "TrueHD"
+        MimeTypes.AUDIO_DTS -> "DTS"
+        MimeTypes.AUDIO_DTS_HD -> "DTS-HD"
+        MimeTypes.AUDIO_DTS_EXPRESS -> "DTS Express"
+        MimeTypes.AUDIO_OPUS -> "Opus"
+        MimeTypes.AUDIO_FLAC -> "FLAC"
+        MimeTypes.AUDIO_MPEG -> "MP3"
+        MimeTypes.AUDIO_VORBIS -> "Vorbis"
+        MimeTypes.AUDIO_RAW -> "PCM"
+        else -> mimeType?.substringAfter('/')?.uppercase()
+    }
+
+    fun label(language: String?, title: String?, codec: String?, channels: Int?, number: Int): String {
+        val name = SubtitleLabels.language(language)
+        val parts = mutableListOf(
+            when {
+                !title.isNullOrBlank() -> title
+                name != null -> name
+                else -> "Track $number"
+            },
+        )
+        if (!title.isNullOrBlank() && name != null && !title.contains(name, ignoreCase = true)) parts += name
+        val layout = when (channels) { 6 -> " 5.1"; 8 -> " 7.1"; 2 -> " Stereo"; else -> "" }
+        if (codec != null) parts += codec + layout
+        return parts.joinToString(" · ")
+    }
+}

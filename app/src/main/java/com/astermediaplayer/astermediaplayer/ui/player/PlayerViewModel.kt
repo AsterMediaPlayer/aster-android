@@ -95,6 +95,8 @@ data class PlayerUiState(
     /** Playing from a download on the device. */
     val offline: Boolean = false,
     val chapterIndex: Int = -1,
+    /** The audio menu: the file's tracks in a direct play, the server's in a converted stream. */
+    val audio: List<AudioChoice> = emptyList(),
     /** The subtitle menu: Off, the tracks the player can draw, and picture-based ones the server can burn in. */
     val subtitles: List<SubtitleChoice> = emptyList(),
     /** The line of the server's text subtitle track showing now, drawn by the app over the picture. */
@@ -267,6 +269,7 @@ class PlayerViewModel(
             val text = tracks.groups.filter { it.type == C.TRACK_TYPE_TEXT }.flatMap { g -> (0 until g.length).map { g.getTrackFormat(it).sampleMimeType to (g.isTrackSupported(it) to g.isTrackSelected(it)) } }
             android.util.Log.d("Aster", "Text tracks (mime, supported, selected): $text")
             refreshSubtitles()
+            refreshAudio()
         }
         // What the player decodes for the picture-based tracks (PGS, VobSub), for checking they are being drawn.
         override fun onCues(cueGroup: androidx.media3.common.text.CueGroup) {
@@ -340,6 +343,10 @@ class PlayerViewModel(
     /** A track to select once the new stream's tracks are known (what was picked while a burned-in track was showing). */
     private var pendingPick: Triple<String?, String?, String?>? = null
     private var currentSource: org.jellyfin.sdk.model.api.MediaSourceInfo? = null
+    /** The audio track chosen, by the server's index; null for the server's default, which follows the viewer's preferred language. */
+    private var audioIndex: Int? = null
+    /** Whether that track (or the default) has been selected in this stream's tracks yet; a converted stream carries only it. */
+    private var audioApplied = false
 
     /**
      * The server's text subtitle tracks for this stream. The app draws these itself from the JSON cue list; they are never
@@ -422,6 +429,7 @@ class PlayerViewModel(
     private fun start(positionMs: Long?, forceTranscode: Boolean = false) {
         viewModelScope.launch {
             hasStarted = false
+            audioApplied = false
             _state.update { it.copy(loading = true, error = null, qualityOffer = null) }
             try {
                 if (direct != null) {
@@ -461,6 +469,7 @@ class PlayerViewModel(
                 val info = repo.playbackInfo(
                     itemId, resumeMs * TICKS_PER_MS, maxBitrate,
                     mediaSourceId = mediaSourceId,
+                    audioStreamIndex = audioIndex,
                     // A burned-in track is made by the server as it encodes, so it can't be a direct play.
                     subtitleStreamIndex = burnedIn ?: if (noBurnIn) -1 else null,
                     forceTranscode = fallback || burnedIn != null,
@@ -527,6 +536,7 @@ class PlayerViewModel(
                 player.playWhenReady = true
                 startCues()
                 refreshSubtitles()
+                refreshAudio()
                 loadThemeCards(dto)
                 _state.update {
                     it.copy(
@@ -589,6 +599,7 @@ class PlayerViewModel(
         reported = false
         stopped = false
         resetFallback()
+        audioIndex = null
         itemId = dto.id
         scheduledStartMs = segment.startTicks / TICKS_PER_MS
         cutMs = segment.cutTicks?.let { it / TICKS_PER_MS }
@@ -614,6 +625,7 @@ class PlayerViewModel(
         reported = false
         stopped = false
         resetFallback()
+        audioIndex = null
         itemId = channelId
         _channelId.value = channelId
         start(null)
@@ -745,6 +757,67 @@ class PlayerViewModel(
                     .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
                     .setOverrideForType(androidx.media3.common.TrackSelectionOverride(group.mediaTrackGroup, choice.track)).build()
             }
+        }
+    }
+
+    // MARK: Audio
+
+    private fun serverAudio(): List<MediaStream> =
+        currentSource?.mediaStreams.orEmpty().filter { it.type == MediaStreamType.AUDIO && !it.isExternal }
+
+    /**
+     * Builds the audio menu. A direct play has every track in the file, which the player switches itself; they line up with
+     * the server's in order, so as they arrive the one chosen, else the server's default (which follows the viewer's
+     * preferred language), is selected, as the Apple apps do. A converted stream carries one track, so its menu is the server's.
+     */
+    private fun refreshAudio() {
+        val streams = serverAudio()
+        val choices = if (playMethod == PlayMethod.DIRECT_PLAY || offline != null) {
+            val groups = player.currentTracks.groups.withIndex().filter { it.value.type == C.TRACK_TYPE_AUDIO }
+            // The same tracks in the same order; when the counts differ they can't be matched up.
+            val matched = offline == null && groups.size == streams.size
+            if (matched && !audioApplied && groups.isNotEmpty()) {
+                audioApplied = true
+                val wanted = audioIndex ?: currentSource?.defaultAudioStreamIndex
+                val group = groups.getOrNull(streams.indexOfFirst { it.index == wanted })?.value
+                if (group != null && group.isSupported && !group.isSelected) {
+                    // The menu is built again when the player has switched.
+                    player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+                        .setOverrideForType(androidx.media3.common.TrackSelectionOverride(group.mediaTrackGroup, 0)).build()
+                    return
+                }
+            }
+            groups.mapIndexedNotNull { n, (gi, group) ->
+                if (!group.isSupported) return@mapIndexedNotNull null
+                val format = group.getTrackFormat(0)
+                val stream = if (matched) streams[n] else null
+                AudioChoice(
+                    stream?.displayTitle ?: AudioLabels.label(format.language, format.label, AudioLabels.codec(format.sampleMimeType), format.channelCount.takeIf { it > 0 }, n + 1),
+                    selected = group.isSelected, group = gi, serverIndex = stream?.index,
+                )
+            }
+        } else {
+            val current = audioIndex ?: currentSource?.defaultAudioStreamIndex
+            streams.mapIndexed { n, stream ->
+                AudioChoice(
+                    stream.displayTitle ?: AudioLabels.label(stream.language, stream.title, stream.codec?.uppercase(), stream.channels, n + 1),
+                    selected = stream.index == current, serverIndex = stream.index,
+                )
+            }
+        }
+        if (choices != _state.value.audio) _state.update { it.copy(audio = choices) }
+    }
+
+    /** Takes a choice from the audio menu: switched by the player in a direct play, a new stream from here in a converted one. */
+    fun selectAudio(choice: AudioChoice) {
+        if (choice.selected) return
+        // Kept, so a restart of the stream (a subtitle burned in, a fallback) keeps the track.
+        audioIndex = choice.serverIndex ?: audioIndex
+        val group = choice.group?.let { player.currentTracks.groups.getOrNull(it) }
+        when {
+            group != null -> player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+                .setOverrideForType(androidx.media3.common.TrackSelectionOverride(group.mediaTrackGroup, 0)).build()
+            choice.serverIndex != null -> start(player.currentPosition)
         }
     }
 
@@ -882,6 +955,8 @@ class PlayerViewModel(
             canSeek = true, itemId = itemId, mediaSourceId = mediaSourceId, playSessionId = playSessionId, liveStreamId = liveStreamId,
             playMethod = playMethod, isPaused = !player.isPlaying, isMuted = false,
             positionTicks = player.currentPosition * TICKS_PER_MS,
+            // Which track is playing, so the server's dashboard shows it.
+            audioStreamIndex = _state.value.audio.firstOrNull { it.selected }?.serverIndex,
             repeatMode = RepeatMode.REPEAT_NONE, playbackOrder = PlaybackOrder.DEFAULT,
         )
         viewModelScope.launch { repo.reportProgress(info) }
