@@ -376,6 +376,14 @@ class AsterRepository(context: Context, private val store: SessionStore) {
         }.awaitAll().flatten().sortedByDescending { it.dateCreated }.take(limit)
     }
 
+    /** The movies and shows a person is in, the newest first, for their page. */
+    suspend fun filmography(personId: UUID): List<BaseItemDto> = api.libraryApi.getItems(
+        GetItemsRequest(
+            userId = userId, recursive = true, includeItemTypes = listOf(BaseItemKind.MOVIE, BaseItemKind.SERIES), personIds = listOf(personId),
+            sortBy = listOf(ItemSortBy.PREMIERE_DATE), sortOrder = listOf(SortOrder.DESCENDING), fields = listFields,
+        ),
+    ).content.items
+
     /** The official ratings of the server's movies and shows, the most used first, for a channel's rating filter. */
     suspend fun videoRatings(): List<String> = allItems(
         GetItemsRequest(
