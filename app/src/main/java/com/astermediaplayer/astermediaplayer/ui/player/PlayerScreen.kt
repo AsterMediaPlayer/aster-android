@@ -39,6 +39,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Audiotrack
 import androidx.compose.material.icons.filled.Bookmarks
 import androidx.compose.material.icons.filled.HighQuality
 import androidx.compose.material.icons.filled.Subtitles
@@ -92,6 +93,7 @@ fun PlayerScreen(
     val isTv = LocalIsTv.current
     var qualityMenu by remember { mutableStateOf(false) }
     var chapterMenu by remember { mutableStateOf(false) }
+    var audioMenu by remember { mutableStateOf(false) }
     var subtitleMenu by remember { mutableStateOf(false) }
     var speedMenu by remember { mutableStateOf(false) }
     var playerView by remember { mutableStateOf<PlayerView?>(null) }
@@ -264,6 +266,17 @@ fun PlayerScreen(
                                 DropdownMenuItem(
                                     text = { Text((if (speed == state.speed) "✓ " else "") + speedTitle(speed)) },
                                     onClick = { speedMenu = false; viewModel.setSpeed(speed); reveal() },
+                                )
+                            }
+                        }
+                    }
+                    if (state.audio.size > 1) Box {
+                        BarIcon(Icons.Default.Audiotrack, "Audio") { audioMenu = true }
+                        DropdownMenu(expanded = audioMenu, onDismissRequest = { audioMenu = false }) {
+                            state.audio.forEach { choice ->
+                                DropdownMenuItem(
+                                    text = { Text(if (choice.selected) "✓ ${choice.label}" else choice.label) },
+                                    onClick = { audioMenu = false; viewModel.selectAudio(choice); reveal() },
                                 )
                             }
                         }

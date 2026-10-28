@@ -64,7 +64,7 @@ import kotlin.math.max
 
 private enum class TvMode { Hidden, Transport, Panel, Channels }
 
-private enum class PanelTab(val title: String) { Chapters("Chapters"), Subtitles("Subtitles"), Quality("Quality"), Speed("Speed") }
+private enum class PanelTab(val title: String) { Chapters("Chapters"), Audio("Audio"), Subtitles("Subtitles"), Quality("Quality"), Speed("Speed") }
 
 private class TvOption(val title: String, val checked: Boolean, val onPick: () -> Unit)
 
@@ -72,7 +72,7 @@ private class TvOption(val title: String, val checked: Boolean, val onPick: () -
  * The player's controls on a TV, worked like the Apple TV app's (`AetherTVControls`) and the system player's:
  * - OK (or Play/Pause) pauses and plays; the timeline shows while paused and for 5 seconds after any press.
  * - Left and right jump 10 seconds. Up shows the timeline.
- * - Down opens the panel: Chapters, Subtitles, Quality and Speed, with the choices under them. It closes on Back, or after
+ * - Down opens the panel: Chapters, Audio, Subtitles, Quality and Speed, with the choices under them. It closes on Back, or after
  *   8 seconds left alone.
  * - Skip Intro / Skip Credits / Play Next Episode show lower right while one applies, and OK takes it.
  * - Back steps out one level at a time: the panel, the controls, then the player.
@@ -114,6 +114,7 @@ fun TvPlayerControls(
 
     val tabs = buildList {
         if (!state.live && state.chapters.size > 1) add(PanelTab.Chapters)
+        if (state.audio.size > 1) add(PanelTab.Audio)
         if (state.subtitles.size > 1) add(PanelTab.Subtitles)
         add(PanelTab.Quality)
         if (!state.live) add(PanelTab.Speed)
@@ -289,6 +290,7 @@ private fun panelOptions(tab: PanelTab, state: PlayerUiState, viewModel: PlayerV
     PanelTab.Chapters -> state.chapters.mapIndexed { index, chapter ->
         TvOption(chapter.name, index == state.chapterIndex) { viewModel.seekToChapter(chapter); onSeeked() }
     }
+    PanelTab.Audio -> state.audio.map { choice -> TvOption(choice.label, choice.selected) { viewModel.selectAudio(choice); onChosen() } }
     PanelTab.Subtitles -> state.subtitles.map { choice -> TvOption(choice.label, choice.selected) { viewModel.select(choice); onChosen() } }
     PanelTab.Quality -> Qualities.map { q -> TvOption(q.label, q == state.quality) { viewModel.setQuality(q); onChosen() } }
     PanelTab.Speed -> PlaybackSpeeds.map { s -> TvOption(speedTitle(s), s == state.speed) { viewModel.setSpeed(s); onChosen() } }
