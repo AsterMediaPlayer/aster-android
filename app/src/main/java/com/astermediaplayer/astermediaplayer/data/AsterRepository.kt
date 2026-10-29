@@ -18,6 +18,7 @@ import com.astermediaplayer.astermediaplayer.data.plex.PlexResource
 import org.jellyfin.sdk.api.client.extensions.artistApi
 import org.jellyfin.sdk.api.client.extensions.audioApi
 import org.jellyfin.sdk.api.client.extensions.instantMixApi
+import org.jellyfin.sdk.api.client.extensions.localizationApi
 import org.jellyfin.sdk.api.client.extensions.lyricApi
 import org.jellyfin.sdk.api.client.extensions.playlistApi
 import org.jellyfin.sdk.api.client.extensions.authenticationApi
@@ -448,6 +449,14 @@ class AsterRepository(context: Context, private val store: SessionStore) {
     /** Whether this account is the server's administrator, who alone can change the tags that make a playlist a channel. */
     suspend fun isAdministrator(): Boolean =
         runCatching { api.userApi.getCurrentUser().content.policy?.isAdministrator == true }.getOrDefault(false)
+
+    /** The parental controls on this account, read fresh so an administrator's change counts on the next visit. */
+    suspend fun contentPolicy(): com.astermediaplayer.astermediaplayer.data.channels.ContentPolicy? =
+        api.userApi.getCurrentUser().content.policy?.let { com.astermediaplayer.astermediaplayer.data.channels.ContentPolicy.from(it) }
+
+    /** The ratings the server knows and how they rank. */
+    suspend fun parentalRatings(): List<com.astermediaplayer.astermediaplayer.data.channels.RatingRank> =
+        api.localizationApi.getParentalRatings().content.map { com.astermediaplayer.astermediaplayer.data.channels.RatingRank.from(it) }
 
     /** The user's settings on the server (Jellyfin's or Emby's), as it sent them; null on Plex, which has none. */
     suspend fun userConfiguration(): org.json.JSONObject? {
