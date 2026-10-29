@@ -184,6 +184,8 @@ class ChannelsModel(private val repo: AsterRepository) {
     suspend fun load(userName: String? = null, force: Boolean = false) {
         _error.value = null
         try {
+            // Read each time, so an administrator's change counts on the next visit.
+            val policy = repo.contentPolicy()
             val playlists = repo.videoPlaylists()
             val tagged = taggedChannels(playlists).filter { userName == null || it.tags.isShown(userName) }
             val numbers = ChannelTags.numbers(tagged.map { Triple(it.playlist.id.plain(), it.tags.name ?: it.playlist.name.orEmpty(), it.tags.number) })
@@ -196,8 +198,12 @@ class ChannelsModel(private val repo: AsterRepository) {
             }.toMap()
             for (p in stale) fetched[p.id]?.let { itemCache[p.id] = p.childCount to it }
             loadSources(tagged, force)
+            // The ratings' ranks, only needed to clear a restricted user's genre, network or collection channel.
+            val ratings = if (policy?.restrictsContent == true && tagged.any { it.tags.hasSources && it.tags.ratings.isNotEmpty() }) repo.parentalRatings() else emptyList()
 
             val built = tagged.mapNotNull { entry ->
+                // A channel with anything on it the user's parental controls hold back is left out altogether.
+                if (policy != null && ChannelRestriction.isHeldBack(entry.playlist.childCount, itemCache[entry.playlist.id]?.second?.size, entry.tags, policy, ratings)) return@mapNotNull null
                 val own = itemCache[entry.playlist.id]?.second.orEmpty()
                 val fromSources = if (entry.tags.hasSources) sourceCache[entry.playlist.id]?.items.orEmpty() else emptyList()
                 val items = merged(own, fromSources).filter { it.type == BaseItemKind.MOVIE || it.type == BaseItemKind.EPISODE }.map { it.toChannelItem() }
