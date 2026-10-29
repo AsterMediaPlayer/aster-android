@@ -30,6 +30,14 @@ class PlexPlaybackTest {
         assertEquals(12_809_700_000L, found[1].second.first)
     }
 
+    /** The Apple apps' case: Beastars names its whole first half "Intro", too long to be an opening. */
+    @Test fun aHalfNamedIntroIsNoOpening() {
+        val found = segments("""{"duration":1397800,"Chapter":[
+            {"tag":"Intro","startTimeOffset":33,"endTimeOffset":646950},{"tag":"Part B","startTimeOffset":646950,"endTimeOffset":1279920},
+            {"tag":"ED","startTimeOffset":1279920,"endTimeOffset":1397800}]}""")
+        assertEquals(listOf("Outro"), found.map { it.first })
+    }
+
     @Test fun plainChaptersGiveNothing() {
         assertTrue(segments("""{"duration":60000,"Chapter":[{"tag":"Chapter 1","startTimeOffset":0,"endTimeOffset":60000}]}""").isEmpty())
     }

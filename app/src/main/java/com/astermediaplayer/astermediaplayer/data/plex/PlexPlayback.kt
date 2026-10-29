@@ -10,6 +10,9 @@ import org.json.JSONObject
 
 /** Playing from Plex: whether the file plays as it is, the transcoder's settings when it doesn't, and what skip markers and subtitle files say. */
 object PlexPlayback {
+    /** The longest a chapter can be and still be taken for an opening or ending, as on the Apple apps. */
+    private const val LONGEST_THEME_MS = 4 * 60 * 1000L
+
     /** Plex's codec names as the device profile writes them. */
     private fun codecName(plex: String?): String = when (val c = (plex ?: "").lowercase()) {
         "dca", "dts-hd", "dca-ma" -> "dts"
@@ -147,10 +150,13 @@ object PlexPlayback {
                 "ending", "ed", "credits", "end credits", "outro" -> "Outro"
                 else -> return@forEachIndexed
             }
-            if (!types.add(type)) return@forEachIndexed
+            if (type in types) return@forEachIndexed
             val start = chapter.optLong("startTimeOffset")
             val end = chapter.longOrNull("endTimeOffset") ?: chapters.getOrNull(i + 1)?.optLong("startTimeOffset") ?: duration
-            if (end != null && end > start) found += segment(type, start, end)
+            // Some files name their whole first half "Intro": too long to be an opening, so no Skip Intro jumps ten minutes.
+            if (end == null || end <= start || end - start > LONGEST_THEME_MS) return@forEachIndexed
+            types += type
+            found += segment(type, start, end)
         }
         return found
     }
