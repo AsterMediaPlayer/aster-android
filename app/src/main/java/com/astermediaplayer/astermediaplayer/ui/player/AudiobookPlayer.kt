@@ -11,7 +11,6 @@ import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
-import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import com.astermediaplayer.astermediaplayer.data.Audiobook
@@ -109,7 +108,7 @@ class AudiobookPlayer(private val context: Context, private val repo: AsterRepos
     private val listenAhead: ListenAhead? by lazy {
         if (com.astermediaplayer.astermediaplayer.ui.theme.isTelevision(context)) null
         else ListenAhead(context) {
-            DefaultHttpDataSource.Factory().setDefaultRequestProperties(repo.session?.accessToken?.let { mapOf("X-Emby-Token" to it) }.orEmpty()).createDataSource()
+            com.astermediaplayer.astermediaplayer.data.signedInMedia(repo.session?.accessToken).createDataSource()
         }
     }
 

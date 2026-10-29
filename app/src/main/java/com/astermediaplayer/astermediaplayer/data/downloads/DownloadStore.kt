@@ -8,7 +8,6 @@ import androidx.media3.common.MimeTypes
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.database.StandaloneDatabaseProvider
 import androidx.media3.datasource.DataSource
-import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.datasource.cache.NoOpCacheEvictor
 import androidx.media3.datasource.cache.SimpleCache
@@ -131,7 +130,7 @@ class DownloadStore(private val context: Context, private val repo: AsterReposit
     val records: StateFlow<List<DownloadRecord>> = _records.asStateFlow()
 
     private val upstream = DataSource.Factory {
-        DefaultHttpDataSource.Factory().setDefaultRequestProperties(repo.accessToken?.let { mapOf("X-Emby-Token" to it) }.orEmpty()).createDataSource()
+        com.astermediaplayer.astermediaplayer.data.signedInMedia(repo.accessToken).createDataSource()
     }
 
     /**

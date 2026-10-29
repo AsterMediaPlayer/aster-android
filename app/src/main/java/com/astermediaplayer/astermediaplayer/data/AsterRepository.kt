@@ -81,6 +81,10 @@ class AsterRepository(context: Context, private val store: SessionStore) {
     private val jellyfin: Jellyfin = createJellyfin {
         this.context = context.applicationContext
         clientInfo = ClientInfo(name = "Aster", version = "0.1")
+        // The sign-in goes along a redirect only within the server it was sent to (see CredentialSafeRedirects).
+        val signedIn = org.jellyfin.sdk.api.okhttp.OkHttpFactory(OkHttpClient.Builder().credentialSafeRedirects().build())
+        apiClientFactory = signedIn
+        socketConnectionFactory = signedIn
     }
 
     private var client: ApiClient? = null
@@ -923,7 +927,7 @@ class AsterRepository(context: Context, private val store: SessionStore) {
 
     // MARK: OP/ED plugin
 
-    private val http = OkHttpClient()
+    private val http = OkHttpClient.Builder().credentialSafeRedirects().build()
 
     /** The `MediaBrowser` header the server's own API clients send; plugin endpoints reject a bare token. */
     private fun authorizationHeader(): String {

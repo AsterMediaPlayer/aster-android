@@ -19,6 +19,7 @@ import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
+import com.astermediaplayer.astermediaplayer.data.credentialSafeRedirects
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.jellyfin.sdk.api.client.ApiClient
@@ -78,7 +79,7 @@ class OkHttpPlexTransport(override val baseUrl: String, override val token: Stri
         }
     }
 
-    companion object { val DEFAULT: OkHttpClient = OkHttpClient.Builder().connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS).readTimeout(30, java.util.concurrent.TimeUnit.SECONDS).build() }
+    companion object { val DEFAULT: OkHttpClient = OkHttpClient.Builder().connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS).readTimeout(30, java.util.concurrent.TimeUnit.SECONDS).credentialSafeRedirects().build() }
 }
 
 /**

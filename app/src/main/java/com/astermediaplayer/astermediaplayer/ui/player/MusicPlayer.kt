@@ -10,7 +10,6 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
-import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import com.astermediaplayer.astermediaplayer.data.AsterRepository
@@ -92,7 +91,7 @@ class MusicPlayer(private val context: Context, private val repo: AsterRepositor
     private fun ensurePlayer(): ExoPlayer = player ?: ExoPlayer.Builder(context)
         .setMediaSourceFactory(
             DefaultMediaSourceFactory(
-                DefaultHttpDataSource.Factory().setDefaultRequestProperties(mapOf("X-Emby-Token" to checkNotNull(repo.session).accessToken)),
+                com.astermediaplayer.astermediaplayer.data.signedInMedia(checkNotNull(repo.session).accessToken),
             ),
         )
         .setAudioAttributes(AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MUSIC).build(), true)

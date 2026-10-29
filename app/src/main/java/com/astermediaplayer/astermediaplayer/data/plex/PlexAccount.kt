@@ -8,6 +8,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
+import com.astermediaplayer.astermediaplayer.data.credentialSafeRedirects
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
@@ -125,7 +126,7 @@ class PlexAccount(private val device: PlexDevice, private val http: OkHttpClient
     private fun pin(o: JSONObject) = parsePin(o)
 
     companion object {
-        val DEFAULT_HTTP: OkHttpClient = OkHttpClient.Builder().connectTimeout(20, TimeUnit.SECONDS).readTimeout(20, TimeUnit.SECONDS).build()
+        val DEFAULT_HTTP: OkHttpClient = OkHttpClient.Builder().connectTimeout(20, TimeUnit.SECONDS).readTimeout(20, TimeUnit.SECONDS).credentialSafeRedirects().build()
 
         /** A link code's reply: until the code is entered its `authToken` is a JSON null, which `optString` would read as the text "null". */
         fun parsePin(o: JSONObject) = PlexPin(o.getLong("id"), o.getString("code"), o.str("authToken"), if (o.has("expiresIn") && !o.isNull("expiresIn")) o.getInt("expiresIn") else null)
