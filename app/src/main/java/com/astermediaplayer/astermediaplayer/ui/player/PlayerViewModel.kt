@@ -10,7 +10,6 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
-import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
@@ -177,9 +176,7 @@ class PlayerViewModel(
         // The server starts its encoder on the first request for a stream, and again after a long seek, so the first
         // segment can take longer than the 8 seconds a data source allows by default; timing out only sent the request
         // round again (a retry), and the viewer waited for each lap.
-        DefaultHttpDataSource.Factory()
-            .setConnectTimeoutMs(HTTP_TIMEOUT_MS).setReadTimeoutMs(HTTP_TIMEOUT_MS)
-            .setDefaultRequestProperties(mapOf("X-Emby-Token" to repo.session!!.accessToken)),
+        com.astermediaplayer.astermediaplayer.data.signedInMedia(repo.session!!.accessToken, HTTP_TIMEOUT_MS.toLong()),
         DefaultExtractorsFactory().let { if (assHandler != null) it.withAssMkvSupport(assParserFactory!!, assHandler) else it },
     ).also { if (assParserFactory != null) it.setSubtitleParserFactory(assParserFactory) }
 
