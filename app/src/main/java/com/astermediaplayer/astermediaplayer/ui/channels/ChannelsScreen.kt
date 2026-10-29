@@ -83,7 +83,7 @@ fun ChannelsScreen(onTune: (String) -> Unit, onOpen: (BaseItemDto) -> Unit, modi
     // The guide's group the filter shows; null for all of them.
     var group by remember { mutableStateOf<String?>(null) }
     // Only the administrator can change channels: for them Select on a TV guide's channel opens its settings (as on the Apple TV).
-    val admin by produceState(false) { value = app.repository.isAdministrator() }
+    val admin by produceState(false) { value = app.repository.canEditChannels() }
     // The Apple TV's guide keeps its own margin of 160 points.
     val inset = if (tv) 80.dp * u else 0.dp
     Column(modifier.fillMaxSize().then(if (tv) Modifier else Modifier.statusBarsPadding().padding(top = 8.dp + topInset))) {

@@ -34,6 +34,39 @@ object ChannelTagParsing {
     /** What the tags began with when the app was called AsterFIN; still read, and rewritten with [converted]. */
     const val OLD_PREFIX = "asterfin:"
 
+    /** "aster:" (or "asterfin:") starting a line, or after a space or comma. */
+    private val entryStart = Regex("""(?<![^\s,])aster(?:fin)?:""", RegexOption.IGNORE_CASE)
+    /** A comma before the next "aster:". */
+    private val entryBreak = Regex(""",\s*(?=aster(?:fin)?:)""", RegexOption.IGNORE_CASE)
+
+    /**
+     * The tags kept in a description, where a server has no tags on playlists (Plex): "aster:channel, aster:number=7" as two tags.
+     * Only a comma before the next "aster:" parts them, so a comma inside a value ("aster:user=alice,bob", a name) stays in it.
+     * Text before a line's first one is the description's own, and left out. As the Windows app's `ChannelTags.FromDescription`.
+     */
+    fun fromDescription(text: String?): List<String> {
+        if (text.isNullOrBlank()) return emptyList()
+        return text.split('\n').flatMap { line ->
+            val start = entryStart.find(line) ?: return@flatMap emptyList()
+            line.substring(start.range.first).split(entryBreak).map { it.trim() }.filter { it.isNotEmpty() }
+        }
+    }
+
+    /** [description] with its tags replaced by [tags], on a line of their own after the description's own words, which are kept. */
+    fun inDescription(description: String?, tags: List<String>): String {
+        val own = mutableListOf<String>()
+        for (line in (description ?: "").replace("\r", "").split('\n')) {
+            // A line's words before its tags stay; the tags go.
+            val start = entryStart.find(line)
+            val kept = if (start != null) line.substring(0, start.range.first).trimEnd(' ', ',') else line
+            if (kept.isNotEmpty() || start == null) own += kept
+        }
+        while (own.isNotEmpty() && own.last().isBlank()) own.removeAt(own.lastIndex)
+        val entries = tags.map { it.trim() }.filter { it.isNotEmpty() }.joinToString(", ")
+        if (entries.isEmpty()) return own.joinToString("\n")
+        return if (own.isEmpty()) entries else own.joinToString("\n") + "\n\n" + entries
+    }
+
     private fun String.trimWs(): String = trim { it == ' ' || it == '\t' || Character.isSpaceChar(it) }
 
     /** "aster:Number=101" (or "asterfin:Number=101") → ("number", "101"); null for a tag that isn't Aster's. */

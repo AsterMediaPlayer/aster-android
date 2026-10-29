@@ -93,7 +93,7 @@ class ChannelSettingsViewModel(private val app: AsterApp) : ViewModel() {
     fun load() {
         viewModelScope.launch {
             try {
-                val admin = app.repository.isAdministrator()
+                val admin = app.repository.canEditChannels()
                 val playlists = app.repository.videoPlaylists()
                 _state.update { it.copy(playlists = playlists, admin = admin, loaded = true, error = null) }
                 loadChoices()
@@ -453,7 +453,9 @@ enum class NewChannelSource(val title: String) {
 @Composable
 private fun NewChannel(state: ChannelSettingsViewModel.State, viewModel: ChannelSettingsViewModel) {
     TvGroup("New Channel")
-    NewChannelSource.entries.forEach { source ->
+    // Genres, networks and collections as a channel's titles are Jellyfin's and Emby's; on Plex a channel is made from a show.
+    val sources = if (androidx.compose.ui.platform.LocalContext.current.let { (it.applicationContext as com.astermediaplayer.astermediaplayer.AsterApp).repository.serverKind } == com.astermediaplayer.astermediaplayer.data.emby.ServerKind.Plex) listOf(NewChannelSource.Show) else NewChannelSource.entries
+    sources.forEach { source ->
         val names = when (source) {
             NewChannelSource.Show -> state.series.map { it.second }
             NewChannelSource.Genre -> state.genres
