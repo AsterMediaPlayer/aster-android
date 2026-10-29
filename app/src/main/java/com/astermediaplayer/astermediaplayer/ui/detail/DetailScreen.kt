@@ -198,32 +198,40 @@ class DetailViewModel(private val repo: AsterRepository, private val itemId: UUI
     fun load() {
         viewModelScope.launch {
             _state.value = Load.Loading
-            var unnamed: List<OpeningEnding> = emptyList()
-            _state.value = try {
-                coroutineScope {
-                    val ready = loadContent()
-                    val content = ready.value
-                    val anime = isAnime(content.item)
-                    val list = if (content.item.type == BaseItemKind.SERIES && anime) seriesThemes(content.item) else emptyList()
-                    val withList = content.copy(openingsEndings = list)
-                    val (opening, ending) = watchThemes(withList, anime)
-                    unnamed = list.filterIsInstance<OpeningEnding.Chapter>()
-                    Load.Ready(withList.copy(watchOpening = opening, watchEnding = ending))
-                }
+            val ready = try {
+                loadContent()
             } catch (e: Exception) {
-                Load.Failed(e.userMessage())
+                _state.value = Load.Failed(e.userMessage())
+                return@launch
             }
-            // The songs' names come from AnimeThemes, a few seconds a season: the page is up first and they fill in.
-            if (unnamed.isNotEmpty()) viewModelScope.launch { nameSongs(unnamed) }
+            _state.value = ready
+            // What the page's other tabs and buttons wait on comes after it's up, each as it arrives.
+            val item = ready.value.item
+            launch { val similar = runCatching { repo.similar(itemId) }.getOrDefault(emptyList()); update { it.copy(similar = similar) } }
+            if (item.type in setOf(BaseItemKind.MOVIE, BaseItemKind.SERIES, BaseItemKind.SEASON)) {
+                launch { val extras = repo.specialFeatures(itemId); update { it.copy(extras = extras) } }
+            }
+            launch { loadThemes(item) }
         }
+    }
+
+    /** [change] applied to the page as it is now, so a season picked in the meantime stays picked. */
+    private fun update(change: (DetailContent) -> DetailContent) =
+        _state.update { s -> (s as? Load.Ready)?.let { Load.Ready(change(it.value)) } ?: s }
+
+    /** Anime's openings and endings, and what the Watch OP and Watch ED buttons play; then the songs' names, a few seconds a season. */
+    private suspend fun loadThemes(item: BaseItemDto) {
+        val anime = isAnime(item)
+        val list = if (item.type == BaseItemKind.SERIES && anime) seriesThemes(item) else emptyList()
+        val current = (_state.value as? Load.Ready)?.value ?: return
+        val (opening, ending) = watchThemes(current.copy(openingsEndings = list), anime)
+        update { it.copy(openingsEndings = list, watchOpening = opening, watchEnding = ending) }
+        val unnamed = list.filterIsInstance<OpeningEnding.Chapter>()
+        if (unnamed.isNotEmpty()) nameSongs(unnamed)
     }
 
     private suspend fun loadContent(): Load.Ready<DetailContent> = coroutineScope {
         val item = repo.item(itemId)
-        val similar = async { runCatching { repo.similar(itemId) }.getOrDefault(emptyList()) }
-        val extras = async {
-            if (item.type in setOf(BaseItemKind.MOVIE, BaseItemKind.SERIES, BaseItemKind.SEASON)) repo.specialFeatures(itemId) else emptyList()
-        }
         val content = when (item.type) {
             BaseItemKind.SERIES -> {
                 val seasons = repo.seasons(itemId)
@@ -248,7 +256,7 @@ class DetailViewModel(private val repo: AsterRepository, private val itemId: UUI
             }
             else -> DetailContent(item, playTarget = item)
         }
-        Load.Ready(content.copy(similar = similar.await(), extras = extras.await(), discMenuId = discMenuFor(item, content.selectedSeason)))
+        Load.Ready(content.copy(discMenuId = discMenuFor(item, content.selectedSeason)))
     }
 
     /**
