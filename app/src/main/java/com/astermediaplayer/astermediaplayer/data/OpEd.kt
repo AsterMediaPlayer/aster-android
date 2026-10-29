@@ -136,9 +136,17 @@ data class ThemeClip(
     val episode: BaseItemDto,
     val startMs: Long,
     val endMs: Long,
+    /** The song, from AnimeThemes, when it knows which plays in this episode (servers without the OP/ED plugin). */
+    val song: KnownTheme? = null,
 ) {
     val title: String
         get() = (if (number > 1) "Season $season " else "Season $season ") + (if (opening) "Opening" else "Ending") + if (number > 1) " $number" else ""
+
+    /** What its card is called: the song, else which opening it is. */
+    val songTitle: String get() = song?.songTitle ?: title
+
+    /** Who performs the song, when known. */
+    val artists: String? get() = song?.artists?.takeIf { it.isNotEmpty() }?.joinToString(", ")
 
     val seconds: Int get() = ((endMs - startMs) / 1000).toInt()
 }
@@ -169,6 +177,13 @@ object OpeningsEndings {
     private const val TICKS_PER_MS = 10_000L
 
     private class Mark(val opening: Boolean, val definite: Boolean)
+
+    /**
+     * The AnimeThemes theme a clip is, when one's known: of the same kind, playing in the clip's episode, and of those the one in
+     * the fewest episodes (a season's own over one listed for the whole show).
+     */
+    fun song(clip: ThemeClip, known: List<KnownTheme>): KnownTheme? =
+        known.filter { it.isOpening == clip.opening && it.plays(clip.episode.indexNumber) }.minByOrNull { it.episodeCount }
 
     /** Episodes must be in airing order, as `/Shows/{id}/Episodes` returns them. Specials (season 0) are skipped. */
     fun find(episodes: List<BaseItemDto>): List<ThemeClip> {

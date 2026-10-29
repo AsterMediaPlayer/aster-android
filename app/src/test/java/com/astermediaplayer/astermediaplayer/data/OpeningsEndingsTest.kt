@@ -25,4 +25,24 @@ class OpeningsEndingsTest {
         val clips = OpeningsEndings.find(listOf(episode("Prologue" to 0, "OP" to 90, "Part A" to 180, "ED" to 1300, "Preview" to 1390)))
         assertEquals(listOf(true, false), clips.map { it.opening })
     }
+
+    /** A clip gets its song: Beastars on AnimeThemes has one opening for the whole season and endings that take turns by episode. */
+    @Test fun aClipGetsTheSongOfItsEpisode() {
+        val known = listOf(
+            KnownTheme(isOpening = true, sequence = 1, songTitle = "Wild Side", artists = listOf("ALI"), episodes = null),
+            KnownTheme(isOpening = false, sequence = 1, songTitle = "Le zoo", artists = listOf("YOASOBI"), episodes = "2, 5, 8-9"),
+            KnownTheme(isOpening = false, sequence = 2, songTitle = "Nemureru Honoo", artists = emptyList(), episodes = "3, 7, 10"),
+        )
+        fun clip(opening: Boolean, number: Int) = ThemeClip(opening, 1, 1, BaseItemDto(id = UUID.randomUUID(), type = BaseItemKind.EPISODE, indexNumber = number), 0, 90_000)
+        assertEquals("Wild Side", OpeningsEndings.song(clip(true, 4), known)?.songTitle)
+        assertEquals("Le zoo", OpeningsEndings.song(clip(false, 2), known)?.songTitle)
+        assertEquals("Nemureru Honoo", OpeningsEndings.song(clip(false, 3), known)?.songTitle)
+        // An ending AnimeThemes doesn't place in that episode: no song, rather than a wrong one.
+        assertEquals(null, OpeningsEndings.song(clip(false, 1), known))
+        // The card names the song and who sings it.
+        val named = clip(false, 2).let { it.copy(song = OpeningsEndings.song(it, known)) }
+        assertEquals("Le zoo", named.songTitle)
+        assertEquals("YOASOBI", named.artists)
+        assertEquals("Le zoo", ThemeInfo.of(named, "Beastars").title)
+    }
 }

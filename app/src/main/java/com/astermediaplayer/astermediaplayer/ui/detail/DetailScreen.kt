@@ -270,7 +270,11 @@ class DetailViewModel(private val repo: AsterRepository, private val itemId: UUI
     private suspend fun seriesThemes(series: BaseItemDto): List<OpeningEnding> {
         val themes = repo.opEdThemes(series.id).orEmpty().filter { it.playablePath != null || it.isPreparing }
         if (themes.isNotEmpty()) return themes.map { OpeningEnding.Theme(it) }
-        return repo.chapterThemes(series.id).map { OpeningEnding.Chapter(it) }
+        val clips = repo.chapterThemes(series.id)
+        // Their songs, from AnimeThemes, asked once a season (as it lists each season apart).
+        val known = mutableMapOf<Int, List<com.astermediaplayer.astermediaplayer.data.KnownTheme>>()
+        for (clip in clips) if (clip.season !in known) known[clip.season] = runCatching { repo.knownThemes(clip.episode) }.getOrDefault(emptyList())
+        return clips.map { OpeningEnding.Chapter(it.copy(song = OpeningsEndings.song(it, known[it.season].orEmpty()))) }
     }
 
     /** The first opening (or ending) that plays, video before audio. */

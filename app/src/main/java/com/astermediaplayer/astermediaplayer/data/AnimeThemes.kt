@@ -27,6 +27,19 @@ data class KnownTheme(
         return ranges(episodes).any { number in it }
     }
 
+    /** How many episodes it plays in; unknown, as good as all of them, so a theme listed for a few episodes comes before one for the whole show. */
+    val episodeCount: Int
+        get() {
+            if (episodes.isNullOrBlank()) return Int.MAX_VALUE
+            var total = 0
+            for (range in ranges(episodes)) {
+                // "8-": every episode from the eighth on.
+                if (range.last == Int.MAX_VALUE) return Int.MAX_VALUE
+                total += range.count()
+            }
+            return total
+        }
+
     companion object {
         /** "1-6, 8-" as 1..6 and 8..Int.MAX_VALUE; "7" as 7..7. */
         fun ranges(text: String): List<IntRange> = text.split(",").mapNotNull { part ->

@@ -144,7 +144,7 @@ private fun titles(entry: OpeningEnding): Pair<String, String?> = when (entry) {
         val t = entry.theme
         ((t.songTitle ?: t.code) + (t.cut.label?.let { " ($it)" } ?: "")) to t.artists.joinToString(", ").ifEmpty { null }
     }
-    is OpeningEnding.Chapter -> entry.clip.title to episodeCode(entry)?.let { "From $it" }
+    is OpeningEnding.Chapter -> entry.clip.songTitle to (entry.clip.artists ?: episodeCode(entry)?.let { "From $it" })
 }
 
 private fun episodeCode(entry: OpeningEnding.Chapter): String? {

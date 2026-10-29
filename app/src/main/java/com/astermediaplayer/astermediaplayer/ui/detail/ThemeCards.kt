@@ -186,7 +186,8 @@ fun ThemeClipCard(clip: ThemeClip, artwork: String?, isPlaying: Boolean, focusRe
             Box(Modifier.align(Alignment.BottomEnd)) { Pill(time(clip.seconds)) }
         }
         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(clip.title, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(clip.songTitle, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            clip.artists?.let { Text(it, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis) }
             from?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = SecondaryText, maxLines = 1, overflow = TextOverflow.Ellipsis) }
         }
     }
