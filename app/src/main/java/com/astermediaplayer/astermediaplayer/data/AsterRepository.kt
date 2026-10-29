@@ -607,6 +607,16 @@ class AsterRepository(context: Context, private val store: SessionStore) {
             .thenBy { it.name.orEmpty() },
     )
 
+    /** The programme on [channelId] now, for the paused player. */
+    suspend fun airingNow(channelId: UUID): BaseItemDto? = runCatching {
+        api.liveTvApi.getLiveTvPrograms(
+            org.jellyfin.sdk.model.api.request.GetLiveTvProgramsRequest(
+                userId = userId, channelIds = listOf(channelId), isAiring = true, limit = 1,
+                fields = listOf(ItemFields.OVERVIEW),
+            ),
+        ).content.items.firstOrNull()
+    }.getOrNull()
+
     /** What's on now across channels, optionally just one kind of programme. */
     suspend fun recommendedPrograms(
         limit: Int = 24, movie: Boolean? = null, sports: Boolean? = null, kids: Boolean? = null, news: Boolean? = null,

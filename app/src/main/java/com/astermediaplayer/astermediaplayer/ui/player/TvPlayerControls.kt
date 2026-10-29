@@ -217,6 +217,12 @@ fun TvPlayerControls(
             .focusable(mode != TvMode.Panel),
     ) {
         val paused = !clock.playing
+        // Paused with the controls up: the logo and the details panel, as on the Apple TV. Asked afresh each pause (a channel's
+        // programme moves on).
+        val pauseShown = paused && mode == TvMode.Transport && !state.loading
+        var pauseInfo by remember { mutableStateOf<com.astermediaplayer.astermediaplayer.data.PauseInfo?>(null) }
+        LaunchedEffect(pauseShown) { pauseInfo = if (pauseShown) viewModel.pauseInfo() else null }
+        val pausePanel = pauseInfo?.takeIf { pauseShown }
         if (mode == TvMode.Channels) flick?.let { TvChannelFlick(it) }
         // Darkens the foot of the picture so white text reads over it, further up in the panel.
         val shade by animateFloatAsState(if (mode == TvMode.Hidden || mode == TvMode.Channels) 0f else 1f, label = "tvShade")
@@ -227,6 +233,13 @@ fun TvPlayerControls(
                     Brush.verticalGradient(start to Color.Transparent, 1f to Color.Black.copy(alpha = if (mode == TvMode.Panel || paused) 0.9f else 0.65f)),
                 ),
             )
+        }
+        AnimatedVisibility(pausePanel != null, Modifier.fillMaxSize(), enter = fadeIn(), exit = fadeOut()) {
+            // And the top, behind the logo.
+            Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0f to Color.Black.copy(alpha = 0.55f), 0.35f to Color.Transparent)))
+        }
+        AnimatedVisibility(pausePanel != null, Modifier.align(Alignment.TopStart).padding(horizontal = 48.dp, vertical = 32.dp), enter = fadeIn(), exit = fadeOut()) {
+            pauseInfo?.let { TvPauseLogo(it) }
         }
         AnimatedVisibility(mode != TvMode.Hidden && mode != TvMode.Channels, Modifier.align(Alignment.BottomStart), enter = fadeIn(), exit = fadeOut()) {
             Column(Modifier.fillMaxWidth().padding(horizontal = 48.dp, vertical = 32.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -255,7 +268,8 @@ fun TvPlayerControls(
                         items(options) { option -> TvPill(option.title, checked = option.checked, onFocus = { activity++ }, onClick = option.onPick) }
                     }
                 } else {
-                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    if (pausePanel != null) TvPausePanel(pausePanel, streamBadges(exo, hasSubtitles = state.subtitles.size > 1))
+                    else                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         state.subtitle?.let { Text(it, style = Type.callout, color = Color.White.copy(alpha = 0.75f), maxLines = 1) }
                         Text(state.title, style = Type.title3.copy(fontSize = 24.sp, lineHeight = 30.sp, fontWeight = FontWeight.Bold), color = Color.White, maxLines = 1)
                     }
