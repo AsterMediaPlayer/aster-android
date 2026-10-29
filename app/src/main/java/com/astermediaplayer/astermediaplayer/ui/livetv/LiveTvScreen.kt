@@ -64,8 +64,22 @@ private enum class LiveSection(val label: String) { OnNow("On Now"), Guide("Guid
 
 /** Live TV: what's on now, the channel list and recordings. */
 @Composable
-fun LiveTvScreen(onPlay: (UUID) -> Unit, onProgram: (BaseItemDto) -> Unit, onSeriesRule: (String) -> Unit, modifier: Modifier = Modifier, topInset: Dp = 0.dp) {
+fun LiveTvScreen(
+    onPlay: (UUID) -> Unit, onProgram: (BaseItemDto) -> Unit, onSeriesRule: (String) -> Unit, modifier: Modifier = Modifier, topInset: Dp = 0.dp,
+    /** Plays a channel full screen through [LiveMini], so closing it can leave it in the header; [onPlay] for anything else. */
+    onPlayChannel: (UUID) -> Unit = onPlay,
+    /** The mini player's channel, full screen again. */
+    onExpandLive: () -> Unit = {},
+) {
     val app = LocalContext.current.applicationContext as AsterApp
+    val live = app.liveMini
+    // Back on Live TV: the pages it opened over itself are gone, and leaving it from here ends the channel.
+    LaunchedEffect(Unit) { live.away = false }
+    androidx.compose.runtime.DisposableEffect(Unit) { onDispose { if (!live.away) live.stop() } }
+    val miniPlayer = live.player?.takeIf { !live.fullScreen }
+    // Back closes the mini player before it leaves the screen, as on the Apple TV.
+    androidx.activity.compose.BackHandler(enabled = miniPlayer != null && com.astermediaplayer.astermediaplayer.ui.theme.LocalIsTv.current) { live.stop() }
+    fun playChannel(id: UUID) { live.away = true; onPlayChannel(id) }
     val repo = app.repository
     val scope = rememberCoroutineScope()
     var section by rememberSaveable { mutableStateOf(LiveSection.OnNow) }
@@ -107,7 +121,7 @@ fun LiveTvScreen(onPlay: (UUID) -> Unit, onProgram: (BaseItemDto) -> Unit, onSer
         seriesRules = runCatching { repo.seriesTimers() }.getOrDefault(emptyList())
     }
 
-    fun open(program: BaseItemDto) { repo.openedPrograms[program.id.toString()] = program; onProgram(program) }
+    fun open(program: BaseItemDto) { repo.openedPrograms[program.id.toString()] = program; live.away = true; onProgram(program) }
     fun favorite(channelId: UUID) {
         val now = !(channels.firstOrNull { it.id == channelId }?.userData?.isFavorite == true)
         channels = channels.map { if (it.id == channelId) it.copy(userData = it.userData?.copy(isFavorite = now)) else it }
@@ -116,7 +130,10 @@ fun LiveTvScreen(onPlay: (UUID) -> Unit, onProgram: (BaseItemDto) -> Unit, onSer
 
     Column(modifier.fillMaxSize().statusBarsPadding().padding(top = 8.dp + topInset)) {
         Column(Modifier.padding(horizontal = Lockup.screenPadding).padding(bottom = 10.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("Live TV", style = Type.pageTitle.copy(fontSize = 34.sp, lineHeight = 41.sp))
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("Live TV", style = Type.pageTitle.copy(fontSize = 34.sp, lineHeight = 41.sp))
+                miniPlayer?.let { LiveMiniPlayer(it, onExpand = { live.away = true; onExpandLive() }, onClose = { live.stop() }) }
+            }
             Segmented(LiveSection.entries.map { it.label }, section.ordinal) { section = LiveSection.entries[it] }
         }
         when {
@@ -137,7 +154,7 @@ fun LiveTvScreen(onPlay: (UUID) -> Unit, onProgram: (BaseItemDto) -> Unit, onSer
                         }
                     },
                     onProgram = { _, program -> val dto = program.payload as? BaseItemDto; if (dto != null) open(dto) },
-                    onChannel = { onPlay(UUID.fromString(it.id)) },
+                    onChannel = { playChannel(UUID.fromString(it.id)) },
                     onFavorite = { favorite(UUID.fromString(it.id)) },
                     bottomPadding = TabBarClearance,
                 )
@@ -161,7 +178,7 @@ fun LiveTvScreen(onPlay: (UUID) -> Unit, onProgram: (BaseItemDto) -> Unit, onSer
                             if (favorites.isNotEmpty()) Column(verticalArrangement = Arrangement.spacedBy(Lockup.shelfTitleSpacing)) {
                                 Text("Favorite Channels", style = Type.title3, modifier = Modifier.padding(horizontal = Lockup.screenPadding))
                                 LazyRow(contentPadding = PaddingValues(horizontal = Lockup.screenPadding, vertical = Lockup.shelfVerticalPadding), horizontalArrangement = Arrangement.spacedBy(Lockup.shelfSpacing)) {
-                                    items(favorites, key = { it.id }) { channel -> ChannelTile(channel, Modifier.width(Lockup.landscapeWidth), onClick = { onPlay(channel.id) }, onFavorite = { favorite(channel.id) }) }
+                                    items(favorites, key = { it.id }) { channel -> ChannelTile(channel, Modifier.width(Lockup.landscapeWidth), onClick = { playChannel(channel.id) }, onFavorite = { favorite(channel.id) }) }
                                 }
                             }
                         }
@@ -174,7 +191,7 @@ fun LiveTvScreen(onPlay: (UUID) -> Unit, onProgram: (BaseItemDto) -> Unit, onSer
                         val rows = channels.chunked(perRow)
                         items(rows.size) { i ->
                             Row(Modifier.padding(horizontal = Lockup.screenPadding).padding(bottom = if (tv) Lockup.gridRowSpacing else 0.dp), horizontalArrangement = Arrangement.spacedBy(if (tv) Lockup.gridSpacing else Lockup.shelfSpacing)) {
-                                rows[i].forEach { channel -> ChannelTile(channel, if (tv) Modifier.width(tile) else Modifier.weight(1f), onClick = { onPlay(channel.id) }, onFavorite = { favorite(channel.id) }) }
+                                rows[i].forEach { channel -> ChannelTile(channel, if (tv) Modifier.width(tile) else Modifier.weight(1f), onClick = { playChannel(channel.id) }, onFavorite = { favorite(channel.id) }) }
                                 if (!tv && rows[i].size == 1) Spacer(Modifier.weight(1f))
                             }
                         }

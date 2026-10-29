@@ -29,6 +29,8 @@ class AsterApp : Application(), SingletonImageLoader.Factory {
     @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
     val downloads: DownloadStore by lazy { DownloadStore(this, repository, settings) }
     val channels: ChannelsModel by lazy { ChannelsModel(repository) }
+    /** The Live TV channel playing, full screen or in the Live TV header's mini player. */
+    val liveMini: com.astermediaplayer.astermediaplayer.ui.livetv.LiveMini by lazy { com.astermediaplayer.astermediaplayer.ui.livetv.LiveMini(this) }
     /** The video playing, for [com.astermediaplayer.astermediaplayer.ui.player.PlaybackService] to publish as a media session; null with none open. */
     var videoPlayer: androidx.media3.common.Player? = null
     /** A title whose page should start playing once it opens: a banner's Play, so closing the player leaves the viewer on that page. */
@@ -46,6 +48,7 @@ class AsterApp : Application(), SingletonImageLoader.Factory {
         audiobooks.stop()
         themePlayer.hide(evenIfShowing = true)
         channels.reset()
+        liveMini.stop()
         audiobookLibrary.reset()
     }
 
