@@ -82,8 +82,10 @@ class AsterRepository(context: Context, private val store: SessionStore) {
     /** Whether song names may be asked of AnimeThemes (Settings > Title Pages); the app keeps this in step with the setting. */
     @Volatile var songLookups: Boolean = true
 
-    /** What Plex's title pages have found (openings from chapters, their songs), kept between runs. */
-    private val plexThemes = PlexThemeCache(java.io.File(context.applicationContext.filesDir, "plex-themes.json"))
+    /** What title pages have found where the server has no OP/ED plugin (openings from chapters, their songs), kept between runs. */
+    private val songThemes = SongThemeCache(java.io.File(context.applicationContext.filesDir, "song-themes.json"))
+        // The first version of this kept only Plex's, in a file of its own.
+        .also { java.io.File(context.applicationContext.filesDir, "plex-themes.json").delete() }
     private val jellyfin: Jellyfin = createJellyfin {
         this.context = context.applicationContext
         clientInfo = ClientInfo(name = "Aster", version = "0.1")
@@ -1012,20 +1014,21 @@ class AsterRepository(context: Context, private val store: SessionStore) {
         val season = episode.seasonId?.let { runCatching { item(it) }.getOrNull() }
         val aniDb = season?.providerIds?.entries?.firstOrNull { it.key.equals("AniDB", ignoreCase = true) }?.value
         val year = season?.productionYear ?: season?.premiereDate?.year ?: episode.premiereDate?.year ?: episode.productionYear
-        return AnimeThemesLookup.themes(http, aniDb, series, year, plexShowStore())
+        return AnimeThemesLookup.themes(http, aniDb, series, year, showStore())
     }
 
-    /** What AnimeThemes said about each show on Plex, kept between runs; null on any other server. */
-    private fun plexShowStore(): ShowStore? = session?.serverUrl?.takeIf { serverKind == ServerKind.Plex }?.let { server ->
+    /** What AnimeThemes said about each show, kept between runs for this server. */
+    private fun showStore(): ShowStore? = session?.serverUrl?.let { server ->
         object : ShowStore {
-            override suspend fun candidates(name: String) = plexThemes.shows(server, name)
-            override suspend fun put(shows: Map<String, List<ShowCandidate>>) = plexThemes.putShows(server, shows)
+            override suspend fun candidates(name: String) = songThemes.shows(server, name)
+            override suspend fun put(shows: Map<String, List<ShowCandidate>>) = songThemes.putShows(server, shows)
         }
     }
 
     /**
-     * On Plex, the songs AnimeThemes names for every show in the anime [libraries], asked 50 shows to a request in the background,
-     * so a show's page finds them kept. Only what isn't kept yet is asked, so it's quick after the first time.
+     * The songs AnimeThemes names for every show in the anime [libraries], asked 50 shows to a request in the background, so a show's
+     * page finds them kept. Only on a server with no OP/ED plugin (which names them itself), and only what isn't kept yet is asked, so
+     * it's quick after the first time.
      */
     private val background = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO)
     private var warming: String? = null
@@ -1038,7 +1041,7 @@ class AsterRepository(context: Context, private val store: SessionStore) {
     fun warmAnimeThemesInBackground(libraries: List<BaseItemDto>? = null) {
         if (libraries != null) animeLibraryNow = libraries
         if (!songLookups || animeLibraryNow.isEmpty()) return
-        val server = session?.serverUrl?.takeIf { serverKind == ServerKind.Plex } ?: return
+        val server = session?.serverUrl ?: return
         synchronized(this) { if (warming == server) return; warming = server }
         val given = animeLibraryNow
         background.launch { runCatching { warmAnimeThemes(given) } }
@@ -1049,8 +1052,8 @@ class AsterRepository(context: Context, private val store: SessionStore) {
      * for every show. False when AnimeThemes couldn't be reached all the way through; the rest is kept.
      */
     suspend fun refreshSongs(): Boolean {
-        val server = session?.serverUrl?.takeIf { serverKind == ServerKind.Plex }
-        if (server != null) plexThemes.clear(server)
+        val server = session?.serverUrl
+        if (server != null) songThemes.clear(server)
         AnimeThemesLookup.reset()
         if (!songLookups || server == null || animeLibraryNow.isEmpty()) return true
         synchronized(this) { warming = server }
@@ -1058,7 +1061,9 @@ class AsterRepository(context: Context, private val store: SessionStore) {
     }
 
     private suspend fun warmAnimeThemes(libraries: List<BaseItemDto>): Boolean {
-        val store = plexShowStore() ?: return true
+        val store = showStore() ?: return true
+        // The OP/ED plugin names the songs itself.
+        if (runCatching { opEdLibraries() }.getOrNull() != null) return true
         val names = libraries.filter { it.collectionType == CollectionType.TVSHOWS }.flatMap { library ->
             val shows = mutableListOf<String>()
             while (true) {
@@ -1109,11 +1114,11 @@ class AsterRepository(context: Context, private val store: SessionStore) {
 
     /** The openings and endings in a series' episodes' chapter markers: what the plugin falls back to. */
     suspend fun chapterThemes(seriesId: UUID, episodeCount: Int? = null): List<ThemeClip> {
-        val server = session?.serverUrl.takeIf { serverKind == ServerKind.Plex }
-        if (server != null) plexThemes.clips(server, seriesId, episodeCount)?.let { return it }
+        val server = session?.serverUrl
+        if (server != null) songThemes.clips(server, seriesId, episodeCount)?.let { return it }
         val found = runCatching { OpeningsEndings.find(episodes(seriesId, null, listOf(ItemFields.CHAPTERS))) }
         // Read again when the show has more episodes; a failed read isn't kept.
-        if (server != null) found.getOrNull()?.let { plexThemes.putClips(server, seriesId, episodeCount, it) }
+        if (server != null) found.getOrNull()?.let { songThemes.putClips(server, seriesId, episodeCount, it) }
         return found.getOrDefault(emptyList())
     }
 

@@ -12,12 +12,13 @@ import java.io.File
 import java.util.UUID
 
 /**
- * What a Plex library's title pages have already found, kept in one small JSON file so a show's page doesn't look it up again:
- * the openings and endings read from a show's episode chapters (Plex has no OP/ED plugin to ask) and the songs AnimeThemes names
- * for each show's name, which takes seconds a time (and is asked of it 50 shows to a request, in the background). An entry belongs to the server it was found on, and a show's clips to how many episodes it had,
+ * What a library's title pages have already found, kept in one small JSON file so a show's page doesn't look it up again, on a
+ * server with no OP/ED plugin to ask (Plex, Emby, and Jellyfin without the plugin): the openings and endings read from a show's
+ * episode chapters, and the songs AnimeThemes names for each show's name, which takes seconds a time (and is asked of it 50 shows
+ * to a request, in the background). An entry belongs to the server it was found on, and a show's clips to how many episodes it had,
  * so new episodes read the chapters again. Nothing here is a credential.
  */
-class PlexThemeCache(private val file: File, private val now: () -> Long = System::currentTimeMillis) {
+class SongThemeCache(private val file: File, private val now: () -> Long = System::currentTimeMillis) {
     private val lock = Mutex()
     private var entries: JSONObject? = null
     private val json = Json { ignoreUnknownKeys = true }
@@ -117,11 +118,12 @@ class PlexThemeCache(private val file: File, private val now: () -> Long = Syste
         .put("episodes", theme.episodes ?: JSONObject.NULL)
 
     private fun json(show: ShowCandidate) = JSONObject()
-        .put("slug", show.slug).put("year", show.year ?: JSONObject.NULL).put("themes", JSONArray(show.themes.map(::json)))
+        .put("slug", show.slug).put("year", show.year ?: JSONObject.NULL).put("themes", JSONArray(show.themes.map(::json))).put("aniDb", JSONArray(show.aniDbIds))
 
     private fun show(o: JSONObject) = ShowCandidate(
         slug = o.getString("slug"), year = if (o.isNull("year")) null else o.getInt("year"),
         themes = o.getJSONArray("themes").let { a -> List(a.length()) { theme(a.getJSONObject(it)) } },
+        aniDbIds = o.optJSONArray("aniDb")?.let { a -> List(a.length()) { a.getInt(it) } }.orEmpty(),
     )
 
     private fun theme(o: JSONObject) = KnownTheme(

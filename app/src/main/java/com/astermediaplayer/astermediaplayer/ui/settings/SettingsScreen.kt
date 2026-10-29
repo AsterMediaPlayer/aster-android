@@ -376,7 +376,7 @@ private fun TitlePagesPage(settings: AppSettings, store: SettingsStore, scope: k
         refreshing = "Refreshing…"
         scope.launch { refreshing = if (runCatching { repo.refreshSongs() }.getOrDefault(false)) "Done" else "Couldn't reach AnimeThemes" }
     }
-    SNote("Names the song of an opening or ending from AnimeThemes (animethemes.moe) when your server doesn't. On Plex the names for every anime show are fetched in the background and kept on this device; Refresh songs asks again for all of them. Turn off and Aster doesn't contact AnimeThemes.")
+    SNote("Names the song of an opening or ending from AnimeThemes (animethemes.moe) when your server doesn't. Where it does (Plex, Emby, and Jellyfin without the OP/ED plugin) the names for every anime show are fetched in the background and kept on this device; Refresh songs asks again for all of them. Turn off and Aster doesn't contact AnimeThemes.")
 }
 
 /** Aster's companion plugins on the server: a switch each for an administrator, else whether they're there. */

@@ -57,8 +57,11 @@ data class KnownTheme(
     }
 }
 
-/** A show AnimeThemes names and the themes it has. One name finds a show's seasons, each its own: told apart by the year they began. */
-data class ShowCandidate(val slug: String, val year: Int?, val themes: List<KnownTheme>)
+/**
+ * A show AnimeThemes names and the themes it has. One name finds a show's seasons, each its own: told apart by their AniDB id, which
+ * a season on a server with the Shoko or AniDB provider carries, else by the year they began.
+ */
+data class ShowCandidate(val slug: String, val year: Int?, val themes: List<KnownTheme>, val aniDbIds: List<Int> = emptyList())
 
 /** How a [AnimeThemesLookup.prefetch] went: the names it asked about, and whether it got to the end (a request failing ends it early). */
 data class Warmed(val asked: Int, val complete: Boolean)
@@ -87,10 +90,20 @@ object AnimeThemesLookup {
     suspend fun lookup(http: OkHttpClient, aniDbId: String?, seriesName: String, year: Int?, store: ShowStore? = null): List<KnownTheme>? {
         val key = key(aniDbId, seriesName, year)
         found[key]?.let { return it }
-        val themes = if (aniDbId != null) byAniDb(http, aniDbId) else byName(http, seriesName, year, store)
+        // A season's AniDB id is found among the shows its name found (kept, or got ready in the background) before it's asked by id.
+        val themes = if (aniDbId != null) (keptByAniDb(seriesName, aniDbId, store) ?: byAniDb(http, aniDbId)) else byName(http, seriesName, year, store)
         // A failed lookup (offline) isn't remembered, so the next episode tries again.
         if (themes != null) found[key] = themes
         return themes
+    }
+
+    /** The themes of the season with this AniDB id among what [name] already found; null when nothing is kept for the name or it isn't there. */
+    private suspend fun keptByAniDb(name: String, aniDbId: String, store: ShowStore?): List<KnownTheme>? {
+        val id = aniDbId.trim().toIntOrNull() ?: return null
+        val key = nameKey(name)
+        val shown = shows[key]?.takeIf { it.isCompleted }?.await()
+            ?: store?.candidates(name)?.also { shows.putIfAbsent(key, CompletableDeferred(it)) }
+        return shown?.firstOrNull { id in it.aniDbIds }?.themes
     }
 
     private suspend fun byAniDb(http: OkHttpClient, id: String): List<KnownTheme>? {
@@ -114,7 +127,7 @@ object AnimeThemesLookup {
 
     /** Shows to a request: AnimeThemes asks for lookups in batches of 50 where they can be. */
     const val BATCH = 50
-    private const val SELECTION = "anime{slug year animethemes{type sequence song{title{romaji} performances{artist{name{main}}}} animethemeentries{episodes}}}"
+    private const val SELECTION = "anime{slug year resources{nodes{site externalId}} animethemes{type sequence song{title{romaji} performances{artist{name{main}}}} animethemeentries{episodes}}}"
 
     /** What each name found (every season of the show, with its themes), asked of AnimeThemes once and shared by whoever wants it. */
     private val shows = ConcurrentHashMap<String, CompletableDeferred<List<ShowCandidate>?>>()
@@ -173,7 +186,10 @@ object AnimeThemesLookup {
     fun parse(data: JSONObject, count: Int): List<List<ShowCandidate>?> = List(count) { i ->
         data.optJSONObject("s$i")?.optJSONArray("anime")?.let { anime ->
             anime.objects().map { show ->
-                ShowCandidate(show.optString("slug"), if (show.isNull("year")) null else show.optInt("year"), show.optJSONArray("animethemes").objects().mapNotNull(::graphTheme))
+                ShowCandidate(
+                    show.optString("slug"), if (show.isNull("year")) null else show.optInt("year"), show.optJSONArray("animethemes").objects().mapNotNull(::graphTheme),
+                    aniDbIds = show.optJSONObject("resources")?.optJSONArray("nodes").objects().filter { it.optString("site") == "ANIDB" && !it.isNull("externalId") }.map { it.optInt("externalId") },
+                )
             }
         }
     }

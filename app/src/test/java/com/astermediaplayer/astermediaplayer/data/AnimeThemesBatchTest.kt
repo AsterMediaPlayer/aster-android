@@ -24,7 +24,7 @@ class AnimeThemesBatchTest {
 
     private val reply = JSONObject("""
         {"s0":{"anime":[
-          {"slug":"beastars","year":2019,"animethemes":[
+          {"slug":"beastars","year":2019,"resources":{"nodes":[{"site":"MAL","externalId":37979},{"site":"ANIDB","externalId":13896},{"site":"OFFICIAL_SITE","externalId":null}]},"animethemes":[
             {"type":"OP","sequence":1,"song":{"title":{"romaji":"Wild Side"},"performances":[{"artist":{"name":{"main":"ALI"}}}]},"animethemeentries":[{"episodes":"1-12"}]},
             {"type":"ED","sequence":null,"song":null,"animethemeentries":[{"episodes":null}]},
             {"type":"IN","sequence":1,"song":null,"animethemeentries":[]}]},
@@ -42,6 +42,27 @@ class AnimeThemesBatchTest {
         assertEquals(2, themes.size)
         assertEquals(KnownTheme(true, 1, "Wild Side", listOf("ALI"), "1-12"), themes[0])
         assertEquals(KnownTheme(false, 1, null, emptyList(), null), themes[1])
+    }
+
+    @Test fun aShowsAniDbIdIsReadFromItsResources() {
+        val parsed = AnimeThemesLookup.parse(reply, 3)
+        assertEquals(listOf(13896), parsed[0]!![0].aniDbIds)
+        assertEquals(emptyList<Int>(), parsed[0]!![1].aniDbIds)
+    }
+
+    @Test fun aSeasonIsFoundByItsAniDbIdAmongTheShowsKeptForItsNameWithoutAsking() = runBlocking {
+        val wild = KnownTheme(true, 1, "Wild Side", listOf("ALI"), "1-12")
+        val kept = mapOf("Lookup By Id Show" to listOf(
+            ShowCandidate("first", 2019, listOf(KnownTheme(true, 1, "Other", emptyList(), null)), aniDbIds = listOf(1)),
+            ShowCandidate("second", 2021, listOf(wild), aniDbIds = listOf(13896)),
+        ))
+        val store = object : ShowStore {
+            override suspend fun candidates(name: String) = kept[name]
+            override suspend fun put(shows: Map<String, List<ShowCandidate>>) = error("nothing was asked")
+        }
+        // The client would fail if it were used: the answer is among what's kept, whatever year the season is given.
+        val themes = AnimeThemesLookup.themes(OkHttpClient(), "13896", "Lookup By Id Show", 1900, store)
+        assertEquals(listOf(wild), themes)
     }
 
     @Test fun aNameWithNoShowIsEmptyAndOneTheReplyLeftOutIsNull() {

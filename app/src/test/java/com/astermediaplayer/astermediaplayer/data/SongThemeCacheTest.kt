@@ -11,11 +11,11 @@ import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.util.UUID
 
-/** What a Plex library's title pages found is kept between runs, per server, and read again when it may have changed. */
-class PlexThemeCacheTest {
+/** What a library's title pages found is kept between runs, per server, and read again when it may have changed. */
+class SongThemeCacheTest {
     @get:Rule val folder = TemporaryFolder()
     private var clock = 1_000_000L
-    private fun cache() = PlexThemeCache(java.io.File(folder.root, "plex-themes.json")) { clock }
+    private fun cache() = SongThemeCache(java.io.File(folder.root, "song-themes.json")) { clock }
 
     private val series = UUID.fromString("00000000-0000-0000-0000-0000000018d5")
     private val clip = ThemeClip(
@@ -23,7 +23,7 @@ class PlexThemeCacheTest {
         episode = BaseItemDto(id = UUID.fromString("00000000-0000-0000-0000-0000000017ee"), type = BaseItemKind.EPISODE, name = "I'm Yani Neko, Nya", parentIndexNumber = 1, indexNumber = 1),
     )
     private val theme = KnownTheme(isOpening = true, sequence = 1, songTitle = "Nanmonee", artists = listOf("Wasureranneyo"), episodes = "1-")
-    private val show = ShowCandidate("yani_neko", 2026, listOf(theme))
+    private val show = ShowCandidate("yani_neko", 2026, listOf(theme), aniDbIds = listOf(19000, 19001))
 
     @Test fun clipsComeBackAfterARestart() = runBlocking {
         cache().putClips("http://plex:32400", series, 11, listOf(clip))
@@ -64,6 +64,13 @@ class PlexThemeCacheTest {
         assertEquals(listOf(show), cache().shows("http://other:32400", "A"))
     }
 
+    @Test fun aSeasonsAniDbIdsComeBackToo() = runBlocking {
+        cache().putShows("http://jellyfin:8096", mapOf("Beastars" to listOf(show, ShowCandidate("b2", 2021, emptyList()))))
+        val back = cache().shows("http://jellyfin:8096", "Beastars")!!
+        assertEquals(listOf(19000, 19001), back[0].aniDbIds)
+        assertEquals(emptyList<Int>(), back[1].aniDbIds)
+    }
+
     @Test fun aNameIsFoundHoweverItsCased() = runBlocking {
         cache().putShows("s", mapOf("Chainsmoker Cat" to listOf(show)))
         assertEquals(listOf(show), cache().shows("s", " chainsmoker CAT "))
@@ -84,7 +91,7 @@ class PlexThemeCacheTest {
     }
 
     @Test fun aDamagedFileIsJustAnEmptyCache() = runBlocking {
-        java.io.File(folder.root, "plex-themes.json").writeText("{not json")
+        java.io.File(folder.root, "song-themes.json").writeText("{not json")
         assertNull(cache().shows("s", "x"))
         cache().putShows("s", mapOf("x" to listOf(show)))
         assertEquals(listOf(show), cache().shows("s", "x"))
