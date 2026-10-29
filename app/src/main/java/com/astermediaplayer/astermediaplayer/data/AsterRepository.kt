@@ -73,6 +73,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.UUID
 
@@ -1007,12 +1008,44 @@ class AsterRepository(context: Context, private val store: SessionStore) {
         val season = episode.seasonId?.let { runCatching { item(it) }.getOrNull() }
         val aniDb = season?.providerIds?.entries?.firstOrNull { it.key.equals("AniDB", ignoreCase = true) }?.value
         val year = season?.productionYear ?: season?.premiereDate?.year ?: episode.premiereDate?.year ?: episode.productionYear
-        val server = session?.serverUrl.takeIf { serverKind == ServerKind.Plex }
-        val key = AnimeThemesLookup.key(aniDb, series, year)
-        if (server != null) plexThemes.themes(server, key)?.let { return it }
-        val themes = AnimeThemesLookup.lookup(http, aniDb, series, year)
-        if (server != null && themes != null) plexThemes.putThemes(server, key, themes)
-        return themes.orEmpty()
+        return AnimeThemesLookup.themes(http, aniDb, series, year, plexShowStore())
+    }
+
+    /** What AnimeThemes said about each show on Plex, kept between runs; null on any other server. */
+    private fun plexShowStore(): ShowStore? = session?.serverUrl?.takeIf { serverKind == ServerKind.Plex }?.let { server ->
+        object : ShowStore {
+            override suspend fun candidates(name: String) = plexThemes.shows(server, name)
+            override suspend fun put(shows: Map<String, List<ShowCandidate>>) = plexThemes.putShows(server, shows)
+        }
+    }
+
+    /**
+     * On Plex, the songs AnimeThemes names for every show in the anime [libraries], asked 50 shows to a request in the background,
+     * so a show's page finds them kept. Only what isn't kept yet is asked, so it's quick after the first time.
+     */
+    private val background = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO)
+    private var warming: String? = null
+
+    /** [warmAnimeThemes] in the background, outliving the screen that asked, once for each server a run signs in to. */
+    fun warmAnimeThemesInBackground(libraries: List<BaseItemDto>) {
+        val server = session?.serverUrl?.takeIf { serverKind == ServerKind.Plex } ?: return
+        synchronized(this) { if (warming == server) return; warming = server }
+        background.launch { runCatching { warmAnimeThemes(libraries) } }
+    }
+
+    private suspend fun warmAnimeThemes(libraries: List<BaseItemDto>) {
+        val store = plexShowStore() ?: return
+        val names = libraries.filter { it.collectionType == CollectionType.TVSHOWS }.flatMap { library ->
+            val shows = mutableListOf<String>()
+            while (true) {
+                val page = runCatching { libraryItems(library.id, library.collectionType, shows.size, 300, listOf(ItemSortBy.SORT_NAME), SortOrder.ASCENDING) }.getOrNull() ?: break
+                shows += page.items.mapNotNull { it.name }
+                if (page.items.isEmpty() || shows.size >= page.total) break
+            }
+            shows
+        }
+        val asked = AnimeThemesLookup.prefetch(http, names, store)
+        android.util.Log.d("Aster", "AnimeThemes warmed: ${names.size} shows, $asked asked")
     }
 
     /** The theme a published music video (or song) is, from the OP/ED plugin; null for any other item, or without the plugin. */

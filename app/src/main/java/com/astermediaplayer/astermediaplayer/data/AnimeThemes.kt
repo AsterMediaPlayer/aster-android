@@ -6,6 +6,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import java.util.concurrent.TimeUnit
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONArray
@@ -55,6 +57,15 @@ data class KnownTheme(
     }
 }
 
+/** A show AnimeThemes names and the themes it has. One name finds a show's seasons, each its own: told apart by the year they began. */
+data class ShowCandidate(val slug: String, val year: Int?, val themes: List<KnownTheme>)
+
+/** Where what AnimeThemes said about a name is kept between runs. */
+interface ShowStore {
+    suspend fun candidates(name: String): List<ShowCandidate>?
+    suspend fun put(shows: Map<String, List<ShowCandidate>>)
+}
+
 object AnimeThemesLookup {
     private const val BASE = "https://api.animethemes.moe"
     private const val INCLUDE = "animethemes.song.performances.artist,animethemes.animethemeentries"
@@ -66,13 +77,14 @@ object AnimeThemesLookup {
     fun key(aniDbId: String?, seriesName: String, year: Int?): String = aniDbId?.let { "anidb:$it" } ?: "name:${seriesName.lowercase()}|${year ?: 0}"
 
     /** The themes of the show an episode is from: by its AniDB id, else by [seriesName] and the year the season began. */
-    suspend fun themes(http: OkHttpClient, aniDbId: String?, seriesName: String, year: Int?): List<KnownTheme> = lookup(http, aniDbId, seriesName, year).orEmpty()
+    suspend fun themes(http: OkHttpClient, aniDbId: String?, seriesName: String, year: Int?, store: ShowStore? = null): List<KnownTheme> =
+        lookup(http, aniDbId, seriesName, year, store).orEmpty()
 
     /** [themes], or null when the lookup failed (offline, an error), which isn't the same as a show with none. */
-    suspend fun lookup(http: OkHttpClient, aniDbId: String?, seriesName: String, year: Int?): List<KnownTheme>? {
+    suspend fun lookup(http: OkHttpClient, aniDbId: String?, seriesName: String, year: Int?, store: ShowStore? = null): List<KnownTheme>? {
         val key = key(aniDbId, seriesName, year)
         found[key]?.let { return it }
-        val themes = if (aniDbId != null) byAniDb(http, aniDbId) else byName(http, seriesName, year)
+        val themes = if (aniDbId != null) byAniDb(http, aniDbId) else byName(http, seriesName, year, store)
         // A failed lookup (offline) isn't remembered, so the next episode tries again.
         if (themes != null) found[key] = themes
         return themes
@@ -87,29 +99,96 @@ object AnimeThemesLookup {
      * The show that began in [year] (or the year before: a season running over New Year began in the earlier one) among those the
      * name finds; with no year, the first found. AnimeThemes names shows in Japanese, so the year, not the name, tells its seasons apart.
      */
-    private suspend fun byName(http: OkHttpClient, name: String, year: Int?): List<KnownTheme>? {
-        val search = searched(http, name) ?: return null
-        val candidates = search.optJSONObject("search")?.optJSONArray("anime").objects()
-        val pick = if (year != null) candidates.firstOrNull { it.optInt("year") == year } ?: candidates.firstOrNull { it.optInt("year") == year - 1 } else candidates.firstOrNull()
-        val slug = pick?.optString("slug")?.ifEmpty { null } ?: return emptyList()
-        val reply = get(http, "/anime/$slug", mapOf("include" to INCLUDE)) ?: return null
-        return reply.optJSONObject("anime")?.let(::themes).orEmpty()
+    private suspend fun byName(http: OkHttpClient, name: String, year: Int?, store: ShowStore?): List<KnownTheme>? {
+        val candidates = candidatesFor(http, name, store) ?: return null
+        val pick = if (year != null) candidates.firstOrNull { it.year == year } ?: candidates.firstOrNull { it.year == year - 1 } else candidates.firstOrNull()
+        return pick?.themes.orEmpty()
     }
 
-    private val searches = ConcurrentHashMap<String, CompletableDeferred<JSONObject?>>()
+    // MARK: By name, in batches
+
+    private const val GRAPHQL = "https://graphql.animethemes.moe"
+
+    /** Shows to a request: AnimeThemes asks for lookups in batches of 50 where they can be. */
+    const val BATCH = 50
+    private const val SELECTION = "anime{slug year animethemes{type sequence song{title{romaji} performances{artist{name{main}}}} animethemeentries{episodes}}}"
+
+    /** What each name found (every season of the show, with its themes), asked of AnimeThemes once and shared by whoever wants it. */
+    private val shows = ConcurrentHashMap<String, CompletableDeferred<List<ShowCandidate>?>>()
+
+    fun nameKey(name: String): String = name.trim().lowercase()
+
+    /** One name, from this run, then [store], then AnimeThemes (alone, as a batch of one); null when AnimeThemes couldn't be asked. */
+    private suspend fun candidatesFor(http: OkHttpClient, name: String, store: ShowStore?): List<ShowCandidate>? {
+        val key = nameKey(name)
+        val mine = CompletableDeferred<List<ShowCandidate>?>()
+        shows.putIfAbsent(key, mine)?.let { return it.await() }
+        val found = try {
+            store?.candidates(name) ?: fetch(http, listOf(name))?.single()?.also { store?.put(mapOf(name to it)) }
+        } catch (e: Throwable) {
+            shows.remove(key, mine); mine.cancel(); throw e
+        }
+        if (found == null) shows.remove(key, mine)
+        mine.complete(found)
+        return found
+    }
 
     /**
-     * What a name finds, asked once however many seasons of the show want it at the same time (they share the one answer, which holds
-     * every season of it) and not again this run; a failed search isn't kept. AnimeThemes asks for as few requests as can be.
+     * Gets ready the names that no lookup has found yet, [BATCH] of them to a request and a pause between requests, for a library's
+     * shows to be found before their pages are opened. What [store] already holds isn't asked again. A request that fails ends it: the
+     * next run goes on from there. Returns how many names it asked about.
      */
-    private suspend fun searched(http: OkHttpClient, name: String): JSONObject? {
-        val key = name.lowercase()
-        val mine = CompletableDeferred<JSONObject?>()
-        searches.putIfAbsent(key, mine)?.let { return it.await() }
-        val reply = try { get(http, "/search", mapOf("q" to name, "fields[search]" to "anime")) } catch (e: Throwable) { searches.remove(key, mine); mine.cancel(); throw e }
-        if (reply == null) searches.remove(key, mine)
-        mine.complete(reply)
-        return reply
+    suspend fun prefetch(http: OkHttpClient, names: List<String>, store: ShowStore?, pauseMs: Long = 4_000): Int {
+        val toAsk = mutableListOf<String>()
+        val seen = HashSet<String>()
+        for (name in names) {
+            val key = nameKey(name)
+            if (key.isEmpty() || !seen.add(key) || shows.containsKey(key)) continue
+            val saved = store?.candidates(name)
+            if (saved != null) shows.putIfAbsent(key, CompletableDeferred(saved)) else toAsk += name
+        }
+        var asked = 0
+        for ((i, chunk) in toAsk.chunked(BATCH).withIndex()) {
+            if (i > 0) delay(pauseMs)
+            val answers = fetch(http, chunk) ?: break
+            val got = chunk.zip(answers).mapNotNull { (name, shows) -> shows?.let { name to it } }.toMap()
+            store?.put(got)
+            for ((name, found) in got) shows.putIfAbsent(nameKey(name), CompletableDeferred(found))
+            asked += chunk.size
+        }
+        return asked
+    }
+
+    /** The query for [count] names, each its own `search` (`s0`, `s1`...) in the one request; the names go as variables. */
+    fun query(count: Int): String =
+        "query(" + (0 until count).joinToString(",") { "\$n$it:String!" } + "){" + (0 until count).joinToString(" ") { "s$it:search(search:\$n$it,first:5){$SELECTION}" } + "}"
+
+    /** What each of [count] names found, in order: null for one the reply left out. */
+    fun parse(data: JSONObject, count: Int): List<List<ShowCandidate>?> = List(count) { i ->
+        data.optJSONObject("s$i")?.optJSONArray("anime")?.let { anime ->
+            anime.objects().map { show ->
+                ShowCandidate(show.optString("slug"), if (show.isNull("year")) null else show.optInt("year"), show.optJSONArray("animethemes").objects().mapNotNull(::graphTheme))
+            }
+        }
+    }
+
+    private fun graphTheme(theme: JSONObject): KnownTheme? {
+        val type = theme.optString("type")
+        if (type != "OP" && type != "ED") return null
+        val song = theme.optJSONObject("song")
+        val title = song?.optJSONObject("title")?.optString("romaji")?.ifEmpty { null }
+        val artists = song?.optJSONArray("performances").objects().mapNotNull { it.optJSONObject("artist")?.optJSONObject("name")?.optString("main")?.ifEmpty { null } }
+        val episodes = theme.optJSONArray("animethemeentries").objects().firstNotNullOfOrNull { e -> if (e.isNull("episodes")) null else e.optString("episodes").ifEmpty { null } }
+        return KnownTheme(isOpening = type == "OP", sequence = if (theme.isNull("sequence")) 1 else theme.optInt("sequence", 1), songTitle = title, artists = artists, episodes = episodes)
+    }
+
+    private suspend fun fetch(http: OkHttpClient, names: List<String>): List<List<ShowCandidate>?>? {
+        val body = JSONObject().put("query", query(names.size)).put("variables", JSONObject().also { v -> names.forEachIndexed { i, n -> v.put("n$i", n) } })
+        val request = Request.Builder().url(GRAPHQL).header("Accept", "application/json").post(body.toString().toRequestBody("application/json".toMediaType())).build()
+        val reply = execute(http, request, "GraphQL x${names.size}", seconds = 90) ?: return null
+        // A reply that is only errors (the query is refused) isn't an answer; one with some names missing is.
+        val data = reply.optJSONObject("data") ?: return null
+        return parse(data, names.size)
     }
 
     /** The openings and endings in an AnimeThemes `anime` object. */
@@ -132,21 +211,24 @@ object AnimeThemesLookup {
      * Null when the request failed (no connection, an error), so a failure isn't taken for "no themes". AnimeThemes often answers a
      * request with a 5xx or drops it, so a server error or a dropped connection is tried again (once more, after a pause); a 4xx isn't.
      */
-    private suspend fun get(http: OkHttpClient, path: String, query: Map<String, String>): JSONObject? = withContext(Dispatchers.IO) {
+    private suspend fun get(http: OkHttpClient, path: String, query: Map<String, String>): JSONObject? {
         val url = (BASE + path).toHttpUrl().newBuilder().apply { query.toSortedMap().forEach { (k, v) -> addQueryParameter(k, v) } }.build()
-        val request = Request.Builder().url(url).header("Accept", "application/json").build()
+        return execute(http, Request.Builder().url(url).header("Accept", "application/json").build(), path)
+    }
+
+    private suspend fun execute(http: OkHttpClient, request: Request, label: String, seconds: Long = 30): JSONObject? = withContext(Dispatchers.IO) {
         for (attempt in 1..ATTEMPTS) {
             val outcome = runCatching {
-                patient(http).newCall(request).execute().use { response ->
+                patient(http, seconds).newCall(request).execute().use { response ->
                     val body = response.body.string()
-                    android.util.Log.d("Aster", "AnimeThemes $path -> ${response.code}")
+                    android.util.Log.d("Aster", "AnimeThemes $label -> ${response.code}")
                     when {
                         response.isSuccessful -> JSONObject(body)
                         response.code >= 500 -> RETRY
                         else -> null
                     }
                 }
-            }.onFailure { android.util.Log.w("Aster", "AnimeThemes $path failed (try $attempt)", it) }
+            }.onFailure { android.util.Log.w("Aster", "AnimeThemes $label failed (try $attempt)", it) }
             val result = outcome.getOrDefault(RETRY)
             if (result is JSONObject) return@withContext result
             if (result == null || attempt == ATTEMPTS) return@withContext null
@@ -155,8 +237,8 @@ object AnimeThemesLookup {
         null
     }
 
-    /** AnimeThemes takes 5 to 15 seconds to answer, past the app's usual 10, so its requests are given longer. */
-    private fun patient(http: OkHttpClient): OkHttpClient = http.newBuilder().readTimeout(30, TimeUnit.SECONDS).callTimeout(45, TimeUnit.SECONDS).build()
+    /** AnimeThemes takes 5 to 15 seconds to answer, past the app's usual 10, so its requests are given longer (a batch of 50 shows takes about 10). */
+    private fun patient(http: OkHttpClient, seconds: Long): OkHttpClient = http.newBuilder().readTimeout(seconds, TimeUnit.SECONDS).callTimeout(seconds + 15, TimeUnit.SECONDS).build()
 
     private val RETRY = Any()
     private const val ATTEMPTS = 2

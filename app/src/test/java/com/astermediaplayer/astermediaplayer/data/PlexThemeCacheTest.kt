@@ -23,6 +23,7 @@ class PlexThemeCacheTest {
         episode = BaseItemDto(id = UUID.fromString("00000000-0000-0000-0000-0000000017ee"), type = BaseItemKind.EPISODE, name = "I'm Yani Neko, Nya", parentIndexNumber = 1, indexNumber = 1),
     )
     private val theme = KnownTheme(isOpening = true, sequence = 1, songTitle = "Nanmonee", artists = listOf("Wasureranneyo"), episodes = "1-")
+    private val show = ShowCandidate("yani_neko", 2026, listOf(theme))
 
     @Test fun clipsComeBackAfterARestart() = runBlocking {
         cache().putClips("http://plex:32400", series, 11, listOf(clip))
@@ -48,32 +49,41 @@ class PlexThemeCacheTest {
     }
 
     @Test fun anotherServerHasItsOwn() = runBlocking {
-        cache().putThemes("http://plex:32400", "anidb:1", listOf(theme))
-        assertNull(cache().themes("http://other:32400", "anidb:1"))
-        assertEquals(listOf(theme), cache().themes("http://plex:32400", "anidb:1"))
+        cache().putShows("http://plex:32400", mapOf("Chainsmoker Cat" to listOf(show)))
+        assertNull(cache().shows("http://other:32400", "Chainsmoker Cat"))
+        assertEquals(listOf(show), cache().shows("http://plex:32400", "Chainsmoker Cat"))
+    }
+
+    @Test fun aNameIsFoundHoweverItsCased() = runBlocking {
+        cache().putShows("s", mapOf("Chainsmoker Cat" to listOf(show)))
+        assertEquals(listOf(show), cache().shows("s", " chainsmoker CAT "))
+    }
+
+    @Test fun manyNamesAreOneWrite() = runBlocking {
+        cache().putShows("s", (1..50).associate { "show $it" to listOf(show) })
+        assertEquals(50, cache().let { c -> (1..50).count { c.shows("s", "show $it") != null } })
     }
 
     @Test fun nothingFoundIsAskedAgainSoonerThanSomething() = runBlocking {
-        cache().putThemes("s", "found", listOf(theme))
-        cache().putThemes("s", "none", emptyList())
+        cache().putShows("s", mapOf("found" to listOf(show), "none" to emptyList()))
         clock += 4L * 24 * 60 * 60 * 1000
-        assertNotNull(cache().themes("s", "found"))
-        assertNull(cache().themes("s", "none"))
+        assertNotNull(cache().shows("s", "found"))
+        assertNull(cache().shows("s", "none"))
         clock += 30L * 24 * 60 * 60 * 1000
-        assertNull(cache().themes("s", "found"))
+        assertNull(cache().shows("s", "found"))
     }
 
     @Test fun aDamagedFileIsJustAnEmptyCache() = runBlocking {
         java.io.File(folder.root, "plex-themes.json").writeText("{not json")
-        assertNull(cache().themes("s", "anidb:1"))
-        cache().putThemes("s", "anidb:1", listOf(theme))
-        assertEquals(listOf(theme), cache().themes("s", "anidb:1"))
+        assertNull(cache().shows("s", "x"))
+        cache().putShows("s", mapOf("x" to listOf(show)))
+        assertEquals(listOf(show), cache().shows("s", "x"))
     }
 
     @Test fun theFileStaysSmall() = runBlocking {
         val cache = cache()
-        repeat(450) { cache.putThemes("s", "name:show $it", listOf(theme)); clock += 1 }
-        assertNull(cache().themes("s", "name:show 0"))
-        assertNotNull(cache().themes("s", "name:show 449"))
+        repeat(1600) { cache.putShows("s", mapOf("show $it" to listOf(show))); clock += 1 }
+        assertNull(cache().shows("s", "show 0"))
+        assertNotNull(cache().shows("s", "show 1599"))
     }
 }

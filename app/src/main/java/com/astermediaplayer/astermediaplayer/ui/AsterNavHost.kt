@@ -729,6 +729,8 @@ private fun MainTabs(
     val libraryHome: LibraryHomeViewModel = viewModel(factory = viewModelFactory { initializer { LibraryHomeViewModel(repo) } })
     val animeLibraries = detectedAnime.orEmpty()
     val animeIds = animeLibraries.map { it.id }.toSet()
+    // On Plex the songs AnimeThemes names for these shows are fetched in the background, 50 to a request, so their pages find them kept.
+    LaunchedEffect(animeLibraries) { if (animeLibraries.isNotEmpty()) repo.warmAnimeThemesInBackground(animeLibraries) }
     val moviesLibrary = libraries.firstOrNull { it.collectionType == CollectionType.MOVIES && it.id !in animeIds }
     val showsLibrary = libraries.firstOrNull { it.collectionType == CollectionType.TVSHOWS && it.id !in animeIds }
     val tabs = Tab.entries.filter {
