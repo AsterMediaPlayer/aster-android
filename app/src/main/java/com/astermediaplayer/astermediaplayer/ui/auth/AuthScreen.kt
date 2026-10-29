@@ -41,6 +41,14 @@ fun AuthScreen(viewModel: AuthViewModel, onSignedIn: () -> Unit) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val servers by viewModel.servers.collectAsStateWithLifecycle()
     LaunchedEffect(state.signedIn) { if (state.signedIn) onSignedIn() }
+    // Back steps back a stage, as on the Apple apps: out of Quick Connect, then to the server screen, rather than leaving the app.
+    androidx.activity.compose.BackHandler(enabled = state.connectedServer != null || state.plexCode != null || state.plexServers != null) {
+        when {
+            state.plexCode != null || state.plexServers != null -> viewModel.cancelPlex()
+            state.quickConnectCode != null -> viewModel.cancelQuickConnect()
+            else -> viewModel.changeServer()
+        }
+    }
 
     Box(Modifier.fillMaxSize().safeDrawingPadding().imePadding(), contentAlignment = Alignment.Center) {
         Column(
