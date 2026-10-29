@@ -37,6 +37,18 @@ data class SavedServer(
     val id: String get() = id(session.serverUrl, session.userId)
     val title: String get() = session.serverName ?: session.serverUrl.substringAfter("://").substringBefore("/")
 
+    /** Whether it can ask for a password: the server's own, checked by the server; Plex's sign-in has none to ask for. */
+    val canBeLocked: Boolean get() = session.kind != com.astermediaplayer.astermediaplayer.data.emby.ServerKind.Plex
+
+    /** Whether a new Lock After lets more past the lock than the one set (never, or a longer wait): that asks for the password first. */
+    fun loosens(lockAfter: Int?): Boolean {
+        val current = lockAfterMinutes ?: return false
+        return canBeLocked && (lockAfter == null || lockAfter > current)
+    }
+
+    /** Whether turning Ask for Password to Switch to [asksToSwitch] lets anyone switch without it: that asks for the password first. */
+    fun loosens(asksToSwitch: Boolean): Boolean = canBeLocked && asksPasswordToSwitch && !asksToSwitch
+
     /** The name, with the address after it when another saved server calls itself the same (two servers named "Server"). */
     fun titleAmong(all: List<SavedServer>): String =
         if (all.count { it.title == title } > 1) "$title (${session.serverUrl.substringAfter("://").substringBefore("/")})" else title
