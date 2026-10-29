@@ -18,6 +18,8 @@ import com.astermediaplayer.astermediaplayer.ui.audiobooks.AudiobookLibrary
 import com.astermediaplayer.astermediaplayer.ui.player.AudiobookPlayer
 import com.astermediaplayer.astermediaplayer.ui.player.MusicPlayer
 import com.astermediaplayer.astermediaplayer.ui.player.ThemePlayer
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.launch
 
 class AsterApp : Application(), SingletonImageLoader.Factory {
     val repository: AsterRepository by lazy { AsterRepository(this, SessionStore(this)) }
@@ -40,6 +42,25 @@ class AsterApp : Application(), SingletonImageLoader.Factory {
     }
     val music: MusicPlayer by lazy {
         MusicPlayer(this, repository).also { it.onStart = { themePlayer.hide(evenIfShowing = true); audiobooks.stop() } }
+    }
+
+    /** What's playing, as the sleep timer tells songs and chapters apart: the book's chapter, else the song's place in the queue. */
+    fun nowPlayingKey(): Any? {
+        val book = audiobooks.state.value
+        return if (book.book != null) book.book.id to book.chapter?.id else music.state.value.let { it.index to it.current?.id }
+    }
+
+    /** Now Playing's sleep timer, for the song or the book playing: it pauses whichever is on. */
+    val sleepTimer: com.astermediaplayer.astermediaplayer.ui.player.SleepTimer by lazy {
+        val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Main.immediate)
+        com.astermediaplayer.astermediaplayer.ui.player.SleepTimer(scope).also { timer ->
+            timer.onFire = { music.pauseForOther(); audiobooks.pauseForOther() }
+            music.onMovedByHand = timer::movedByHand
+            audiobooks.onMovedByHand = timer::movedByHand
+            scope.launch {
+                kotlinx.coroutines.flow.combine(music.state, audiobooks.state) { m, b -> nowPlayingKey() to (b.book != null || m.current != null) }.distinctUntilChanged().collect { (playing, loaded) -> timer.playing(playing, loaded) }
+            }
+        }
     }
 
     /** What was learned about one server, stopped or cleared, for the server switched to (or none). */
