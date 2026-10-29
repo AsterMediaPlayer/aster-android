@@ -58,6 +58,6 @@ class AnimeThemesBatchTest {
         }
         // No request is made (the client would fail), and the names are the same however they're cased.
         val asked = AnimeThemesLookup.prefetch(OkHttpClient(), listOf("Prefetch Kept One", "PREFETCH KEPT TWO", "prefetch kept one"), store, pauseMs = 0)
-        assertEquals(0, asked)
+        assertEquals(Warmed(asked = 0, complete = true), asked)
     }
 }

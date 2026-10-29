@@ -60,6 +60,9 @@ data class KnownTheme(
 /** A show AnimeThemes names and the themes it has. One name finds a show's seasons, each its own: told apart by the year they began. */
 data class ShowCandidate(val slug: String, val year: Int?, val themes: List<KnownTheme>)
 
+/** How a [AnimeThemesLookup.prefetch] went: the names it asked about, and whether it got to the end (a request failing ends it early). */
+data class Warmed(val asked: Int, val complete: Boolean)
+
 /** Where what AnimeThemes said about a name is kept between runs. */
 interface ShowStore {
     suspend fun candidates(name: String): List<ShowCandidate>?
@@ -116,6 +119,9 @@ object AnimeThemesLookup {
     /** What each name found (every season of the show, with its themes), asked of AnimeThemes once and shared by whoever wants it. */
     private val shows = ConcurrentHashMap<String, CompletableDeferred<List<ShowCandidate>?>>()
 
+    /** Forgets what this run has found, for a refresh to ask again. */
+    fun reset() { shows.clear(); found.clear() }
+
     fun nameKey(name: String): String = name.trim().lowercase()
 
     /** One name, from this run, then [store], then AnimeThemes (alone, as a batch of one); null when AnimeThemes couldn't be asked. */
@@ -136,9 +142,9 @@ object AnimeThemesLookup {
     /**
      * Gets ready the names that no lookup has found yet, [BATCH] of them to a request and a pause between requests, for a library's
      * shows to be found before their pages are opened. What [store] already holds isn't asked again. A request that fails ends it: the
-     * next run goes on from there. Returns how many names it asked about.
+     * next run goes on from there.
      */
-    suspend fun prefetch(http: OkHttpClient, names: List<String>, store: ShowStore?, pauseMs: Long = 4_000): Int {
+    suspend fun prefetch(http: OkHttpClient, names: List<String>, store: ShowStore?, pauseMs: Long = 4_000): Warmed {
         val toAsk = mutableListOf<String>()
         val seen = HashSet<String>()
         for (name in names) {
@@ -150,13 +156,13 @@ object AnimeThemesLookup {
         var asked = 0
         for ((i, chunk) in toAsk.chunked(BATCH).withIndex()) {
             if (i > 0) delay(pauseMs)
-            val answers = fetch(http, chunk) ?: break
+            val answers = fetch(http, chunk) ?: return Warmed(asked, complete = false)
             val got = chunk.zip(answers).mapNotNull { (name, shows) -> shows?.let { name to it } }.toMap()
             store?.put(got)
             for ((name, found) in got) shows.putIfAbsent(nameKey(name), CompletableDeferred(found))
             asked += chunk.size
         }
-        return asked
+        return Warmed(asked, complete = true)
     }
 
     /** The query for [count] names, each its own `search` (`s0`, `s1`...) in the one request; the names go as variables. */

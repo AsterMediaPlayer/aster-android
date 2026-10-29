@@ -46,6 +46,19 @@ class PlexThemeCache(private val file: File, private val now: () -> Long = Syste
 
     private class Entry(val field: String, val empty: Boolean, val value: JSONArray)
 
+    /** Forgets everything kept for [server], so the next visit finds it all again. */
+    suspend fun clear(server: String) = lock.withLock {
+        val all = load()
+        all.keys().asSequence().filter { it.startsWith("$server|") }.toList().forEach { all.remove(it) }
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val temporary = File(file.parentFile, file.name + ".tmp")
+                temporary.writeText(JSONObject().put("version", VERSION).put("entries", all).toString())
+                if (!temporary.renameTo(file)) { file.delete(); temporary.renameTo(file) }
+            }
+        }
+    }
+
     private suspend fun <T> read(key: String, decode: (JSONObject) -> T?): T? = lock.withLock {
         val entry = load().optJSONObject(key) ?: return@withLock null
         val age = now() - entry.optLong("at")

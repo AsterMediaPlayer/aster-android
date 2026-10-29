@@ -44,6 +44,8 @@ data class AppSettings(
     val listenAheadMinutes: Int = 30,
     /** The song card over an opening or ending, and at the start and end of a music video. */
     val themeCards: Boolean = true,
+    /** Name an opening or ending's song from AnimeThemes when the server can't; off, Aster doesn't contact it. Kept on the device. */
+    val songLookups: Boolean = true,
 )
 
 private val Context.settingsDataStore by preferencesDataStore("aster_settings")
@@ -68,6 +70,7 @@ class SettingsStore(private val context: Context) {
     private val discMenuSoundsKey = booleanPreferencesKey("disc_menu_sounds")
     private val listenAheadKey = intPreferencesKey("listen_ahead_minutes")
     private val themeCardsKey = booleanPreferencesKey("theme_cards")
+    private val songLookupsKey = booleanPreferencesKey("song_lookups")
     private val welcomeSeenKey = stringSetPreferencesKey("welcome_seen")
 
     val settings: Flow<AppSettings> = context.settingsDataStore.data.map {
@@ -92,6 +95,7 @@ class SettingsStore(private val context: Context) {
             discMenuSounds = it[discMenuSoundsKey] ?: true,
             listenAheadMinutes = it[listenAheadKey] ?: 30,
             themeCards = it[themeCardsKey] ?: true,
+            songLookups = it[songLookupsKey] ?: true,
         )
     }
 
@@ -137,6 +141,7 @@ class SettingsStore(private val context: Context) {
     suspend fun setThemeCut(cut: ThemeCut) = context.settingsDataStore.edit { it[themeCutKey] = cut.ordinal }
     suspend fun setThemeMusic(on: Boolean) = context.settingsDataStore.edit { it[themeMusicKey] = on }
     suspend fun setThemeVideos(on: Boolean) = context.settingsDataStore.edit { it[themeVideosKey] = on }
+    suspend fun setSongLookups(on: Boolean) = context.settingsDataStore.edit { it[songLookupsKey] = on }
     suspend fun setThemeCards(on: Boolean) = context.settingsDataStore.edit { it[themeCardsKey] = on }
     suspend fun setOpeningSound(on: Boolean) = context.settingsDataStore.edit { it[openingSoundKey] = on }
     suspend fun setDownloadsEnabled(on: Boolean) = context.settingsDataStore.edit { it[downloadsEnabledKey] = on }

@@ -79,6 +79,9 @@ import java.util.UUID
 
 /** Thin wrapper over the Jellyfin SDK; the Kotlin counterpart of the app's `JellyfinClient`. */
 class AsterRepository(context: Context, private val store: SessionStore) {
+    /** Whether song names may be asked of AnimeThemes (Settings > Title Pages); the app keeps this in step with the setting. */
+    @Volatile var songLookups: Boolean = true
+
     /** What Plex's title pages have found (openings from chapters, their songs), kept between runs. */
     private val plexThemes = PlexThemeCache(java.io.File(context.applicationContext.filesDir, "plex-themes.json"))
     private val jellyfin: Jellyfin = createJellyfin {
@@ -1004,6 +1007,7 @@ class AsterRepository(context: Context, private val store: SessionStore) {
      * exactly where the server has one (Jellyfin with Shoko), else its name and the year the season began.
      */
     suspend fun knownThemes(episode: BaseItemDto): List<KnownTheme> {
+        if (!songLookups) return emptyList()
         val series = episode.seriesName ?: return emptyList()
         val season = episode.seasonId?.let { runCatching { item(it) }.getOrNull() }
         val aniDb = season?.providerIds?.entries?.firstOrNull { it.key.equals("AniDB", ignoreCase = true) }?.value
@@ -1025,16 +1029,36 @@ class AsterRepository(context: Context, private val store: SessionStore) {
      */
     private val background = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO)
     private var warming: String? = null
+    private var animeLibraryNow: List<BaseItemDto> = emptyList()
 
-    /** [warmAnimeThemes] in the background, outliving the screen that asked, once for each server a run signs in to. */
-    fun warmAnimeThemesInBackground(libraries: List<BaseItemDto>) {
+    /**
+     * [warmAnimeThemes] in the background, outliving the screen that asked, once for each server a run signs in to. With no libraries
+     * it uses the ones last given, which is how switching the setting back on starts it.
+     */
+    fun warmAnimeThemesInBackground(libraries: List<BaseItemDto>? = null) {
+        if (libraries != null) animeLibraryNow = libraries
+        if (!songLookups || animeLibraryNow.isEmpty()) return
         val server = session?.serverUrl?.takeIf { serverKind == ServerKind.Plex } ?: return
         synchronized(this) { if (warming == server) return; warming = server }
-        background.launch { runCatching { warmAnimeThemes(libraries) } }
+        val given = animeLibraryNow
+        background.launch { runCatching { warmAnimeThemes(given) } }
     }
 
-    private suspend fun warmAnimeThemes(libraries: List<BaseItemDto>) {
-        val store = plexShowStore() ?: return
+    /**
+     * Settings > Title Pages > Refresh Songs: forgets what was kept for this server (and this run's answers) and asks AnimeThemes again
+     * for every show. False when AnimeThemes couldn't be reached all the way through; the rest is kept.
+     */
+    suspend fun refreshSongs(): Boolean {
+        val server = session?.serverUrl?.takeIf { serverKind == ServerKind.Plex }
+        if (server != null) plexThemes.clear(server)
+        AnimeThemesLookup.reset()
+        if (!songLookups || server == null || animeLibraryNow.isEmpty()) return true
+        synchronized(this) { warming = server }
+        return warmAnimeThemes(animeLibraryNow)
+    }
+
+    private suspend fun warmAnimeThemes(libraries: List<BaseItemDto>): Boolean {
+        val store = plexShowStore() ?: return true
         val names = libraries.filter { it.collectionType == CollectionType.TVSHOWS }.flatMap { library ->
             val shows = mutableListOf<String>()
             while (true) {
@@ -1044,8 +1068,9 @@ class AsterRepository(context: Context, private val store: SessionStore) {
             }
             shows
         }
-        val asked = AnimeThemesLookup.prefetch(http, names, store)
-        android.util.Log.d("Aster", "AnimeThemes warmed: ${names.size} shows, $asked asked")
+        val warmed = AnimeThemesLookup.prefetch(http, names, store)
+        android.util.Log.d("Aster", "AnimeThemes warmed: ${names.size} shows, ${warmed.asked} asked${if (warmed.complete) "" else ", stopped early"}")
+        return warmed.complete
     }
 
     /** The theme a published music video (or song) is, from the OP/ED plugin; null for any other item, or without the plugin. */

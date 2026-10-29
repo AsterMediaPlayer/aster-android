@@ -54,6 +54,16 @@ class PlexThemeCacheTest {
         assertEquals(listOf(show), cache().shows("http://plex:32400", "Chainsmoker Cat"))
     }
 
+    @Test fun clearingForgetsOneServersEntriesOnly() = runBlocking {
+        cache().putShows("http://plex:32400", mapOf("A" to listOf(show)))
+        cache().putClips("http://plex:32400", series, 3, listOf(clip))
+        cache().putShows("http://other:32400", mapOf("A" to listOf(show)))
+        cache().clear("http://plex:32400")
+        assertNull(cache().shows("http://plex:32400", "A"))
+        assertNull(cache().clips("http://plex:32400", series, 3))
+        assertEquals(listOf(show), cache().shows("http://other:32400", "A"))
+    }
+
     @Test fun aNameIsFoundHoweverItsCased() = runBlocking {
         cache().putShows("s", mapOf("Chainsmoker Cat" to listOf(show)))
         assertEquals(listOf(show), cache().shows("s", " chainsmoker CAT "))

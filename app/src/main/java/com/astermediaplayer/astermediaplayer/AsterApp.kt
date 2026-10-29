@@ -19,6 +19,7 @@ import com.astermediaplayer.astermediaplayer.ui.player.AudiobookPlayer
 import com.astermediaplayer.astermediaplayer.ui.player.MusicPlayer
 import com.astermediaplayer.astermediaplayer.ui.player.ThemePlayer
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
 class AsterApp : Application(), SingletonImageLoader.Factory {
@@ -71,6 +72,17 @@ class AsterApp : Application(), SingletonImageLoader.Factory {
         channels.reset()
         liveMini.stop()
         audiobookLibrary.reset()
+    }
+
+    override fun onCreate() {
+        super.onCreate()
+        // The repository asks the setting before it contacts AnimeThemes; switching it back on gets the library's songs fetched.
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Default).launch {
+            settings.settings.map { it.songLookups }.distinctUntilChanged().collect { on ->
+                repository.songLookups = on
+                if (on) repository.warmAnimeThemesInBackground()
+            }
+        }
     }
 
     override fun newImageLoader(context: PlatformContext): ImageLoader = ImageLoader.Builder(context)
