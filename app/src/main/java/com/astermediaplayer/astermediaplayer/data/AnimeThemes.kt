@@ -1,7 +1,9 @@
 package com.astermediaplayer.astermediaplayer.data
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import java.util.concurrent.TimeUnit
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -103,16 +105,37 @@ object AnimeThemesLookup {
 
     private fun JSONArray?.objects(): List<JSONObject> = if (this == null) emptyList() else List(length()) { optJSONObject(it) }.filterNotNull()
 
-    /** Null when the request failed (no connection, an error), so a failure isn't taken for "no themes". */
+    /**
+     * Null when the request failed (no connection, an error), so a failure isn't taken for "no themes". AnimeThemes often answers a
+     * request with a 5xx or drops it, so a server error or a dropped connection is tried again (once more, after a pause); a 4xx isn't.
+     */
     private suspend fun get(http: OkHttpClient, path: String, query: Map<String, String>): JSONObject? = withContext(Dispatchers.IO) {
-        runCatching {
-            val url = (BASE + path).toHttpUrl().newBuilder().apply { query.toSortedMap().forEach { (k, v) -> addQueryParameter(k, v) } }.build()
-            val request = Request.Builder().url(url).header("Accept", "application/json").build()
-            http.newCall(request).execute().use { response ->
-                val body = response.body.string()
-                android.util.Log.d("Aster", "AnimeThemes $path -> ${response.code}")
-                if (response.isSuccessful) JSONObject(body) else null
-            }
-        }.onFailure { android.util.Log.w("Aster", "AnimeThemes $path failed", it) }.getOrNull()
+        val url = (BASE + path).toHttpUrl().newBuilder().apply { query.toSortedMap().forEach { (k, v) -> addQueryParameter(k, v) } }.build()
+        val request = Request.Builder().url(url).header("Accept", "application/json").build()
+        for (attempt in 1..ATTEMPTS) {
+            val outcome = runCatching {
+                patient(http).newCall(request).execute().use { response ->
+                    val body = response.body.string()
+                    android.util.Log.d("Aster", "AnimeThemes $path -> ${response.code}")
+                    when {
+                        response.isSuccessful -> JSONObject(body)
+                        response.code >= 500 -> RETRY
+                        else -> null
+                    }
+                }
+            }.onFailure { android.util.Log.w("Aster", "AnimeThemes $path failed (try $attempt)", it) }
+            val result = outcome.getOrDefault(RETRY)
+            if (result is JSONObject) return@withContext result
+            if (result == null || attempt == ATTEMPTS) return@withContext null
+            delay(RETRY_PAUSE_MS * attempt)
+        }
+        null
     }
+
+    /** AnimeThemes takes 5 to 15 seconds to answer, past the app's usual 10, so its requests are given longer. */
+    private fun patient(http: OkHttpClient): OkHttpClient = http.newBuilder().readTimeout(30, TimeUnit.SECONDS).callTimeout(45, TimeUnit.SECONDS).build()
+
+    private val RETRY = Any()
+    private const val ATTEMPTS = 2
+    private const val RETRY_PAUSE_MS = 800L
 }
