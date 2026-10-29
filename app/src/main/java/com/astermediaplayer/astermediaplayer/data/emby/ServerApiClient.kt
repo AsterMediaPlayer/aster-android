@@ -46,6 +46,8 @@ class ServerApiClient(private val inner: ApiClient, private val kind: ServerKind
         val route = user?.let { EmbyRoutes.rewrite(method, pathTemplate) }
         val paths = pathParameters.mapValues { outgoing(it.value) }.let { if (route != null) it + ("userId" to user) else it }
         val body = requestBody?.let { ApiSerializer.encodeRequestBody(it) }?.let { Json.parseToJsonElement(EmbyIds.forServer(it)) }
+            // An item saved: its tags as Emby keeps them (see EmbyTags).
+            ?.let { if (method == HttpMethod.POST && pathTemplate == "/Items/{itemId}") EmbyTags.write(it) else it }
         val response = try {
             inner.request(method, route ?: pathTemplate, paths, queryParameters.mapValues { outgoing(it.value) }, body)
         } catch (e: kotlin.coroutines.cancellation.CancellationException) {
@@ -71,7 +73,7 @@ class ServerApiClient(private val inner: ApiClient, private val kind: ServerKind
         val first = body.firstOrNull { it != ' '.code.toByte() && it != '\n'.code.toByte() && it != '\r'.code.toByte() }?.toInt()?.toChar()
         if (first != '{' && first != '[') return response
         val ids = EmbyIds.forSdk(body.decodeToString())
-        val filled = EmbyShapes.fill(Json.parseToJsonElement(ids))
+        val filled = EmbyShapes.fill(EmbyTags.read(Json.parseToJsonElement(ids)))
         return RawResponse(filled.toString().encodeToByteArray(), response.status, response.headers)
     }
 }
