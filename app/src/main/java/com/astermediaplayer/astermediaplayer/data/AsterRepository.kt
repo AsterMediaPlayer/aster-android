@@ -279,6 +279,19 @@ class AsterRepository(context: Context, private val store: SessionStore) {
         _locked.value = false
     }
 
+    /**
+     * Keeps the sign-in a password check just made (Jellyfin ends the one it replaces) in place of the one saved, and for the
+     * server in use carries on with it, as the Apple apps do.
+     */
+    suspend fun keepSignIn(fresh: Session) {
+        if (SavedServer.id(fresh.serverUrl, fresh.userId) == currentServerId) {
+            store.save(fresh)
+            client = connect(fresh.serverUrl, fresh.accessToken, fresh.kind)
+            session = fresh
+        }
+        remember(fresh)
+    }
+
     suspend fun setAsksPasswordToSwitch(id: String, asks: Boolean) =
         update(_servers.value.map { if (it.id == id) it.copy(asksPasswordToSwitch = asks) else it })
 

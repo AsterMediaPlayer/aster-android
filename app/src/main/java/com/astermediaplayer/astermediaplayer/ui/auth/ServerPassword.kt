@@ -49,7 +49,11 @@ import kotlinx.coroutines.launch
  * to it. Closes itself once it's right.
  */
 @Composable
-fun ServerPasswordDialog(server: SavedServer, button: String, title: String = server.title, onCheck: suspend (String) -> Unit, onDismiss: () -> Unit) {
+fun ServerPasswordDialog(
+    server: SavedServer, button: String, title: String = server.title,
+    /** What it's for, when not switching to the server: "Enter Ann's password to {purpose}." */
+    purpose: String = "switch to this ${server.session.kind.displayName} server",
+    onCheck: suspend (String) -> Unit, onDismiss: () -> Unit) {
     var password by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -68,7 +72,7 @@ fun ServerPasswordDialog(server: SavedServer, button: String, title: String = se
         title = { Text(title) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("Enter ${server.session.userName}'s password to switch to this ${server.session.kind.displayName} server.")
+                Text("Enter ${server.session.userName}'s password to $purpose.")
                 OutlinedTextField(
                     value = password, onValueChange = { password = it; error = null }, label = { Text("Password") }, singleLine = true,
                     modifier = Modifier.fillMaxWidth(), visualTransformation = PasswordVisualTransformation(),

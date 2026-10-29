@@ -467,6 +467,7 @@ private fun ServerPage(id: String, servers: ServerActions, open: (SettingsPage) 
     val server = saved.firstOrNull { it.id == id } ?: return
     val scope = rememberCoroutineScope()
     var asking by remember { mutableStateOf(false) }
+    var loosening by remember { mutableStateOf<LockChange?>(null) }
     val inUse = id == repo.currentServerId
     SRow("Server", server.session.kind.displayName)
     SRow("Address", server.session.serverUrl)
@@ -478,7 +479,11 @@ private fun ServerPage(id: String, servers: ServerActions, open: (SettingsPage) 
     }
     // A password to switch or unlock is the server's own, checked by the server: Plex's sign-in has none to ask for.
     if (server.session.kind != com.astermediaplayer.astermediaplayer.data.emby.ServerKind.Plex) {
-        SSwitch("Ask for Password to Switch", server.asksPasswordToSwitch) { scope.launch { repo.setAsksPasswordToSwitch(id, it) } }
+        SSwitch("Ask for Password to Switch", server.asksPasswordToSwitch) { asks ->
+            // Turning it off asks for the password, so nobody else can.
+            if (server.loosens(asksToSwitch = asks)) loosening = LockChange("stop asking for it to switch", "Turn Off") { repo.setAsksPasswordToSwitch(id, false) }
+            else scope.launch { repo.setAsksPasswordToSwitch(id, asks) }
+        }
         SNote("Switching to this server asks for ${server.session.userName}'s password first, checked by the server, so others on this device can't switch to it.")
         SGroup(" ")
         SRow("Lock After", SavedServer.lockTitle(server.lockAfterMinutes), chevron = true) { open(SettingsPage.LockAfter(id)) }
@@ -493,6 +498,20 @@ private fun ServerPage(id: String, servers: ServerActions, open: (SettingsPage) 
         onCheck = { password -> val fresh = repo.signInAgain(server, password); repo.switchTo(server, fresh); servers.onSwitched() },
         onDismiss = { asking = false },
     )
+    loosening?.let { change -> LockChangeDialog(server, saved, repo, change) { loosening = null } }
+}
+
+/** A change that lets more past a server's lock, held until its password is given, as on the Apple apps. */
+private class LockChange(val purpose: String, val button: String, val apply: suspend () -> Unit)
+
+@Composable
+private fun LockChangeDialog(server: SavedServer, saved: List<SavedServer>, repo: com.astermediaplayer.astermediaplayer.data.AsterRepository, change: LockChange, onDismiss: () -> Unit) {
+    com.astermediaplayer.astermediaplayer.ui.auth.ServerPasswordDialog(
+        server, change.button, title = server.titleAmong(saved), purpose = change.purpose,
+        // The check is a fresh sign-in, which ends the one saved: it's kept in its place.
+        onCheck = { password -> repo.keepSignIn(repo.signInAgain(server, password)); change.apply() },
+        onDismiss = onDismiss,
+    )
 }
 
 /** A saved server's Lock After choices: picking one saves it and goes back. */
@@ -500,11 +519,18 @@ private fun ServerPage(id: String, servers: ServerActions, open: (SettingsPage) 
 private fun LockAfterPage(id: String, servers: ServerActions, back: () -> Unit) {
     val repo = servers.repo
     val saved by repo.savedServers.collectAsState()
-    val chosen = saved.firstOrNull { it.id == id }?.lockAfterMinutes
+    val server = saved.firstOrNull { it.id == id }
+    val chosen = server?.lockAfterMinutes
     val scope = rememberCoroutineScope()
+    var loosening by remember { mutableStateOf<LockChange?>(null) }
     (listOf<Int?>(null) + SavedServer.LOCK_CHOICES).forEach { minutes ->
-        SRow(SavedServer.lockTitle(minutes), if (minutes == chosen) "✓" else null) { scope.launch { repo.setLockAfter(id, minutes); back() } }
+        SRow(SavedServer.lockTitle(minutes), if (minutes == chosen) "✓" else null) {
+            // Never, or a longer wait, asks for the password first.
+            if (server != null && server.loosens(lockAfter = minutes)) loosening = LockChange("change when it locks", "Change") { repo.setLockAfter(id, minutes); back() }
+            else scope.launch { repo.setLockAfter(id, minutes); back() }
+        }
     }
+    if (server != null) loosening?.let { change -> LockChangeDialog(server, saved, repo, change) { loosening = null } }
 }
 
 @Composable
