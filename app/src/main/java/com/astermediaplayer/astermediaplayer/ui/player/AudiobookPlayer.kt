@@ -92,6 +92,12 @@ class AudiobookPlayer(private val context: Context, private val repo: AsterRepos
     /** The player, created with the first book and shared with the media session service. */
     var player: ExoPlayer? = null
         private set
+
+    /** What the media session publishes: the player, showing the chapter's progress rather than the part's. */
+    var sessionPlayer: ChapterSessionPlayer? = null
+        private set
+    /** The chapter the session was last told about. */
+    private var sessionChapterId: Int? = null
     private var tick: Job? = null
     private var playSessionId = UUID.randomUUID().toString()
     private var lastReport = 0L
@@ -127,6 +133,7 @@ class AudiobookPlayer(private val context: Context, private val repo: AsterRepos
         .build().also { exo ->
             player = exo
             exo.addListener(listener)
+            sessionPlayer = ChapterSessionPlayer(exo, ::liveChapterBounds, ::skip)
         }
 
     private val listener = object : Player.Listener {
@@ -310,6 +317,16 @@ class AudiobookPlayer(private val context: Context, private val repo: AsterRepos
         val exo = player ?: return
         if (exo.isPlaying) keepAhead()
         _state.update { it.copy(position = exo.currentPosition / 1000.0, partIndex = exo.currentMediaItemIndex, duration = exo.durationSeconds(it)) }
+        val chapterId = _state.value.chapter?.id
+        if (chapterId != sessionChapterId) { sessionChapterId = chapterId; sessionPlayer?.chapterChanged() }
+    }
+
+    /** The current chapter's bounds at the player's own position, or null for a book without chapters. */
+    private fun liveChapterBounds(): Pair<Double, Double>? {
+        val exo = player ?: return null
+        val s = _state.value
+        if (s.book?.chapters.isNullOrEmpty()) return null
+        return s.copy(partIndex = exo.currentMediaItemIndex, position = exo.currentPosition / 1000.0, duration = exo.durationSeconds(s)).chapterBounds
     }
 
     private fun report(paused: Boolean, start: Boolean = false, saving: Boolean = false) {

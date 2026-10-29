@@ -29,7 +29,7 @@ class PlaybackService : MediaSessionService() {
      */
     private fun sync() {
         val app = application as AsterApp
-        val wanted = listOf("audiobook" to app.audiobooks.player, "music" to app.music.player, "video" to app.videoPlayer)
+        val wanted = listOf("audiobook" to app.audiobooks.sessionPlayer, "music" to app.music.player, "video" to app.videoPlayer)
         val keep = wanted.mapNotNull { it.second }.toSet()
         sessions.keys.filter { it !in keep }.forEach { gone ->
             sessions.remove(gone)?.let { removeSession(it); it.release() }
