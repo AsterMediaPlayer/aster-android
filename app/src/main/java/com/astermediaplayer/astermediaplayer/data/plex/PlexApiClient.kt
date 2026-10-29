@@ -233,7 +233,8 @@ class PlexApiClient(
             HttpMethod.GET to "/Users/Me" -> ok(buildJsonObject {
                 put("Name", "Plex")
                 put("Id", PlexMapper.id("1"))
-                putJsonObject("Policy") { put("IsAdministrator", false) }
+                // Plex sets no parental caps here, and a missing EnableAllFolders would be filled in as false: a restricted user.
+                putJsonObject("Policy") { put("IsAdministrator", false); put("EnableAllFolders", true) }
             })
             HttpMethod.GET to "/System/Info/Public" -> ok(buildJsonObject { put("ProductName", "Plex Media Server"); put("ServerName", "Plex") }, fill = false)
             HttpMethod.GET to "/Genres", HttpMethod.GET to "/Studios" -> ok(PlexMapper.queryResult(emptyList(), 0))
