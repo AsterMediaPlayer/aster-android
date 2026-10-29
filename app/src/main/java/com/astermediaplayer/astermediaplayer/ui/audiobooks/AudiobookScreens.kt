@@ -439,7 +439,8 @@ fun AudiobookPage(bookId: UUID, modifier: Modifier = Modifier) {
                     ) {
                         if (isLoaded) { player.togglePlayPause(); player.setPresented(true) } else player.play(book)
                     }
-                    DownloadPill(book)
+                    // Downloads are for a phone or tablet, as on the Apple apps; a TV has none.
+                    if (!LocalIsTv.current) DownloadPill(book)
                     if (book.resumePoint != null || isLoaded) PillButton("From the Beginning") { player.play(book, book.chapters.firstOrNull() ?: com.astermediaplayer.astermediaplayer.data.AudiobookChapter(0, 0, 0.0, "")) }
                 }
             }
