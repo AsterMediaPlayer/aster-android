@@ -21,6 +21,23 @@ class OpeningsEndingsTest {
         assertEquals(120_000L, clips[0].endMs)
     }
 
+    /** An Emby episode as it came back: a "Marker" chapter shares the start of "Intro Start", so the opening ends at "Intro End", not at the next chapter. */
+    @Test fun embyIntroEndsAtIntroEndWhateverChapterIsBetween() {
+        val clips = OpeningsEndings.find(listOf(episode(
+            "Marker 1" to 0, "Intro Start" to 34, "Marker 2" to 34, "Intro End" to 94, "Marker 3" to 94,
+            "Marker 4" to 244, "Marker 5" to 534, "Marker 6" to 661,
+        )))
+        assertEquals(1, clips.size)
+        assertEquals(true, clips[0].opening)
+        assertEquals(34_000L, clips[0].startMs)
+        assertEquals(94_000L, clips[0].endMs)
+    }
+
+    @Test fun embyIntroWithNoIntroEndEndsAtTheNextChapter() {
+        val clips = OpeningsEndings.find(listOf(episode("Chapter 1" to 0, "Intro Start" to 62, "Chapter 2" to 150)))
+        assertEquals(listOf(62_000L to 150_000L), clips.map { it.startMs to it.endMs })
+    }
+
     @Test fun namedOpeningsStillWork() {
         val clips = OpeningsEndings.find(listOf(episode("Prologue" to 0, "OP" to 90, "Part A" to 180, "ED" to 1300, "Preview" to 1390)))
         assertEquals(listOf(true, false), clips.map { it.opening })

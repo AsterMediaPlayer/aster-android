@@ -134,7 +134,8 @@ class SongThemeCache(private val file: File, private val now: () -> Long = Syste
     )
 
     private companion object {
-        const val VERSION = 1
+        // 2: Emby's "Intro Start" clips end at "Intro End", so clips found before are wrong.
+        const val VERSION = 2
         const val MAX_ENTRIES = 1500
         const val LIFE_MS = 30L * 24 * 60 * 60 * 1000
         // "Nothing found" may only be that AnimeThemes or a scan hasn't caught up, so it's asked again sooner.

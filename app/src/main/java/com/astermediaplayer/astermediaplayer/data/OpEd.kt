@@ -200,7 +200,11 @@ object OpeningsEndings {
                 // An "Intro" beside a real "OP" is the cold open.
                 if (!mark.definite && (if (mark.opening) hasDefiniteOpening else hasDefiniteEnding)) return@forEachIndexed
                 val start = chapter.startPositionTicks / TICKS_PER_MS
-                val end = (if (index + 1 < chapters.size) chapters[index + 1].startPositionTicks else episode.runTimeTicks ?: 0L) / TICKS_PER_MS
+                // Emby's "Intro Start" runs to its "Intro End", whatever chapters (its "Marker n" ones) come between.
+                val introEnd = if (chapter.name?.trim().equals("intro start", ignoreCase = true)) {
+                    chapters.drop(index + 1).firstOrNull { it.name?.trim().equals("intro end", ignoreCase = true) }?.startPositionTicks
+                } else null
+                val end = (introEnd ?: if (index + 1 < chapters.size) chapters[index + 1].startPositionTicks else episode.runTimeTicks ?: 0L) / TICKS_PER_MS
                 if (end - start !in durationRange) return@forEachIndexed
                 val earlier = kept.getOrPut("$season-${mark.opening}") { mutableListOf() }
                 if (earlier.any { kotlin.math.abs((end - start) - (it.endMs - it.startMs)) <= SAME_SONG_SLACK_MS }) return@forEachIndexed
