@@ -78,6 +78,8 @@ import java.util.UUID
 
 /** Thin wrapper over the Jellyfin SDK; the Kotlin counterpart of the app's `JellyfinClient`. */
 class AsterRepository(context: Context, private val store: SessionStore) {
+    /** What Plex's title pages have found (openings from chapters, their songs), kept between runs. */
+    private val plexThemes = PlexThemeCache(java.io.File(context.applicationContext.filesDir, "plex-themes.json"))
     private val jellyfin: Jellyfin = createJellyfin {
         this.context = context.applicationContext
         clientInfo = ClientInfo(name = "Aster", version = "0.1")
@@ -1005,7 +1007,12 @@ class AsterRepository(context: Context, private val store: SessionStore) {
         val season = episode.seasonId?.let { runCatching { item(it) }.getOrNull() }
         val aniDb = season?.providerIds?.entries?.firstOrNull { it.key.equals("AniDB", ignoreCase = true) }?.value
         val year = season?.productionYear ?: season?.premiereDate?.year ?: episode.premiereDate?.year ?: episode.productionYear
-        return AnimeThemesLookup.themes(http, aniDb, series, year)
+        val server = session?.serverUrl.takeIf { serverKind == ServerKind.Plex }
+        val key = AnimeThemesLookup.key(aniDb, series, year)
+        if (server != null) plexThemes.themes(server, key)?.let { return it }
+        val themes = AnimeThemesLookup.lookup(http, aniDb, series, year)
+        if (server != null && themes != null) plexThemes.putThemes(server, key, themes)
+        return themes.orEmpty()
     }
 
     /** The theme a published music video (or song) is, from the OP/ED plugin; null for any other item, or without the plugin. */
@@ -1043,8 +1050,14 @@ class AsterRepository(context: Context, private val store: SessionStore) {
     }.getOrDefault(emptyList())
 
     /** The openings and endings in a series' episodes' chapter markers: what the plugin falls back to. */
-    suspend fun chapterThemes(seriesId: UUID): List<ThemeClip> =
-        runCatching { OpeningsEndings.find(episodes(seriesId, null, listOf(ItemFields.CHAPTERS))) }.getOrDefault(emptyList())
+    suspend fun chapterThemes(seriesId: UUID, episodeCount: Int? = null): List<ThemeClip> {
+        val server = session?.serverUrl.takeIf { serverKind == ServerKind.Plex }
+        if (server != null) plexThemes.clips(server, seriesId, episodeCount)?.let { return it }
+        val found = runCatching { OpeningsEndings.find(episodes(seriesId, null, listOf(ItemFields.CHAPTERS))) }
+        // Read again when the show has more episodes; a failed read isn't kept.
+        if (server != null) found.getOrNull()?.let { plexThemes.putClips(server, seriesId, episodeCount, it) }
+        return found.getOrDefault(emptyList())
+    }
 
     /** An id as Jellyfin writes it either way: lowercase, without dashes. */
     fun plainId(id: String): String = id.lowercase().replace("-", "")

@@ -1,5 +1,6 @@
 package com.astermediaplayer.astermediaplayer.data
 
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -61,14 +62,20 @@ object AnimeThemesLookup {
     /** What each show turned out to have, nothing included: each is asked about once per launch. */
     private val found = ConcurrentHashMap<String, List<KnownTheme>>()
 
+    /** What a show's themes are remembered under: its AniDB id, else its name and the year its season began. */
+    fun key(aniDbId: String?, seriesName: String, year: Int?): String = aniDbId?.let { "anidb:$it" } ?: "name:${seriesName.lowercase()}|${year ?: 0}"
+
     /** The themes of the show an episode is from: by its AniDB id, else by [seriesName] and the year the season began. */
-    suspend fun themes(http: OkHttpClient, aniDbId: String?, seriesName: String, year: Int?): List<KnownTheme> {
-        val key = aniDbId?.let { "anidb:$it" } ?: "name:${seriesName.lowercase()}|${year ?: 0}"
+    suspend fun themes(http: OkHttpClient, aniDbId: String?, seriesName: String, year: Int?): List<KnownTheme> = lookup(http, aniDbId, seriesName, year).orEmpty()
+
+    /** [themes], or null when the lookup failed (offline, an error), which isn't the same as a show with none. */
+    suspend fun lookup(http: OkHttpClient, aniDbId: String?, seriesName: String, year: Int?): List<KnownTheme>? {
+        val key = key(aniDbId, seriesName, year)
         found[key]?.let { return it }
         val themes = if (aniDbId != null) byAniDb(http, aniDbId) else byName(http, seriesName, year)
         // A failed lookup (offline) isn't remembered, so the next episode tries again.
         if (themes != null) found[key] = themes
-        return themes.orEmpty()
+        return themes
     }
 
     private suspend fun byAniDb(http: OkHttpClient, id: String): List<KnownTheme>? {
@@ -81,12 +88,28 @@ object AnimeThemesLookup {
      * name finds; with no year, the first found. AnimeThemes names shows in Japanese, so the year, not the name, tells its seasons apart.
      */
     private suspend fun byName(http: OkHttpClient, name: String, year: Int?): List<KnownTheme>? {
-        val search = get(http, "/search", mapOf("q" to name, "fields[search]" to "anime")) ?: return null
+        val search = searched(http, name) ?: return null
         val candidates = search.optJSONObject("search")?.optJSONArray("anime").objects()
         val pick = if (year != null) candidates.firstOrNull { it.optInt("year") == year } ?: candidates.firstOrNull { it.optInt("year") == year - 1 } else candidates.firstOrNull()
         val slug = pick?.optString("slug")?.ifEmpty { null } ?: return emptyList()
         val reply = get(http, "/anime/$slug", mapOf("include" to INCLUDE)) ?: return null
         return reply.optJSONObject("anime")?.let(::themes).orEmpty()
+    }
+
+    private val searches = ConcurrentHashMap<String, CompletableDeferred<JSONObject?>>()
+
+    /**
+     * What a name finds, asked once however many seasons of the show want it at the same time (they share the one answer, which holds
+     * every season of it) and not again this run; a failed search isn't kept. AnimeThemes asks for as few requests as can be.
+     */
+    private suspend fun searched(http: OkHttpClient, name: String): JSONObject? {
+        val key = name.lowercase()
+        val mine = CompletableDeferred<JSONObject?>()
+        searches.putIfAbsent(key, mine)?.let { return it.await() }
+        val reply = try { get(http, "/search", mapOf("q" to name, "fields[search]" to "anime")) } catch (e: Throwable) { searches.remove(key, mine); mine.cancel(); throw e }
+        if (reply == null) searches.remove(key, mine)
+        mine.complete(reply)
+        return reply
     }
 
     /** The openings and endings in an AnimeThemes `anime` object. */

@@ -1,0 +1,79 @@
+package com.astermediaplayer.astermediaplayer.data
+
+import kotlinx.coroutines.runBlocking
+import org.jellyfin.sdk.model.api.BaseItemDto
+import org.jellyfin.sdk.model.api.BaseItemKind
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
+import org.junit.Rule
+import org.junit.Test
+import org.junit.rules.TemporaryFolder
+import java.util.UUID
+
+/** What a Plex library's title pages found is kept between runs, per server, and read again when it may have changed. */
+class PlexThemeCacheTest {
+    @get:Rule val folder = TemporaryFolder()
+    private var clock = 1_000_000L
+    private fun cache() = PlexThemeCache(java.io.File(folder.root, "plex-themes.json")) { clock }
+
+    private val series = UUID.fromString("00000000-0000-0000-0000-0000000018d5")
+    private val clip = ThemeClip(
+        opening = true, season = 1, number = 1, startMs = 138_000, endMs = 226_000,
+        episode = BaseItemDto(id = UUID.fromString("00000000-0000-0000-0000-0000000017ee"), type = BaseItemKind.EPISODE, name = "I'm Yani Neko, Nya", parentIndexNumber = 1, indexNumber = 1),
+    )
+    private val theme = KnownTheme(isOpening = true, sequence = 1, songTitle = "Nanmonee", artists = listOf("Wasureranneyo"), episodes = "1-")
+
+    @Test fun clipsComeBackAfterARestart() = runBlocking {
+        cache().putClips("http://plex:32400", series, 11, listOf(clip))
+        val back = cache().clips("http://plex:32400", series, 11)!!.single()
+        assertEquals(clip.copy(episode = back.episode), back)
+        assertEquals("I'm Yani Neko, Nya", back.episode.name)
+        assertEquals(clip.episode.id, back.episode.id)
+    }
+
+    @Test fun aClipKeepsWhatItsCardShowsNotTheRest() = runBlocking {
+        val watched = org.jellyfin.sdk.model.api.UserItemDataDto(playbackPositionTicks = 5, playCount = 1, isFavorite = true, played = true, key = "k", itemId = clip.episode.id)
+        cache().putClips("s", series, 1, listOf(clip.copy(episode = clip.episode.copy(userData = watched))))
+        val back = cache().clips("s", series, 1)!!.single().episode
+        assertNull(back.userData)
+        assertEquals("I'm Yani Neko, Nya", back.name)
+        assertEquals(1, back.indexNumber)
+        assertEquals(1, back.parentIndexNumber)
+    }
+
+    @Test fun moreEpisodesReadTheChaptersAgain() = runBlocking {
+        cache().putClips("http://plex:32400", series, 11, listOf(clip))
+        assertNull(cache().clips("http://plex:32400", series, 12))
+    }
+
+    @Test fun anotherServerHasItsOwn() = runBlocking {
+        cache().putThemes("http://plex:32400", "anidb:1", listOf(theme))
+        assertNull(cache().themes("http://other:32400", "anidb:1"))
+        assertEquals(listOf(theme), cache().themes("http://plex:32400", "anidb:1"))
+    }
+
+    @Test fun nothingFoundIsAskedAgainSoonerThanSomething() = runBlocking {
+        cache().putThemes("s", "found", listOf(theme))
+        cache().putThemes("s", "none", emptyList())
+        clock += 4L * 24 * 60 * 60 * 1000
+        assertNotNull(cache().themes("s", "found"))
+        assertNull(cache().themes("s", "none"))
+        clock += 30L * 24 * 60 * 60 * 1000
+        assertNull(cache().themes("s", "found"))
+    }
+
+    @Test fun aDamagedFileIsJustAnEmptyCache() = runBlocking {
+        java.io.File(folder.root, "plex-themes.json").writeText("{not json")
+        assertNull(cache().themes("s", "anidb:1"))
+        cache().putThemes("s", "anidb:1", listOf(theme))
+        assertEquals(listOf(theme), cache().themes("s", "anidb:1"))
+    }
+
+    @Test fun theFileStaysSmall() = runBlocking {
+        val cache = cache()
+        repeat(450) { cache.putThemes("s", "name:show $it", listOf(theme)); clock += 1 }
+        assertNull(cache().themes("s", "name:show 0"))
+        assertNotNull(cache().themes("s", "name:show 449"))
+    }
+}

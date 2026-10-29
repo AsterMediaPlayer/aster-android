@@ -283,7 +283,7 @@ class DetailViewModel(private val repo: AsterRepository, private val itemId: UUI
     private suspend fun seriesThemes(series: BaseItemDto): List<OpeningEnding> {
         val themes = repo.opEdThemes(series.id).orEmpty().filter { it.playablePath != null || it.isPreparing }
         if (themes.isNotEmpty()) return themes.map { OpeningEnding.Theme(it) }
-        return repo.chapterThemes(series.id).map { OpeningEnding.Chapter(it) }
+        return repo.chapterThemes(series.id, series.recursiveItemCount).map { OpeningEnding.Chapter(it) }
     }
 
     /** The chapter clips' songs, from AnimeThemes, asked once a season (as it lists each season apart) and all seasons at once. */
