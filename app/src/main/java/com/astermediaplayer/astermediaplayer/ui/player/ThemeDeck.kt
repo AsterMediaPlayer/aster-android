@@ -103,13 +103,15 @@ class ThemeDeck(private val repo: AsterRepository, private val themes: ThemePlay
                     if (stream == null) { next(); return@launch }
                     startMs = stream.start; endMs = stream.end
                     durationMs = stream.end - stream.start
-                    begin(stream.url, stream.start)
+                    begin(stream.url, stream.start, stream)
                 }
             }
         }
     }
 
-    private fun begin(url: String, from: Long) {
+    /** Plays [url] from [from]; for a [clip], the clip's times are settled once the stream says where it begins. */
+    private fun begin(url: String, from: Long, clip: ThemePlayer.ClipStream? = null) {
+        var settled = clip?.fromStreamStart != true
         val p = themes.newPlayer().apply {
             setMediaItem(MediaItem.fromUri(url), from)
             prepare()
@@ -120,11 +122,15 @@ class ThemeDeck(private val repo: AsterRepository, private val themes: ThemePlay
             while (true) {
                 delay(250)
                 val position = p.currentPosition
-                elapsedMs = (position - startMs).coerceAtLeast(0)
+                if (!settled && p.playbackState == Player.STATE_READY) {
+                    clip!!.range(position).let { startMs = it.first; endMs = it.last }
+                    settled = true
+                }
+                elapsedMs = if (settled) (position - startMs).coerceAtLeast(0) else 0
                 if (current is OpeningEnding.Theme && p.duration > 0) durationMs = p.duration
                 isPlaying = p.playWhenReady && p.playbackState != Player.STATE_ENDED
                 // A theme ends with its file; a clip, where its stretch of the episode does.
-                if (p.playbackState == Player.STATE_ENDED || (endMs != Long.MAX_VALUE && position >= endMs)) { next(); return@launch }
+                if (p.playbackState == Player.STATE_ENDED || (settled && endMs != Long.MAX_VALUE && position >= endMs)) { next(); return@launch }
             }
         }
     }

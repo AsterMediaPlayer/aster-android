@@ -125,15 +125,21 @@ class ThemePlayer(private val context: Context, private val repo: AsterRepositor
         if (!canShowFallback(id)) return
         val stream = clipStream(clip) ?: return
         if (_key.value != themeKey || !canShowFallback(id)) return
-        startFallbackVideo(id, stream.url, themeKey, sound, loop = stream.start..stream.end)
+        startFallbackVideo(id, stream.url, themeKey, sound, loop = stream)
     }
 
-    /** An episode's stream for a chapter clip, and the stretch of it to play, in the stream's own time. */
-    class ClipStream(val url: String, val start: Long, val end: Long)
+    /**
+     * An episode's stream for a chapter clip, and the stretch of it to play, in the stream's own time. A transcode's times
+     * count from wherever the server starts it ([fromStreamStart]): 0 on Jellyfin, the clip's own place in the episode on Emby.
+     */
+    class ClipStream(val url: String, val start: Long, val end: Long, val fromStreamStart: Boolean = false) {
+        /** Where the clip runs, once the player's first position says where the stream begins. */
+        fun range(firstPosition: Long): LongRange = if (fromStreamStart) firstPosition..(firstPosition + end - start) else start..end
+    }
 
     /**
      * Episodes are mostly MKV, so the server's stream (usually a cheap remux) is used unless the file plays as is.
-     * A direct stream loops between the clip's own times; a transcode starts at the clip, so it loops from zero.
+     * A direct stream plays between the clip's own times; a transcode starts at the clip.
      */
     suspend fun clipStream(clip: ThemeClip): ClipStream? {
         val info = runCatching {
@@ -144,7 +150,7 @@ class ThemePlayer(private val context: Context, private val repo: AsterRepositor
             ClipStream(repo.directStreamUrl(clip.episode.id, source.id!!, info.playSessionId, source.container), clip.startMs, clip.endMs)
         } else {
             val path = source.transcodingUrl ?: return null
-            ClipStream(repo.absoluteUrl(path), 0L, clip.endMs - clip.startMs)
+            ClipStream(repo.absoluteUrl(path), 0L, clip.endMs - clip.startMs, fromStreamStart = true)
         }
     }
 
@@ -154,7 +160,7 @@ class ThemePlayer(private val context: Context, private val repo: AsterRepositor
         return _video.value == null || fallbackId != null
     }
 
-    private suspend fun startFallbackVideo(id: String, url: String, themeKey: String, sound: Boolean, loop: LongRange?) {
+    private suspend fun startFallbackVideo(id: String, url: String, themeKey: String, sound: Boolean, loop: ClipStream?) {
         swapOutVideo()
         fallbackId = id
         // The opening is the song now (two at once would clash), and a previous opening's song gives way to the new one.
@@ -254,13 +260,13 @@ class ThemePlayer(private val context: Context, private val repo: AsterRepositor
         music = null
     }
 
-    /** With [loop], plays that range of the media over and over; otherwise the whole thing. Video that can't play is dropped. */
-    private fun startVideo(url: String, themeKey: String, muted: Boolean, loop: LongRange? = null) {
+    /** With [loop], plays that clip of the media over and over; otherwise the whole thing. Video that can't play is dropped. */
+    private fun startVideo(url: String, themeKey: String, muted: Boolean, loop: ClipStream? = null) {
         if (_key.value != themeKey) return
         val player = newPlayer().apply {
             volume = if (muted) 0f else VOLUME
             repeatMode = if (loop == null) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
-            setMediaItem(MediaItem.fromUri(url), loop?.first ?: 0L)
+            setMediaItem(MediaItem.fromUri(url), loop?.start ?: 0L)
             prepare()
             playWhenReady = !suspended
             addListener(object : Player.Listener {
@@ -279,9 +285,12 @@ class ThemePlayer(private val context: Context, private val repo: AsterRepositor
         loopJob?.cancel()
         if (loop != null) {
             loopJob = scope.launch {
+                // Where the stream begins is known once it's ready; until then there's nothing to loop back to.
+                var range: LongRange? = null
                 while (true) {
                     delay(250)
-                    if (player.currentPosition >= loop.last) player.seekTo(loop.first)
+                    if (range == null) { if (player.playbackState == Player.STATE_READY) range = loop.range(player.currentPosition) else continue }
+                    if (player.currentPosition >= range.last) player.seekTo(range.first)
                 }
             }
         }
