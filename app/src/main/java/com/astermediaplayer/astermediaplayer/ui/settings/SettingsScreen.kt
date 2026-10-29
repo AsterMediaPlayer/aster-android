@@ -21,6 +21,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.foundation.layout.height
+import androidx.compose.material.icons.filled.PanTool
+import androidx.compose.material.icons.automirrored.filled.HelpOutline
 import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.Album
 import androidx.compose.material.icons.filled.ChevronRight
@@ -417,8 +420,21 @@ private fun DownloadsPage(settings: AppSettings, store: SettingsStore, scope: ko
 private fun AboutPage() {
     val context = LocalContext.current
     val version = remember { runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull().orEmpty() }
-    SRow("Aster", version)
-    SNote("A Jellyfin and Emby player in the Apple apps' design.")
+    SRow("Aster Media Player", version)
+    SNote("A Jellyfin, Emby and Plex client for Android TV, phones and tablets, with DVD and Blu-ray style menus on Jellyfin from the Aster Disc plugin.")
+    androidx.compose.foundation.layout.Spacer(Modifier.height(12.dp))
+    AboutLink("Help & Support", Icons.AutoMirrored.Filled.HelpOutline, "https://astermediaplayer.com/support.html")
+    AboutLink("Privacy Policy", Icons.Default.PanTool, "https://astermediaplayer.com/privacy.html")
+}
+
+/** One of Aster's web pages, as on the Apple apps: opened in the browser, or on a TV, which has none, the address to type in elsewhere. */
+@Composable
+private fun AboutLink(title: String, icon: ImageVector, address: String) {
+    val context = LocalContext.current
+    if (LocalIsTv.current) SRow(title, address.removePrefix("https://"), icon = icon)
+    else SRow(title, icon = icon, chevron = true) {
+        runCatching { context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(address))) }
+    }
 }
 
 /** Account: the server in use, the user, and the servers signed in to, to switch between. */
