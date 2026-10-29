@@ -3,6 +3,9 @@ package com.astermediaplayer.astermediaplayer.data.plex
 import com.astermediaplayer.astermediaplayer.data.emby.EmbyShapes
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -210,7 +213,8 @@ class PlexApiClient(
             HttpMethod.GET to "/Shows/{seriesId}/Episodes" -> {
                 val series = PlexMapper.plexId(path["seriesId"].toString())
                 val season = q.string("seasonId")?.let(PlexMapper::plexId)
-                val episodes = titles(if (season != null) "/library/metadata/$season/children" else "/library/metadata/$series/allLeaves")
+                val listed = titles(if (season != null) "/library/metadata/$season/children" else "/library/metadata/$series/allLeaves")
+                val episodes = if ("chapters" in q.list("fields")) withChapters(listed) else listed
                 ok(PlexMapper.queryResult(episodes.map(PlexMapper::item), episodes.size))
             }
             HttpMethod.GET to "/Items/{itemId}/Similar" -> {
@@ -261,6 +265,15 @@ class PlexApiClient(
     private suspend fun sections(): List<JSONObject> = sectionsLock.withLock {
         sectionsCache ?: container("/library/sections").optJSONArray("Directory")?.objects().orEmpty()
             .filter { it.optString("type") == "movie" || it.optString("type") == "show" }.also { sectionsCache = it }
+    }
+
+    /**
+     * A list of episodes with chapters on the first few of each season. Plex's lists carry none (only an episode's own metadata does), and
+     * the openings behind a title page are found from chapters, which repeat from one episode to the next, so a sample is enough.
+     */
+    private suspend fun withChapters(episodes: List<JSONObject>): List<JSONObject> = coroutineScope {
+        val sample = episodes.groupBy { it.optInt("parentIndex") }.filterKeys { it > 0 }.values.flatMap { it.take(3) }.map { it.optString("ratingKey") }.toSet()
+        episodes.map { e -> async { if (e.optString("ratingKey") in sample) runCatching { metadata(e.optString("ratingKey")) }.getOrDefault(e) else e } }.awaitAll()
     }
 
     private suspend fun itemOrLibrary(id: String): JsonObject =
