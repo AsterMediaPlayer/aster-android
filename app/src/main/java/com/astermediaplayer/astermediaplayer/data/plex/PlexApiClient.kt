@@ -46,6 +46,9 @@ interface PlexTransport {
     /** A request whose answer isn't read. */
     suspend fun send(method: String, path: String, query: Map<String, String?> = emptyMap(), session: String? = null)
 
+    /** A request other than a GET whose answer is read (a playlist made). */
+    suspend fun call(method: String, path: String, query: Map<String, String?> = emptyMap()): String
+
     /** An address on the server, with [query] and the token in it, for a player or picture loader that can't send headers. */
     fun url(path: String, query: Map<String, String?> = emptyMap()): String
 }
@@ -79,13 +82,20 @@ class OkHttpPlexTransport(override val baseUrl: String, override val token: Stri
         }
     }
 
+    override suspend fun call(method: String, path: String, query: Map<String, String?>): String = withContext(Dispatchers.IO) {
+        http.newCall(request(method, path, query, null, null, null)).execute().use { r ->
+            if (!r.isSuccessful) throw PlexHttpException(r.code)
+            r.body.string()
+        }
+    }
+
     companion object { val DEFAULT: OkHttpClient = OkHttpClient.Builder().connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS).readTimeout(30, java.util.concurrent.TimeUnit.SECONDS).credentialSafeRedirects().build() }
 }
 
 /**
  * The Jellyfin SDK's client for a Plex Media Server: every call the app makes, answered from Plex and in the shapes the SDK's models
  * read, so the repository and every screen work unchanged (the Apple apps do this with their `MediaServer` protocol; here the seam is the
- * SDK's own client, as for Emby). Calls Plex has no answer to (Live TV, music, channels) get a 404, which the app already treats
+ * SDK's own client, as for Emby). Calls Plex has no answer to (Live TV, music) get a 404, which the app already treats
  * as a feature the server doesn't have.
  */
 class PlexApiClient(
@@ -183,6 +193,13 @@ class PlexApiClient(
             HttpMethod.GET to "/UserViews" -> sections().let { ok(PlexMapper.queryResult(it.map(PlexMapper::library), it.size)) }
             HttpMethod.GET to "/Items" -> items(q)
             HttpMethod.GET to "/Items/{itemId}" -> ok(itemOrLibrary(path["itemId"].toString()))
+            // Channels: a playlist's titles, its tags kept in its description, and a playlist made from a show.
+            HttpMethod.GET to "/Playlists/{playlistId}/Items" -> {
+                val found = titles("/playlists/${PlexMapper.plexId(path["playlistId"].toString())}/items")
+                ok(PlexMapper.queryResult(found.map(PlexMapper::item), found.size))
+            }
+            HttpMethod.POST to "/Items/{itemId}" -> saveTags(itemId!!, body)
+            HttpMethod.POST to "/Playlists" -> createPlaylist(body)
             HttpMethod.GET to "/Items/Latest" -> ok(JsonArray(latest(q)))
             HttpMethod.GET to "/UserItems/Resume" -> resume(q)
             HttpMethod.GET to "/Shows/NextUp" -> nextUp(q)
@@ -247,7 +264,45 @@ class PlexApiClient(
 
     private suspend fun itemOrLibrary(id: String): JsonObject =
         if (PlexMapper.isLibraryId(id)) sections().firstOrNull { PlexMapper.libraryId(it.optString("key")) == id }?.let(PlexMapper::library) ?: throw PlexHttpException(404)
-        else PlexMapper.item(metadata(PlexMapper.plexId(id)))
+        else runCatching { PlexMapper.item(metadata(PlexMapper.plexId(id))) }.getOrElse { e ->
+            // A playlist isn't in the library's metadata: Plex keeps it under /playlists.
+            container("/playlists/${PlexMapper.plexId(id)}").optJSONArray("Metadata")?.objects()?.firstOrNull()?.let(PlexMapper::playlist) ?: throw e
+        }
+
+    /**
+     * The user's playlists of one media type ("video" unless asked): Plex keeps a playlist to the account that made it. It has no
+     * tags on playlists, so a channel's are kept in its description (see ChannelTagParsing.fromDescription). As the Windows app.
+     */
+    private suspend fun playlists(q: Query): RawResponse {
+        val type = q.list("mediaTypes").firstOrNull() ?: "video"
+        val found = titles("/playlists", mapOf("playlistType" to type))
+            .filter { it.optString("playlistType").equals(type, ignoreCase = true) }
+            .sortedBy { it.optString("title").lowercase() }
+        return ok(PlexMapper.queryResult(found.map(PlexMapper::playlist), found.size))
+    }
+
+    /** A channel's tags saved: written into its playlist's description, keeping the description's own words. */
+    private suspend fun saveTags(id: String, body: JsonObject?): RawResponse {
+        val tags = (body?.get("Tags") as? kotlinx.serialization.json.JsonArray)?.mapNotNull { (it as? kotlinx.serialization.json.JsonPrimitive)?.content } ?: return empty(400)
+        val current = container("/playlists/$id").optJSONArray("Metadata")?.objects()?.firstOrNull()?.optString("summary")
+        plex.send("PUT", "/playlists/$id", mapOf("summary" to com.astermediaplayer.astermediaplayer.data.channels.ChannelTagParsing.inDescription(current, tags)))
+        return empty(204)
+    }
+
+    /** A video playlist of the titles asked for, the user's own (a show's episodes, for a channel made from it); its id. */
+    private suspend fun createPlaylist(body: JsonObject?): RawResponse {
+        val name = (body?.get("Name") as? kotlinx.serialization.json.JsonPrimitive)?.content ?: return empty(400)
+        val ids = (body["Ids"] as? kotlinx.serialization.json.JsonArray)?.mapNotNull { (it as? kotlinx.serialization.json.JsonPrimitive)?.content?.let(PlexMapper::plexId) }.orEmpty()
+        val machine = machineIdentifier ?: container("/identity").optString("machineIdentifier").takeIf { it.isNotEmpty() }?.also { machineIdentifier = it } ?: return empty(500)
+        val made = JSONObject(plex.call("POST", "/playlists", mapOf(
+            "type" to "video", "title" to name, "smart" to "0",
+            "uri" to "server://$machine/com.plexapp.plugins.library/library/metadata/${ids.joinToString(",")}",
+        ))).getJSONObject("MediaContainer").optJSONArray("Metadata")?.objects()?.firstOrNull()?.optString("ratingKey")?.takeIf { it.isNotEmpty() } ?: return empty(500)
+        return ok(buildJsonObject { put("Id", PlexMapper.id(made)) }, fill = false)
+    }
+
+    /** The server's own id, which a playlist's titles are named by; asked once. */
+    private var machineIdentifier: String? = null
 
     /** Plex's number for a kind of title, in a section's listing. */
     private fun typeNumber(kind: String): String? = when (kind) { "movie" -> "1"; "series" -> "2"; "season" -> "3"; "episode" -> "4"; "boxset" -> "18"; else -> null }
@@ -276,6 +331,7 @@ class PlexApiClient(
             val found = titles("/library/metadata/" + q.rawList("ids").joinToString(",") { PlexMapper.plexId(it) })
             return ok(PlexMapper.queryResult(found.map(PlexMapper::item), found.size))
         }
+        if ("playlist" in q.list("includeItemTypes")) return playlists(q)
         // Plex keeps no favourites.
         if ("isfavorite" in q.list("filters")) return ok(PlexMapper.queryResult(emptyList(), 0))
         val kinds = q.list("includeItemTypes")

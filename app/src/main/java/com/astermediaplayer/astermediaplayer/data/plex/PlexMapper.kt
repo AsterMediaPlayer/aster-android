@@ -58,6 +58,25 @@ object PlexMapper {
         else -> "Video"
     }
 
+    /**
+     * A playlist, for Channels: its titles counted, its picture the one Plex makes from their posters, and its channel tags read
+     * from its description, where they're kept since Plex has no tags on playlists.
+     */
+    fun playlist(m: JSONObject): JsonObject {
+        val base = item(m)
+        val picture = m.str("composite") ?: m.str("thumb")
+        return JsonObject(
+            base + buildJsonObject {
+                put("Type", "Playlist")
+                put("IsFolder", true)
+                put("MediaType", if (m.optString("playlistType") == "audio") "Audio" else "Video")
+                m.intOrNull("leafCount")?.let { put("ChildCount", it) }
+                putJsonArray("Tags") { com.astermediaplayer.astermediaplayer.data.channels.ChannelTagParsing.fromDescription(m.str("summary")).forEach { add(JsonPrimitive(it)) } }
+                if (picture != null) putJsonObject("ImageTags") { put("Primary", picture) }
+            },
+        )
+    }
+
     fun item(m: JSONObject): JsonObject = buildJsonObject {
         val kind = kind(m.optString("type"))
         val key = m.optString("ratingKey")

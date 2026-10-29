@@ -68,6 +68,10 @@ class PlexApiClientTest {
             return answers[path] ?: throw PlexHttpException(404)
         }
         override suspend fun send(method: String, path: String, query: Map<String, String?>, session: String?) { calls += Call(method, path, query, null, null, session) }
+        override suspend fun call(method: String, path: String, query: Map<String, String?>): String {
+            calls += Call(method, path, query, null, null, null)
+            return answers["$method $path"] ?: throw PlexHttpException(404)
+        }
         override fun url(path: String, query: Map<String, String?>) = baseUrl + path + "?" + query.filterValues { it != null }.entries.joinToString("&") { "${it.key}=${it.value}" }
     }
 

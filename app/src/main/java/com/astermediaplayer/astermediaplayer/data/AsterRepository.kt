@@ -450,6 +450,9 @@ class AsterRepository(context: Context, private val store: SessionStore) {
     /** The version of the server in use, for Account. */
     suspend fun serverVersion(): String? = runCatching { api.systemApi.getPublicSystemInfo().content.version }.getOrNull()
 
+    /** Whether this account can set up channels: the administrator, or anyone on Plex, where a playlist is its maker's own. */
+    suspend fun canEditChannels(): Boolean = serverKind == ServerKind.Plex || isAdministrator()
+
     /** Whether this account is the server's administrator, who alone can change the tags that make a playlist a channel. */
     suspend fun isAdministrator(): Boolean =
         runCatching { api.userApi.getCurrentUser().content.policy?.isAdministrator == true }.getOrDefault(false)
