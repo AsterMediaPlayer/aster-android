@@ -242,6 +242,14 @@ class ThemePlayer(private val context: Context, private val repo: AsterRepositor
                 DefaultHttpDataSource.Factory().setDefaultRequestProperties(mapOf("X-Emby-Token" to repo.session!!.accessToken)),
             ),
         )
+        // A few seconds ahead is enough for a song or a clip. ExoPlayer's own default holds up to about 130 MB of video in the
+        // app's memory, so the opening behind a page and one played from the Music row ran a phone out of memory.
+        .setLoadControl(
+            androidx.media3.exoplayer.DefaultLoadControl.Builder()
+                .setBufferDurationsMs(5_000, 15_000, 1_000, 2_000)
+                .setTargetBufferBytes(16 * 1024 * 1024)
+                .build(),
+        )
         .build()
 
     private fun startMusic(url: String) {
