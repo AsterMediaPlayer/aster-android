@@ -624,6 +624,31 @@ class PlayerViewModel(
         return episodes.getOrNull(index + 1)?.id
     }
 
+    /** What the TV player shows while paused (see [com.astermediaplayer.astermediaplayer.data.PauseInfo]); asked afresh each pause. */
+    suspend fun pauseInfo(): com.astermediaplayer.astermediaplayer.data.PauseInfo? {
+        val dto = item ?: return null
+        val s = _state.value
+        val channel = currentPlaylistChannel?.let { ChannelTuner.channel(it) }
+        return when {
+            s.breakClip && channel != null -> {
+                val next = channel.programmeAfterBreak()
+                val source = next?.item?.source as? BaseItemDto
+                val name = next?.item?.let { i -> if (i.isEpisode) listOfNotNull(i.seriesName ?: i.name, source?.let(::episodeCode)).joinToString(" · ") else i.name }
+                com.astermediaplayer.astermediaplayer.data.PauseInfo.channelBreak(
+                    channel.number, channel.name, channel.logoUrl(repo, 900),
+                    name, next?.start?.let { java.time.Instant.ofEpochSecond(it.toLong()) }, source?.overview,
+                )
+            }
+            s.live -> com.astermediaplayer.astermediaplayer.data.PauseInfo.live(dto, repo.airingNow(dto.id), repo.channelLogoUrl(dto, 900))
+            else -> com.astermediaplayer.astermediaplayer.data.PauseInfo.title(
+                dto, repo.imageUrl(dto, org.jellyfin.sdk.model.api.ImageType.LOGO, 900),
+                player.duration.takeIf { it != androidx.media3.common.C.TIME_UNSET && it > 0 }?.let { it / 1000.0 },
+            )
+        }
+    }
+
+    private fun episodeCode(item: BaseItemDto): String? = com.astermediaplayer.astermediaplayer.data.downloads.DownloadStore.episodeCode(item)
+
     /** What a channel's schedule has on after this: the next programme or break clip. */
     private fun tuneNext() {
         val channel = currentPlaylistChannel ?: return
