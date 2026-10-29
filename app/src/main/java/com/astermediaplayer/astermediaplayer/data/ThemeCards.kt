@@ -49,8 +49,11 @@ data class ThemeInfo(
             )
         }
 
-        /** An opening or ending found in an episode's chapters, which say where but not which song. */
-        fun of(clip: ThemeClip, series: String): ThemeInfo = ThemeInfo(
+        /**
+         * An opening or ending found in an episode's chapters, which say where but not which song: AnimeThemes' card when it named
+         * the song, as the player's.
+         */
+        fun of(clip: ThemeClip, series: String): ThemeInfo = clip.song?.let { of(it, series, clip.episode.seasonName) } ?: ThemeInfo(
             kicker = (if (clip.opening) "Opening" else "Ending") + if (clip.number > 1) " ${clip.number}" else "",
             title = series,
             detail = listOfNotNull("Season ${clip.season}", com.astermediaplayer.astermediaplayer.data.downloads.DownloadStore.episodeCode(clip.episode)?.let { "From $it" }).joinToString(" · "),
