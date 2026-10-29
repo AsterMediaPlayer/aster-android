@@ -770,8 +770,31 @@ class AsterRepository(context: Context, private val store: SessionStore) {
         api.instantMixApi.getInstantMixFromItem(itemId = itemId, userId = userId, limit = limit).content.items
 
     /** A song's lyrics: timed lines when a synced file exists, plain lines otherwise; null when the server has none. */
-    suspend fun lyrics(itemId: UUID): org.jellyfin.sdk.model.api.LyricDto? =
-        runCatching { api.lyricApi.getLyrics(itemId).content }.getOrNull()
+    suspend fun lyrics(itemId: UUID): org.jellyfin.sdk.model.api.LyricDto? = runCatching {
+        if (serverKind == ServerKind.Emby) embyLyrics(itemId) else api.lyricApi.getLyrics(itemId).content
+    }.getOrNull()
+
+    /**
+     * Emby has no lyrics route: it lists a song's lyrics (an .lrc beside it, or the file's own tag) as a subtitle stream,
+     * fetched as text, a timed .lrc first, as the Apple apps do.
+     */
+    private suspend fun embyLyrics(itemId: UUID): org.jellyfin.sdk.model.api.LyricDto? {
+        val song = org.json.JSONObject(serverRequest("GET", "/Users/${checkNotNull(session).userId}/Items/${wire(itemId)}?Fields=MediaSources,MediaStreams"))
+        val sources = song.optJSONArray("MediaSources")
+        val candidates = buildList {
+            for (i in 0 until (sources?.length() ?: 0)) {
+                val source = sources!!.getJSONObject(i)
+                val streams = source.optJSONArray("MediaStreams") ?: song.optJSONArray("MediaStreams") ?: continue
+                for (j in 0 until streams.length()) {
+                    val stream = streams.getJSONObject(j)
+                    if (stream.optString("Type") == "Subtitle" && stream.has("Index")) add(source.optString("Id") to stream)
+                }
+            }
+        }
+        val (sourceId, stream) = candidates.firstOrNull { it.second.optString("Codec").equals("lrc", ignoreCase = true) } ?: candidates.firstOrNull() ?: return null
+        val format = stream.optString("Codec").lowercase().ifEmpty { "lrc" }
+        return Lrc.parse(serverRequest("GET", "/Items/${wire(itemId)}/$sourceId/Subtitles/${stream.getInt("Index")}/Stream.$format"))
+    }
 
     // MARK: Audiobooks
 
