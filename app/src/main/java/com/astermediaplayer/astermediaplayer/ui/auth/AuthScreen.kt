@@ -4,6 +4,9 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.material.icons.Icons
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.focusable
+import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material3.Icon
 import androidx.compose.foundation.layout.Column
@@ -128,6 +131,20 @@ fun AuthScreen(viewModel: AuthViewModel, onSignedIn: () -> Unit) {
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Go),
                         keyboardActions = KeyboardActions(onGo = { viewModel.signIn() }),
                     )
+                    // Plain http:// over the internet works, but the password goes in the clear: said before it's sent, as on the Apple apps.
+                    if (com.astermediaplayer.astermediaplayer.data.ServerAddress.isUnencryptedRemote(state.connectedServer!!)) {
+                        Row(
+                            // Focusable, so a TV's remote can reach it to read.
+                            Modifier.fillMaxWidth().focusable(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.Top,
+                        ) {
+                            Icon(Icons.Default.LockOpen, null, tint = UnencryptedOrange)
+                            Text(
+                                "This address isn't encrypted, so your password and what you watch travel over the internet where others could see them. If your server has an https:// address, use that instead.",
+                                style = MaterialTheme.typography.bodyMedium, color = UnencryptedOrange,
+                            )
+                        }
+                    }
                     Button(
                         onClick = viewModel::signIn, enabled = !state.busy && state.username.isNotBlank(),
                         modifier = Modifier.fillMaxWidth(),
@@ -145,3 +162,6 @@ fun AuthScreen(viewModel: AuthViewModel, onSignedIn: () -> Unit) {
         ServerPasswordDialog(server, "Switch", title = server.titleAmong(servers), onCheck = { viewModel.switchWithPassword(server, it) }, onDismiss = viewModel::dismissAsking)
     }
 }
+
+/** The Apple apps' orange for a warning, which reads on the dark background. */
+private val UnencryptedOrange = androidx.compose.ui.graphics.Color(0xFFFF9F0A)
