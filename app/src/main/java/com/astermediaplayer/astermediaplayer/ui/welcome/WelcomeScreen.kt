@@ -32,6 +32,7 @@ import androidx.compose.material.icons.filled.MusicVideo
 import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material.icons.filled.Tv
 import androidx.compose.material.icons.filled.VpnKey
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -92,6 +93,8 @@ fun WelcomeScreen(repo: AsterRepository, serverName: String?, onDone: () -> Unit
     // The remote starts on the first card, at the top, and walks the page card by card.
     // (After the page has laid out, or the page-level focus restore that follows takes it instead.)
     LaunchedEffect(isTv) { if (isTv) { kotlinx.coroutines.delay(200); runCatching { first.requestFocus() } } }
+    var showsLicenses by remember { mutableStateOf(false) }
+    if (showsLicenses) { com.astermediaplayer.astermediaplayer.ui.settings.OpenSourceLicenses { showsLicenses = false }; return }
 
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         Column(
@@ -151,6 +154,10 @@ fun WelcomeScreen(repo: AsterRepository, serverName: String?, onDone: () -> Unit
                 onClick = onDone, enabled = !restarting,
                 modifier = Modifier.widthIn(min = if (isTv) (420 * u).dp else 260.dp).heightOf(if (isTv) (90 * u).dp else 52.dp).tvFocus(26.dp),
             ) { Text("Start Watching", style = Type.headline) }
+            TextButton({ showsLicenses = true }, Modifier.tvFocus(20.dp)) {
+                Icon(Icons.Default.Description, null, Modifier.padding(end = 8.dp))
+                Text("Open Source & Licenses")
+            }
         }
     }
 }
