@@ -281,11 +281,11 @@ private fun RootPage(session: Session?, openChannels: () -> Unit, open: (Setting
     // Disc menus come from a Jellyfin plugin.
     if (session?.kind == com.astermediaplayer.astermediaplayer.data.emby.ServerKind.Jellyfin) SRow("Disc Menus", icon = Icons.Default.Album, chevron = true) { open(SettingsPage.DiscMenus) }
     SRow("Title Pages", icon = Icons.Default.MusicNote, chevron = true) { open(SettingsPage.TitlePages) }
-    // Channels are playlist tags in Jellyfin's shape, and the plugins are Jellyfin's: neither on Emby.
-    if (session?.kind == com.astermediaplayer.astermediaplayer.data.emby.ServerKind.Jellyfin) {
+    // Channels are playlist tags, on Jellyfin and Emby (see EmbyTags); the plugins are Jellyfin's.
+    if (session?.kind == com.astermediaplayer.astermediaplayer.data.emby.ServerKind.Jellyfin || session?.kind == com.astermediaplayer.astermediaplayer.data.emby.ServerKind.Emby)
         SRow("Channels (Beta)", icon = Icons.Default.Tv, chevron = true, onClick = openChannels)
+    if (session?.kind == com.astermediaplayer.astermediaplayer.data.emby.ServerKind.Jellyfin)
         SRow("Server Plugins", icon = Icons.Default.Extension, chevron = true) { open(SettingsPage.ServerPlugins) }
-    }
     if (!tv) SRow("Downloads", icon = Icons.Default.Download, chevron = true) { open(SettingsPage.Downloads) }
     SGroup(" ")
     SRow("Account", session?.userName.orEmpty(), icon = Icons.Default.AccountCircle, chevron = true) { open(SettingsPage.Account) }

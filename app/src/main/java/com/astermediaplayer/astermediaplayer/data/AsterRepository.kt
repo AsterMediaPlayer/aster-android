@@ -498,13 +498,32 @@ class AsterRepository(context: Context, private val store: SessionStore) {
     // MARK: Channel sources
 
     /** The user's video playlists, with their tags: the channels among them are tagged `aster:channel`. */
-    suspend fun videoPlaylists(): List<BaseItemDto> = api.libraryApi.getItems(
+    suspend fun videoPlaylists(): List<BaseItemDto> = playlists(
+        org.jellyfin.sdk.model.api.MediaType.VIDEO,
         GetItemsRequest(
             userId = userId, recursive = true, includeItemTypes = listOf(BaseItemKind.PLAYLIST),
-            mediaTypes = listOf(org.jellyfin.sdk.model.api.MediaType.VIDEO), sortBy = listOf(ItemSortBy.SORT_NAME), sortOrder = listOf(SortOrder.ASCENDING),
+            sortBy = listOf(ItemSortBy.SORT_NAME), sortOrder = listOf(SortOrder.ASCENDING),
             fields = listOf(ItemFields.TAGS, ItemFields.CHILD_COUNT, ItemFields.OVERVIEW),
         ),
-    ).content.items
+    )
+
+    /**
+     * The playlists [request] finds of one [mediaType]. Emby gives a playlist no media type, and asked for one drops the playlist
+     * filter and sends everything (people, genres, studios), so there each playlist's kind is its first entry's; an empty one is
+     * either. As the Windows app.
+     */
+    private suspend fun playlists(mediaType: org.jellyfin.sdk.model.api.MediaType, request: GetItemsRequest): List<BaseItemDto> {
+        if (serverKind != ServerKind.Emby) return api.libraryApi.getItems(request.copy(mediaTypes = listOf(mediaType))).content.items
+        val found = api.libraryApi.getItems(request.copy(mediaTypes = null, startIndex = null, limit = null)).content.items.filter { it.type == BaseItemKind.PLAYLIST }
+        return kotlinx.coroutines.coroutineScope {
+            found.map { playlist ->
+                async {
+                    val first = runCatching { api.playlistApi.getPlaylistItems(playlistId = playlist.id, userId = userId, limit = 1).content.items.firstOrNull() }.getOrNull()
+                    playlist.takeIf { first == null || first.mediaType == mediaType }
+                }
+            }.awaitAll().filterNotNull()
+        }
+    }
 
     /** What a channel's schedule and menus use of each title, and no more, so thousands of episodes stay a small download. */
     private val channelFields = listOf(ItemFields.OVERVIEW, ItemFields.TAGS)
@@ -727,6 +746,14 @@ class AsterRepository(context: Context, private val store: SessionStore) {
         sortBy: List<ItemSortBy> = listOf(ItemSortBy.SORT_NAME), order: SortOrder = SortOrder.ASCENDING,
         favorites: Boolean = false, played: Boolean = false,
     ): ItemPage {
+        // Emby's playlists are told apart by their entries (see playlists), so its page is cut from the whole list here.
+        if (kind == BaseItemKind.PLAYLIST && serverKind == ServerKind.Emby) {
+            val all = playlists(
+                org.jellyfin.sdk.model.api.MediaType.AUDIO,
+                GetItemsRequest(userId = userId, recursive = true, includeItemTypes = listOf(kind), sortBy = sortBy, sortOrder = listOf(order), fields = listOf(ItemFields.OVERVIEW, ItemFields.GENRES)),
+            )
+            return ItemPage(all.drop(startIndex).take(limit), all.size)
+        }
         val result = api.libraryApi.getItems(
             GetItemsRequest(
                 userId = userId, recursive = true, includeItemTypes = listOf(kind),

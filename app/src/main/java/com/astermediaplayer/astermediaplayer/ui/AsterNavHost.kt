@@ -704,11 +704,11 @@ private fun MainTabs(
     // Null until the check has run, so Movies and TV Shows don't load with anime still in them.
     val detectedAnime by produceState<List<BaseItemDto>?>(null, libraries) { value = if (libraries.isEmpty()) null else runCatching { repo.animeLibraries(libraries) }.getOrDefault(emptyList()) }
     // Upcoming is listed only while the server has something coming up, as on the Apple apps.
-    // Channels are playlist tags in Jellyfin's shape: not on Emby yet, as in the Apple apps.
+    // Channels are playlist tags, on Jellyfin and Emby (see EmbyTags), as on the Windows app.
     // The tab is there once the server has channels shown to this user (editing them is Settings' Channels page), as on the Apple apps.
     val hasChannels by produceState(false, repo.currentServerId) {
         repo.convertOldChannelTags()
-        value = repo.serverKind == com.astermediaplayer.astermediaplayer.data.emby.ServerKind.Jellyfin &&
+        value = repo.serverKind != com.astermediaplayer.astermediaplayer.data.emby.ServerKind.Plex &&
             runCatching { repo.videoPlaylists() }.getOrDefault(emptyList()).any { p ->
                 com.astermediaplayer.astermediaplayer.data.channels.ChannelTags.from(p.tags).let { it.isChannel && it.isShown(repo.session?.userName) }
             }
