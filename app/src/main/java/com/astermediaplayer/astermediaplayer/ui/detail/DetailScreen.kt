@@ -152,6 +152,7 @@ import com.astermediaplayer.astermediaplayer.ui.components.Shelf
 import com.astermediaplayer.astermediaplayer.ui.components.progress
 import com.astermediaplayer.astermediaplayer.ui.components.userMessage
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -197,6 +198,7 @@ class DetailViewModel(private val repo: AsterRepository, private val itemId: UUI
     fun load() {
         viewModelScope.launch {
             _state.value = Load.Loading
+            var unnamed: List<OpeningEnding> = emptyList()
             _state.value = try {
                 coroutineScope {
                     val ready = loadContent()
@@ -205,11 +207,14 @@ class DetailViewModel(private val repo: AsterRepository, private val itemId: UUI
                     val list = if (content.item.type == BaseItemKind.SERIES && anime) seriesThemes(content.item) else emptyList()
                     val withList = content.copy(openingsEndings = list)
                     val (opening, ending) = watchThemes(withList, anime)
+                    unnamed = list.filterIsInstance<OpeningEnding.Chapter>()
                     Load.Ready(withList.copy(watchOpening = opening, watchEnding = ending))
                 }
             } catch (e: Exception) {
                 Load.Failed(e.userMessage())
             }
+            // The songs' names come from AnimeThemes, a few seconds a season: the page is up first and they fill in.
+            if (unnamed.isNotEmpty()) viewModelScope.launch { nameSongs(unnamed) }
         }
     }
 
@@ -266,15 +271,31 @@ class DetailViewModel(private val repo: AsterRepository, private val itemId: UUI
         else -> false
     }
 
-    /** The plugin's themes when it has any that play (or soon will) for the show, otherwise clips from chapters. */
+    /** The plugin's themes when it has any that play (or soon will) for the show, otherwise clips from chapters, their songs not yet named. */
     private suspend fun seriesThemes(series: BaseItemDto): List<OpeningEnding> {
         val themes = repo.opEdThemes(series.id).orEmpty().filter { it.playablePath != null || it.isPreparing }
         if (themes.isNotEmpty()) return themes.map { OpeningEnding.Theme(it) }
-        val clips = repo.chapterThemes(series.id)
-        // Their songs, from AnimeThemes, asked once a season (as it lists each season apart).
-        val known = mutableMapOf<Int, List<com.astermediaplayer.astermediaplayer.data.KnownTheme>>()
-        for (clip in clips) if (clip.season !in known) known[clip.season] = runCatching { repo.knownThemes(clip.episode) }.getOrDefault(emptyList())
-        return clips.map { OpeningEnding.Chapter(it.copy(song = OpeningsEndings.song(it, known[it.season].orEmpty()))) }
+        return repo.chapterThemes(series.id).map { OpeningEnding.Chapter(it) }
+    }
+
+    /** The chapter clips' songs, from AnimeThemes, asked once a season (as it lists each season apart) and all seasons at once. */
+    private suspend fun nameSongs(clips: List<OpeningEnding>) {
+        val chapters = clips.filterIsInstance<OpeningEnding.Chapter>().map { it.clip }
+        val known = coroutineScope {
+            chapters.distinctBy { it.season }.map { clip ->
+                async { clip.season to runCatching { repo.knownThemes(clip.episode) }.getOrDefault(emptyList()) }
+            }.awaitAll().toMap()
+        }
+        fun named(entry: OpeningEnding?): OpeningEnding? {
+            val clip = (entry as? OpeningEnding.Chapter)?.clip ?: return entry
+            return OpeningEnding.Chapter(clip.copy(song = OpeningsEndings.song(clip, known[clip.season].orEmpty())))
+        }
+        _state.update { s ->
+            (s as? Load.Ready)?.let { ready ->
+                val c = ready.value
+                Load.Ready(c.copy(openingsEndings = c.openingsEndings.map { named(it)!! }, watchOpening = named(c.watchOpening), watchEnding = named(c.watchEnding)))
+            } ?: s
+        }
     }
 
     /** The first opening (or ending) that plays, video before audio. */
