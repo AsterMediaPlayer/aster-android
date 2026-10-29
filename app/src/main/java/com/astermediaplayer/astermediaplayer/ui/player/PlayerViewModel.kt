@@ -1073,6 +1073,12 @@ class PlayerViewModel(
         }
     }
 
+    /** Ends a player no screen owns (Live TV's mini player keeps one), as leaving its screen would. */
+    fun release() {
+        onCleared()
+        viewModelScope.coroutineContext[kotlinx.coroutines.Job]?.cancel()
+    }
+
     override fun onCleared() {
         scrub?.release()
         reportStopped()

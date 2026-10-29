@@ -196,6 +196,8 @@ private object Routes {
     const val CHANNEL = "channel/{id}"
     const val CHANNEL_SETTINGS = "channelsettings?only={only}"
     const val PROGRAM = "program/{id}"
+    /** The Live TV channel full screen, kept by [com.astermediaplayer.astermediaplayer.ui.livetv.LiveMini]. */
+    const val LIVE = "live"
     const val SERIES_TIMER = "seriestimer/{id}"
     const val ALBUM = "album/{id}"
     const val ARTIST = "artist/{id}"
@@ -331,6 +333,7 @@ fun AsterNavHost(signedIn: Boolean) {
                 onProgram = { nav.navigate(Routes.program(it.id.toString())) },
                 onSeriesRule = { nav.navigate(Routes.seriesTimer(it)) },
                     onPlay = { nav.navigate(Routes.player(it)) },
+                    onLive = { nav.navigate(Routes.LIVE) },
                     servers = servers,
                     onSignOut = {
                         scope.launch {
@@ -428,7 +431,13 @@ fun AsterNavHost(signedIn: Boolean) {
             ProgramScreen(
                 vm, onClose = { nav.popBackStack() },
                 // Watching leaves the page behind, so Back from the channel returns to Live TV.
-                onWatch = { channel -> nav.navigate(Routes.player(channel)) { popUpTo(Routes.PROGRAM) { inclusive = true } } },
+                // From Live TV the channel plays as Live TV's own, so closing it leaves it in the header's mini player.
+                onWatch = { channel ->
+                    if (app.liveMini.away) {
+                        app.liveMini.tune(channel)
+                        nav.navigate(Routes.LIVE) { popUpTo(Routes.PROGRAM) { inclusive = true } }
+                    } else nav.navigate(Routes.player(channel)) { popUpTo(Routes.PROGRAM) { inclusive = true } }
+                },
                 onSeriesOptions = { nav.navigate(Routes.seriesTimer(it)) },
             )
         }
@@ -500,6 +509,22 @@ fun AsterNavHost(signedIn: Boolean) {
                 )
                 val vm: PlayerViewModel = viewModel(factory = viewModelFactory { initializer { PlayerViewModel(app, repo, app.settings, UUID(0, 0), direct = media) } })
                 PlayerScreen(vm, onBack = { nav.popBackStack() }, onPlayNext = {})
+            }
+            composable(Routes.LIVE) {
+                val live = app.liveMini
+                // The one it opened with: ending the channel as it closes mustn't send this page back a second time.
+                val vm = remember { live.player }
+                if (vm == null) { LaunchedEffect(Unit) { nav.popBackStack() }; return@composable }
+                androidx.compose.runtime.DisposableEffect(vm) { live.fullScreen = true; onDispose { live.fullScreen = false } }
+                PlayerScreen(
+                    vm,
+                    // Closing while it plays leaves it in the Live TV header; closing while paused, or off Live TV, ends it.
+                    onBack = {
+                        if (!vm.player.playWhenReady || !live.away) live.stop()
+                        nav.popBackStack()
+                    },
+                    onPlayNext = {},
+                )
             }
             composable(
                 Routes.PLAYER,
@@ -659,6 +684,8 @@ private fun MainTabs(
     onTuneChannel: (String) -> Unit,
     onProgram: (BaseItemDto) -> Unit,
     onSeriesRule: (String) -> Unit,
+    /** A Live TV channel, full screen ([com.astermediaplayer.astermediaplayer.ui.livetv.LiveMini] already playing it). */
+    onLive: () -> Unit,
     servers: ServerActions,
     onSignOut: () -> Unit,
 ) {
@@ -785,7 +812,10 @@ private fun MainTabs(
                     BackButton { back() }
                 }
                 MoreDestination.LiveTv -> Box(modifier) {
-                    LiveTvScreen(onPlay = onPlay, onProgram = onProgram, onSeriesRule = onSeriesRule, modifier = Modifier.fillMaxSize(), topInset = 56.dp)
+                    LiveTvScreen(
+                        onPlay = onPlay, onProgram = onProgram, onSeriesRule = onSeriesRule, modifier = Modifier.fillMaxSize(), topInset = 56.dp,
+                        onPlayChannel = { app.liveMini.tune(it); onLive() }, onExpandLive = onLive,
+                    )
                     BackButton { back() }
                 }
                 MoreDestination.Audiobooks -> Box(modifier) {

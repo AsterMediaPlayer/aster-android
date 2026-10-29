@@ -192,8 +192,9 @@ fun PlayerScreen(
         LaunchedEffect(offered, aspect) { PictureInPicture.offer(pipActivity, if (offered) aspect ?: android.util.Rational(16, 9) else null) }
     }
 
-    // Pause when the app goes to the background (not into picture in picture, where it isn't stopped until the window closes).
-    val lifecycleOwner = LocalLifecycleOwner.current
+    // Pause when the app goes to the background (not into picture in picture, where it isn't stopped until the window closes). The
+    // activity's lifecycle, not the page's, which also stops as the page closes: a Live TV channel carries on in the mini player.
+    val lifecycleOwner = (activity as? androidx.lifecycle.LifecycleOwner) ?: LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_STOP && viewModel.cast?.isConnected != true) viewModel.player.pause() }
         lifecycleOwner.lifecycle.addObserver(observer)
