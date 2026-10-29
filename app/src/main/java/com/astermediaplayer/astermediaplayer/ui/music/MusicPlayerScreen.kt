@@ -114,6 +114,10 @@ fun MusicPlayerScreen(modifier: Modifier = Modifier) {
         Box(Modifier.statusBarsPadding().padding(Lockup.screenPadding).size(36.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.2f)).clickable { player.setPresented(false) }, contentAlignment = Alignment.Center) {
             Icon(Icons.Default.KeyboardArrowDown, "Close", tint = Color.White)
         }
+        // The sleep timer beside Stop: the controls row has no room left on a phone.
+        Box(Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(top = Lockup.screenPadding, end = Lockup.screenPadding + 48.dp)) {
+            com.astermediaplayer.astermediaplayer.ui.player.SleepTimerButton(book = false, compact = true)
+        }
         Box(Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(Lockup.screenPadding).size(36.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.2f)).clickable { player.stop() }, contentAlignment = Alignment.Center) {
             Icon(Icons.Default.Close, "Stop", tint = Color.White, modifier = Modifier.size(20.dp))
         }

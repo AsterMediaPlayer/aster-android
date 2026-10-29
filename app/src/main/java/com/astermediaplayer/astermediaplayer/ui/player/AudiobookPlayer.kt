@@ -239,7 +239,11 @@ class AudiobookPlayer(private val context: Context, private val repo: AsterRepos
         report(paused = player?.isPlaying != true, saving = true)
     }
 
+    /** Told of a chapter picked or skipped to, which the sleep timer doesn't count as a chapter's end. */
+    var onMovedByHand: (() -> Unit)? = null
+
     fun jump(chapter: AudiobookChapter) {
+        onMovedByHand?.invoke()
         player?.seekTo(chapter.part, (chapter.startSeconds * 1000).toLong())
         refreshPosition()
     }

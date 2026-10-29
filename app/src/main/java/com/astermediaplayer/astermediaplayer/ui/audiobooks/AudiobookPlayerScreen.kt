@@ -184,6 +184,7 @@ fun AudiobookPlayerScreen(modifier: Modifier = Modifier) {
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
                         SpeedMenu(player, state.rate)
+                        com.astermediaplayer.astermediaplayer.ui.player.SleepTimerButton(book = true)
                         if (book.chapters.isNotEmpty()) Control(Icons.AutoMirrored.Filled.List, "Chapters", active = showChapters) { showChapters = !showChapters }
                     }
                     state.error?.let { Text(it, style = Type.caption, color = Color.Red) }

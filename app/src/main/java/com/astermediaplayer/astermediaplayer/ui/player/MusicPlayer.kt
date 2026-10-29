@@ -176,7 +176,11 @@ class MusicPlayer(private val context: Context, private val repo: AsterRepositor
     }
 
     /** Jumps to a song already in the queue. */
+    /** Told of a skip by hand (Next, Previous, a song picked), which the sleep timer doesn't count as a song's end. */
+    var onMovedByHand: (() -> Unit)? = null
+
     fun skipTo(song: BaseItemDto) {
+        onMovedByHand?.invoke()
         val position = _state.value.queue.indexOfFirst { it.id == song.id }
         if (position >= 0) player?.seekTo(position, 0)
     }
@@ -189,6 +193,7 @@ class MusicPlayer(private val context: Context, private val repo: AsterRepositor
     fun togglePlayPause() { player?.let { if (it.isPlaying) it.pause() else it.play() } }
 
     fun next() {
+        onMovedByHand?.invoke()
         val exo = player ?: return
         if (exo.hasNextMediaItem()) exo.seekToNextMediaItem()
         else if (_state.value.repeat == RepeatKind.All) exo.seekTo(0, 0)
@@ -196,6 +201,7 @@ class MusicPlayer(private val context: Context, private val repo: AsterRepositor
     }
 
     fun previous() {
+        onMovedByHand?.invoke()
         val exo = player ?: return
         if (exo.currentPosition > 3000 || !exo.hasPreviousMediaItem()) exo.seekTo(0) else exo.seekToPreviousMediaItem()
     }
