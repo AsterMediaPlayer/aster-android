@@ -390,7 +390,7 @@ fun AsterNavHost(signedIn: Boolean) {
                         scope.launch {
                             when (oe) {
                                 // Chapters say where an opening is, so it plays that stretch of the episode.
-                                is OpeningEnding.Chapter -> nav.navigate(Routes.clip(oe.clip.episode.id, oe.clip.startMs, oe.clip.endMs, oe.clip.title))
+                                is OpeningEnding.Chapter -> nav.navigate(Routes.clip(oe.clip.episode.id, oe.clip.startMs, oe.clip.endMs, oe.clip.songTitle))
                                 is OpeningEnding.Theme -> {
                                     val theme = oe.theme.preferring(app.settings.current().themeCut)
                                     val published = theme.libraryItemId?.let(::parseId)
@@ -591,7 +591,7 @@ fun AsterNavHost(signedIn: Boolean) {
                         deck.stop()
                         scope.launch {
                             when (oe) {
-                                is OpeningEnding.Chapter -> nav.navigate(Routes.clip(oe.clip.episode.id, oe.clip.startMs, oe.clip.endMs, oe.clip.title))
+                                is OpeningEnding.Chapter -> nav.navigate(Routes.clip(oe.clip.episode.id, oe.clip.startMs, oe.clip.endMs, oe.clip.songTitle))
                                 is OpeningEnding.Theme -> {
                                     val theme = oe.theme.preferring(app.settings.current().themeCut)
                                     val published = theme.libraryItemId?.let(::parseId)

@@ -263,7 +263,7 @@ class PlayerViewModel(
      */
     private fun loadThemeCards(dto: BaseItemDto) {
         _themeMoments.value = emptyList()
-        if (!appSettings.themeCards || clip != null) return
+        if (!appSettings.themeCards) return
         viewModelScope.launch {
             when (dto.type) {
                 BaseItemKind.EPISODE -> {
@@ -275,7 +275,8 @@ class PlayerViewModel(
                     val known = if (plugin == null && anime) runCatching { repo.knownThemes(dto) }.getOrNull().orEmpty() else emptyList()
                     if (!plugin.isNullOrEmpty() || known.isNotEmpty()) _themeMoments.value = com.astermediaplayer.astermediaplayer.data.ThemeCards.forEpisode(dto, plugin.orEmpty(), segments, known)
                 }
-                BaseItemKind.MUSIC_VIDEO -> {
+                // A clip of a theme is its episode's own stretch, so it has the episode's card; a break's music video isn't a theme.
+                BaseItemKind.MUSIC_VIDEO -> if (clip == null) {
                     val theme = runCatching { repo.opEdThemeForLibraryItem(dto.id) }.getOrNull()
                     val season = theme?.seasonId?.let { id -> runCatching { repo.item(parseUuidLoose(id)).name }.getOrNull() }
                     _themeMoments.value = com.astermediaplayer.astermediaplayer.data.ThemeCards.forMusicVideo(dto, theme, season)
