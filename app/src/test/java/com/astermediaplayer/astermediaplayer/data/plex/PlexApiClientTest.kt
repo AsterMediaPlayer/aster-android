@@ -14,6 +14,9 @@ import org.jellyfin.sdk.api.client.extensions.showApi
 import org.jellyfin.sdk.api.client.extensions.userViewApi
 import org.jellyfin.sdk.api.client.extensions.userDataApi
 import org.jellyfin.sdk.api.client.extensions.imageApi
+import org.jellyfin.sdk.api.client.extensions.playlistApi
+import org.jellyfin.sdk.api.client.extensions.studioApi
+import org.jellyfin.sdk.api.client.extensions.genreApi
 import org.jellyfin.sdk.api.client.extensions.videoApi
 import org.jellyfin.sdk.api.sockets.SocketApi
 import org.jellyfin.sdk.model.ClientInfo
@@ -316,5 +319,89 @@ class PlexApiClientTest {
         val (api, _) = client(emptyMap())
         val failure = runCatching { api.libraryApi.getThemeSongs(itemId = UUID.fromString(PlexMapper.id("1")), userId = user) }.exceptionOrNull()
         assertNotNull(failure)
+    }
+
+    // Genres, networks and collections as a channel's titles: Plex's own lists, by name.
+    private fun directory(vararg entries: Pair<String, String>) = """{"MediaContainer":{"Directory":[${entries.joinToString(",") { """{"key":"${it.first}","title":"${it.second}"}""" }}]}}"""
+
+    private val sourceAnswers = mapOf(
+        "/library/sections" to sections,
+        "/library/sections/1/genre" to directory("43" to "Animation", "308" to "Action"),
+        "/library/sections/2/genre" to directory("44" to "Adventure", "43" to "Animation"),
+        "/library/sections/1/studio" to directory("Aardman" to "Aardman", "Pixar" to "Pixar"),
+        "/library/sections/1/network" to directory(),
+        "/library/sections/2/network" to directory("10574" to "BBC One", "17161" to "ABC"),
+        "/library/sections/2/studio" to directory("AGBO" to "AGBO"),
+    )
+
+    @Test fun genresAreEveryLibrarysByNameOnce() = runBlocking {
+        val (api, _) = client(sourceAnswers)
+        val genres = api.genreApi.getGenres(userId = user).content.items
+        assertEquals(listOf("Action", "Adventure", "Animation"), genres.map { it.name })
+        assertEquals(3, genres.map { it.id }.toSet().size)
+    }
+
+    @Test fun studiosAreAShowsNetworkAndAMoviesStudio() = runBlocking {
+        val (api, _) = client(sourceAnswers)
+        assertEquals(listOf("Aardman", "ABC", "BBC One", "Pixar"), api.studioApi.getStudios(userId = user).content.items.map { it.name })
+    }
+
+    @Test fun aGenreIsAskedOfEachLibraryByItsOwnKey() = runBlocking {
+        val movies = """{"MediaContainer":{"Metadata":[{"ratingKey":"769","type":"movie","title":"Aladdin","year":1992}]}}"""
+        val shows = """{"MediaContainer":{"Metadata":[{"ratingKey":"900","type":"show","title":"Gravity Falls"}]}}"""
+        val (api, fake) = client(sourceAnswers + mapOf("/library/sections/1/all" to movies, "/library/sections/2/all" to shows))
+        val animation = api.genreApi.getGenres(userId = user).content.items.first { it.name == "Animation" }
+        val found = api.libraryApi.getItems(
+            GetItemsRequest(userId = user, recursive = true, includeItemTypes = listOf(BaseItemKind.MOVIE, BaseItemKind.SERIES), genreIds = listOf(animation.id), years = listOf(1992, 1993), officialRatings = listOf("G", "PG")),
+        ).content
+        assertEquals(listOf("Aladdin", "Gravity Falls"), found.items.map { it.name })
+        assertEquals(2, found.totalRecordCount)
+        val asked = fake.calls.filter { it.path.endsWith("/all") }.associateBy { it.path }
+        // Animation is key 43 in each library, with the years and ratings given.
+        assertEquals("43", asked["/library/sections/1/all"]!!.query["genre"])
+        assertEquals("43", asked["/library/sections/2/all"]!!.query["genre"])
+        assertEquals("1992,1993", asked["/library/sections/1/all"]!!.query["year"])
+        assertEquals("G,PG", asked["/library/sections/1/all"]!!.query["contentRating"])
+        assertEquals("1", asked["/library/sections/1/all"]!!.query["type"])
+        assertEquals("2", asked["/library/sections/2/all"]!!.query["type"])
+    }
+
+    @Test fun aGenreOnlyAsksTheLibrariesOfTheKindsWanted() = runBlocking {
+        val movies = """{"MediaContainer":{"Metadata":[{"ratingKey":"769","type":"movie","title":"Aladdin"}]}}"""
+        val (api, fake) = client(sourceAnswers + mapOf("/library/sections/1/all" to movies))
+        val animation = api.genreApi.getGenres(userId = user).content.items.first { it.name == "Animation" }
+        val found = api.libraryApi.getItems(GetItemsRequest(userId = user, recursive = true, includeItemTypes = listOf(BaseItemKind.MOVIE), genreIds = listOf(animation.id))).content
+        assertEquals(listOf("Aladdin"), found.items.map { it.name })
+        assertEquals(listOf("/library/sections/1/all"), fake.calls.filter { it.path.endsWith("/all") }.map { it.path })
+    }
+
+    @Test fun aNetworkIsAShowsNetworkKeyAndAMoviesStudioName() = runBlocking {
+        val (api, fake) = client(sourceAnswers + mapOf(
+            "/library/sections/1/all" to """{"MediaContainer":{"Metadata":[{"ratingKey":"770","type":"movie","title":"Wallace & Gromit"}]}}""",
+            "/library/sections/2/all" to """{"MediaContainer":{"Metadata":[{"ratingKey":"901","type":"show","title":"Call the Midwife"}]}}""",
+        ))
+        val studios = api.studioApi.getStudios(userId = user).content.items
+        val ids = studios.filter { it.name == "Aardman" || it.name == "BBC One" }.map { it.id }
+        val found = api.libraryApi.getItems(GetItemsRequest(userId = user, recursive = true, includeItemTypes = listOf(BaseItemKind.MOVIE, BaseItemKind.SERIES), studioIds = ids)).content
+        assertEquals(listOf("Wallace & Gromit", "Call the Midwife"), found.items.map { it.name })
+        val asked = fake.calls.filter { it.path.endsWith("/all") }.associateBy { it.path }
+        assertEquals("Aardman", asked["/library/sections/1/all"]!!.query["studio"])
+        assertEquals("10574", asked["/library/sections/2/all"]!!.query["network"])
+    }
+
+    @Test fun collectionsAreEachLibrarysAndKeepTheirCount() = runBlocking {
+        val collections = """{"MediaContainer":{"Metadata":[{"ratingKey":"11924","type":"collection","title":"Ascendance of a Bookworm","childCount":1},{"ratingKey":"6461","type":"collection","title":"Chainsaw Man","childCount":2}]}}"""
+        val (api, _) = client(mapOf("/library/sections" to sections, "/library/sections/2/collections" to collections, "/library/sections/1/collections" to """{"MediaContainer":{}}"""))
+        val found = api.libraryApi.getItems(GetItemsRequest(userId = user, recursive = true, includeItemTypes = listOf(BaseItemKind.BOX_SET), sortBy = listOf(ItemSortBy.SORT_NAME))).content
+        assertEquals(listOf("Ascendance of a Bookworm", "Chainsaw Man"), found.items.map { it.name })
+        assertEquals(listOf(1, 2), found.items.map { it.childCount })
+        assertEquals(listOf(BaseItemKind.BOX_SET, BaseItemKind.BOX_SET), found.items.map { it.type })
+    }
+
+    @Test fun aChannelPlaylistMadeWithNothingInItIsEmpty() = runBlocking {
+        val made = """{"MediaContainer":{"Metadata":[{"ratingKey":"12000","type":"playlist","title":"Animation"}]}}"""
+        val (api, fake) = client(mapOf("/identity" to """{"MediaContainer":{"machineIdentifier":"abc"}}""", "POST /playlists" to made))
+        api.playlistApi.createPlaylist(org.jellyfin.sdk.model.api.CreatePlaylistDto(name = "Animation", ids = emptyList(), users = emptyList(), userId = user, mediaType = org.jellyfin.sdk.model.api.MediaType.VIDEO, isPublic = true))
+        assertEquals("", fake.calls.last { it.method == "POST" }.query["uri"])
     }
 }

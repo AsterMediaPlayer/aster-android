@@ -169,6 +169,7 @@ object PlexMapper {
                 m.intOrNull("childCount")?.let { put("ChildCount", it) }
                 m.intOrNull("leafCount")?.let { put("RecursiveItemCount", it) }
             }
+            "BoxSet" -> m.intOrNull("childCount")?.let { put("ChildCount", it) }
         }
         put("UserData", userData(m, kind))
     }

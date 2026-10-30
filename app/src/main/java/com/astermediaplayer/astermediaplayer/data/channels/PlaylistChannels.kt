@@ -207,8 +207,8 @@ class ChannelsModel(private val repo: AsterRepository) {
                 stale.map { p -> async { p.id to runCatching { repo.channelPlaylistItems(p.id) }.getOrNull() } }.awaitAll()
             }.toMap()
             for (p in stale) fetched[p.id]?.let { itemCache[p.id] = p.childCount to it }
-            // Genres, networks and collections as sources are Jellyfin's and Emby's: Plex's lists answer differently.
-            if (repo.serverKind != com.astermediaplayer.astermediaplayer.data.emby.ServerKind.Plex) loadSources(tagged, force)
+            // Genres, networks and collections as sources (on Plex, answered from its libraries' own lists, by name).
+            loadSources(tagged, force)
             // The ratings' ranks, only needed to clear a restricted user's genre, network or collection channel.; if the server won't
             // list them, none is ranked and those channels stay held back, rather than the whole tab failing.
             val ratings = if (policy?.restrictsContent == true && tagged.any { it.tags.hasSources && it.tags.ratings.isNotEmpty() }) runCatching { repo.parentalRatings() }.getOrDefault(emptyList()) else emptyList()

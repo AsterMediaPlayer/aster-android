@@ -241,7 +241,8 @@ class PlexApiClient(
                 putJsonObject("Policy") { put("IsAdministrator", false); put("EnableAllFolders", true) }
             })
             HttpMethod.GET to "/System/Info/Public" -> ok(buildJsonObject { put("ProductName", "Plex Media Server"); put("ServerName", "Plex") }, fill = false)
-            HttpMethod.GET to "/Genres", HttpMethod.GET to "/Studios" -> ok(PlexMapper.queryResult(emptyList(), 0))
+            HttpMethod.GET to "/Genres" -> sourceList("genre", "Genre")
+            HttpMethod.GET to "/Studios" -> sourceList("studio", "Studio")
             else -> null
         }
     }
@@ -310,13 +311,92 @@ class PlexApiClient(
         val machine = machineIdentifier ?: container("/identity").optString("machineIdentifier").takeIf { it.isNotEmpty() }?.also { machineIdentifier = it } ?: return empty(500)
         val made = JSONObject(plex.call("POST", "/playlists", mapOf(
             "type" to "video", "title" to name, "smart" to "0",
-            "uri" to "server://$machine/com.plexapp.plugins.library/library/metadata/${ids.joinToString(",")}",
+            // None: an empty playlist, which a genre's, network's or collection's channel is.
+            "uri" to if (ids.isEmpty()) "" else "server://$machine/com.plexapp.plugins.library/library/metadata/${ids.joinToString(",")}",
         ))).getJSONObject("MediaContainer").optJSONArray("Metadata")?.objects()?.firstOrNull()?.optString("ratingKey")?.takeIf { it.isNotEmpty() } ?: return empty(500)
         return ok(buildJsonObject { put("Id", PlexMapper.id(made)) }, fill = false)
     }
 
     /** The server's own id, which a playlist's titles are named by; asked once. */
     private var machineIdentifier: String? = null
+
+    // MARK: Genres, networks, studios and collections, for channels
+
+    /** A library's genres, networks, studios or ratings (what Plex lists beside it), asked once each; one that can't be read is empty. */
+    private val directories = java.util.concurrent.ConcurrentHashMap<String, List<JSONObject>>()
+
+    private suspend fun directory(section: JSONObject, kind: String): List<JSONObject> {
+        val key = section.optString("key") + "/" + kind
+        directories[key]?.let { return it }
+        return try {
+            container("/library/sections/${section.optString("key")}/$kind").optJSONArray("Directory")?.objects().orEmpty().also { directories[key] = it }
+        } catch (e: CancellationException) { throw e } catch (e: Exception) { emptyList() }
+    }
+
+    /**
+     * What the server names in all its libraries: genres, or studios, where a show's is its network and a movie's its studio (as
+     * Jellyfin has both under one name). The ids the SDK passes back are made from the names, since a library's own keys differ.
+     */
+    private suspend fun sourceNames(kind: String): List<String> {
+        val names = sections().flatMap { section ->
+            val list = if (kind == "genre") "genre" else if (section.optString("type") == "show") "network" else "studio"
+            directory(section, list).map { it.optString("title") }
+        }
+        return names.filter { it.isNotEmpty() }.distinctBy { it.lowercase() }.sortedWith(String.CASE_INSENSITIVE_ORDER)
+    }
+
+    private fun sourceId(kind: String, name: String): String = java.util.UUID.nameUUIDFromBytes("$kind:${name.lowercase()}".toByteArray()).toString()
+
+    private suspend fun sourceName(kind: String, id: String): String? = sourceNames(kind).firstOrNull { sourceId(kind, it) == id.lowercase() }
+
+    private suspend fun sourceList(kind: String, type: String): RawResponse {
+        val names = sourceNames(kind)
+        return ok(PlexMapper.queryResult(names.map { name -> buildJsonObject { put("Id", sourceId(kind, name)); put("Name", name); put("Type", type) } }, names.size))
+    }
+
+    /** The collections of the libraries asked for, which Plex lists apart from their titles. */
+    private suspend fun collections(q: Query, sections: List<JSONObject>): RawResponse {
+        val found = sections.flatMap { titles("/library/sections/${it.optString("key")}/collections") }.sortedBy { it.optString("titleSort").ifEmpty { it.optString("title") }.lowercase() }
+        val start = q.int("startIndex") ?: 0
+        val page = found.drop(start).take(q.int("limit") ?: found.size)
+        return ok(PlexMapper.queryResult(page.map(PlexMapper::item), found.size, start))
+    }
+
+    /**
+     * The movies and shows in any of these genres, or from any of these studios and networks, in the libraries asked for, narrowed by
+     * the years and ratings given. Plex finds them by each library's own keys, so each library is asked for each name and the
+     * titles are put together, every one once, and paged here.
+     */
+    private suspend fun sourceTitles(q: Query, sections: List<JSONObject>, genres: List<String>, studios: List<String>): RawResponse {
+        val years = q.rawList("years").joinToString(",")
+        val ratings = q.rawList("officialRatings").joinToString(",")
+        val found = LinkedHashMap<String, JSONObject>()
+        // Movies from a library of movies, shows from one of shows, as the kinds asked for say.
+        val kinds = q.list("includeItemTypes").mapNotNull { when (it) { "movie" -> "movie"; "series" -> "show"; else -> null } }.toSet()
+        for (section in sections) {
+            if (kinds.isNotEmpty() && section.optString("type") !in kinds) continue
+            val show = section.optString("type") == "show"
+            val base = mutableMapOf<String, String?>("type" to if (show) "2" else "1", "sort" to "titleSort")
+            if (years.isNotEmpty()) base["year"] = years
+            if (ratings.isNotEmpty()) base["contentRating"] = ratings
+            val queries = mutableListOf<Map<String, String?>>()
+            val genreKeys = directory(section, "genre").filter { d -> genres.any { it.equals(d.optString("title"), ignoreCase = true) } }.map { it.optString("key") }
+            if (genreKeys.isNotEmpty()) queries += base + ("genre" to genreKeys.joinToString(","))
+            if (show) {
+                val keys = directory(section, "network").filter { d -> studios.any { it.equals(d.optString("title"), ignoreCase = true) } }.map { it.optString("key") }
+                if (keys.isNotEmpty()) queries += base + ("network" to keys.joinToString(","))
+            } else {
+                // A studio's name goes as it is, and may hold a comma, so each is asked for alone.
+                directory(section, "studio").map { it.optString("title") }.filter { t -> studios.any { it.equals(t, ignoreCase = true) } }
+                    .forEach { queries += base + ("studio" to it) }
+            }
+            for (query in queries) for (title in titles("/library/sections/${section.optString("key")}/all", query)) found.putIfAbsent(title.optString("ratingKey"), title)
+        }
+        val all = found.values.toList()
+        val start = q.int("startIndex") ?: 0
+        val page = all.drop(start).take(q.int("limit") ?: all.size)
+        return ok(PlexMapper.queryResult(page.map(PlexMapper::item), all.size, start))
+    }
 
     /** Plex's number for a kind of title, in a section's listing. */
     private fun typeNumber(kind: String): String? = when (kind) { "movie" -> "1"; "series" -> "2"; "season" -> "3"; "episode" -> "4"; "boxset" -> "18"; else -> null }
@@ -369,6 +449,10 @@ class PlexApiClient(
             val types = kinds.mapNotNull { when (it) { "movie" -> "movie"; "series", "season", "episode" -> "show"; else -> null } }.toSet()
             sections.filter { types.isEmpty() || it.optString("type") in types }
         }
+        if ("boxset" in kinds) return collections(q, wanted)
+        val genreNames = q.rawList("genreIds").mapNotNull { sourceName("genre", it) }
+        val studioNames = q.rawList("studioIds").mapNotNull { sourceName("studio", it) }
+        if (genreNames.isNotEmpty() || studioNames.isNotEmpty()) return sourceTitles(q, wanted, genreNames, studioNames)
         var start = q.int("startIndex") ?: 0
         var remaining = q.int("limit") ?: Int.MAX_VALUE
         val found = mutableListOf<JsonElement>()

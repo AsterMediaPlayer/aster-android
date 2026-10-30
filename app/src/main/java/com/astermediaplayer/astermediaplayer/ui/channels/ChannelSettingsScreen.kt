@@ -2,6 +2,7 @@ package com.astermediaplayer.astermediaplayer.ui.channels
 
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -278,19 +279,16 @@ fun ChannelSettingsScreen(viewModel: ChannelSettingsViewModel, only: String?, mo
     val others = playlists.filter { !ChannelTags.from(it.tags).isChannel && !ChannelTagParsing.isFillerPlaylist(it.tags) }
     val shownChannels = if (only == null) channels else channels.filter { it.first.plainId() == only }
 
-    Column(
+    val choosing = picking
+    // The page for picking what to make a channel from is its own list, of which only the rows on screen are made (Plex's anime library alone has a thousand genres).
+    if (choosing != null) NewChannelPicker(choosing, state, others, modifier) { id, name ->
+        picking = null
+        if (choosing == NewChannelSource.Playlist) others.firstOrNull { it.plainId() == id }?.let { expanded = expanded + id; viewModel.turnOn(it) }
+        else viewModel.create(choosing, name, if (choosing == NewChannelSource.Show) UUID.fromString(id) else null)
+    } else Column(
         modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = (90f * u).dp).padding(top = (40f * u).dp, bottom = (80f * u).dp),
         verticalArrangement = Arrangement.spacedBy((6f * u).dp),
     ) {
-        val choosing = picking
-        if (choosing != null) {
-            NewChannelPicker(choosing, state, others) { id, name ->
-                picking = null
-                if (choosing == NewChannelSource.Playlist) others.firstOrNull { it.plainId() == id }?.let { expanded = expanded + id; viewModel.turnOn(it) }
-                else viewModel.create(choosing, name, if (choosing == NewChannelSource.Show) UUID.fromString(id) else null)
-            }
-            return@Column
-        }
         Text(
             if (only != null) shownChannels.firstOrNull()?.let { it.second.name ?: it.first.name } ?: "Channel" else "Channels (Beta)",
             style = Type.pageTitle.copy(fontSize = (76f * u).sp, lineHeight = (90f * u).sp), modifier = Modifier.padding(bottom = (12f * u).dp),
@@ -555,21 +553,18 @@ enum class NewChannelSource(val title: String, val pickTitle: String) {
 @Composable
 private fun NewChannel(state: ChannelSettingsViewModel.State, others: List<BaseItemDto>, cameFrom: NewChannelSource?, returnFocus: FocusRequester, onPick: (NewChannelSource) -> Unit) {
     TvGroup("New Channel")
-    // Genres, networks and collections as a channel's titles are Jellyfin's and Emby's; on Plex a channel is made from a show or a playlist.
     val plex = serverKind() == com.astermediaplayer.astermediaplayer.data.emby.ServerKind.Plex
-    val sources = if (plex) listOf(NewChannelSource.Show, NewChannelSource.Playlist) else NewChannelSource.entries
-    sources.forEach { source ->
+    NewChannelSource.entries.forEach { source ->
         TvRow(source.title, if (state.creating) "Making…" else null, enabled = !state.creating, chevron = true, modifier = if (source == cameFrom) Modifier.focusRequester(returnFocus) else Modifier, onClick = { onPick(source) })
     }
     Note(if (plex) "A show plays its episodes in order; a genre, network or collection plays every movie and show in it (a network is a show's network, or a movie's studio). A playlist plays what you put in it. On Plex a playlist, and so its channel, is only yours."
         else "A show plays its episodes in order; a genre, network or collection plays every movie and show in it. A playlist plays what you put in it. Each is shared with everyone on your server.")
 }
 
-/** The page New Channel opens: what there is to make the channel from, one row each. */
+/** The page New Channel opens: what there is to make the channel from, one row each, in a list that makes only the rows showing. */
 @Composable
-private fun NewChannelPicker(source: NewChannelSource, state: ChannelSettingsViewModel.State, others: List<BaseItemDto>, onPick: (id: String, name: String) -> Unit) {
+private fun NewChannelPicker(source: NewChannelSource, state: ChannelSettingsViewModel.State, others: List<BaseItemDto>, modifier: Modifier, onPick: (id: String, name: String) -> Unit) {
     val u = Lockup.tvUnit
-    Text(source.pickTitle, style = Type.pageTitle.copy(fontSize = (76f * u).sp, lineHeight = (90f * u).sp), modifier = Modifier.padding(bottom = (12f * u).dp))
     // Each as an id to make it from and the name it's given.
     val options: List<Pair<String, String>> = when (source) {
         NewChannelSource.Show -> state.series.map { it.first.toString() to it.second }
@@ -578,11 +573,18 @@ private fun NewChannelPicker(source: NewChannelSource, state: ChannelSettingsVie
         NewChannelSource.Collection -> state.collections.map { it to it }
         NewChannelSource.Playlist -> others.map { it.plainId() to it.name.orEmpty() }
     }
-    if (options.isEmpty()) Note(if (source == NewChannelSource.Playlist) "Every video playlist is a channel already." else "There's nothing to pick yet.", readable = true)
     val first = remember { FocusRequester() }
     LaunchedEffect(options.isNotEmpty()) { if (options.isNotEmpty()) repeat(10) { if (runCatching { first.requestFocus() }.isSuccess) return@LaunchedEffect else delay(100) } }
-    options.forEachIndexed { i, (id, name) ->
-        TvRow(name, null, enabled = !state.creating, modifier = if (i == 0) Modifier.focusRequester(first) else Modifier, onClick = { onPick(id, name) })
+    androidx.compose.foundation.lazy.LazyColumn(
+        modifier.fillMaxSize().padding(horizontal = (90f * u).dp),
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(top = (40f * u).dp, bottom = (80f * u).dp),
+        verticalArrangement = Arrangement.spacedBy((6f * u).dp),
+    ) {
+        item { Text(source.pickTitle, style = Type.pageTitle.copy(fontSize = (76f * u).sp, lineHeight = (90f * u).sp), modifier = Modifier.padding(bottom = (12f * u).dp)) }
+        if (options.isEmpty()) item { Note(if (source == NewChannelSource.Playlist) "Every video playlist is a channel already." else "There's nothing to pick yet.", readable = true) }
+        itemsIndexed(options) { i, option ->
+            TvRow(option.second, null, enabled = !state.creating, modifier = if (i == 0) Modifier.focusRequester(first) else Modifier, onClick = { onPick(option.first, option.second) })
+        }
     }
 }
 
