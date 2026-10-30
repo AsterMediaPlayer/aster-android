@@ -1007,6 +1007,16 @@ class AsterRepository(context: Context, private val store: SessionStore) {
     fun chapterImageUrl(itemId: UUID, index: Int, stamp: Long?): String =
         withToken("${serverUrl.trimEnd('/')}/Items/${wire(itemId)}/Images/Chapter/$index?maxWidth=480" + (stamp?.let { "&tag=$it" } ?: ""))
 
+    /** A clip's own picture, where the server made one for its chapter (Plex), else the episode's still. */
+    fun clipPictureUrl(clip: ThemeClip, maxWidth: Int): String? {
+        val picture = clip.picture
+        if (picture != null && serverKind == ServerKind.Plex) {
+            // A chapter's picture is fetched as it is, by its path: it's small already, and Plex's photo transcoder refuses it.
+            return serverUrl.trimEnd('/') + picture + "?X-Plex-Token=" + android.net.Uri.encode(checkNotNull(session).accessToken)
+        }
+        return imageUrl(clip.episode, ImageType.PRIMARY, maxWidth)
+    }
+
     /** A backdrop or other picture of an item at full width, for a menu's background. */
     fun itemImageUrl(itemId: UUID, type: String, index: Int): String =
         withToken("${serverUrl.trimEnd('/')}/Items/${wire(itemId)}/Images/$type/$index?maxWidth=1920")

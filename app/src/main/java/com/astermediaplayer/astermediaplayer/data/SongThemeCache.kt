@@ -97,7 +97,7 @@ class SongThemeCache(private val file: File, private val now: () -> Long = Syste
 
     private fun json(clip: ThemeClip) = JSONObject()
         .put("opening", clip.opening).put("season", clip.season).put("number", clip.number)
-        .put("startMs", clip.startMs).put("endMs", clip.endMs)
+        .put("startMs", clip.startMs).put("endMs", clip.endMs).apply { clip.picture?.let { put("picture", it) } }
         .put("episode", json.encodeToString(BaseItemDto.serializer(), slim(clip.episode)))
 
     /**
@@ -110,6 +110,7 @@ class SongThemeCache(private val file: File, private val now: () -> Long = Syste
         opening = o.getBoolean("opening"), season = o.getInt("season"), number = o.getInt("number"),
         episode = json.decodeFromString(BaseItemDto.serializer(), o.getString("episode")),
         startMs = o.getLong("startMs"), endMs = o.getLong("endMs"),
+        picture = if (o.has("picture") && !o.isNull("picture")) o.getString("picture") else null,
     )
 
     private fun json(theme: KnownTheme) = JSONObject()
@@ -134,8 +135,8 @@ class SongThemeCache(private val file: File, private val now: () -> Long = Syste
     )
 
     private companion object {
-        // 2: Emby's "Intro Start" clips end at "Intro End", so clips found before are wrong.
-        const val VERSION = 2
+        // 2: Emby's "Intro Start" clips end at "Intro End", so clips found before are wrong. 3: Plex clips keep their chapter's picture.
+        const val VERSION = 3
         const val MAX_ENTRIES = 1500
         const val LIFE_MS = 30L * 24 * 60 * 60 * 1000
         // "Nothing found" may only be that AnimeThemes or a scan hasn't caught up, so it's asked again sooner.

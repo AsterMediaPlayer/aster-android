@@ -138,6 +138,8 @@ data class ThemeClip(
     val endMs: Long,
     /** The song, from AnimeThemes, when it knows which plays in this episode (servers without the OP/ED plugin). */
     val song: KnownTheme? = null,
+    /** The chapter's own picture, by its path on a Plex server (which makes them), when it has one. */
+    val picture: String? = null,
 ) {
     val title: String
         get() = (if (number > 1) "Season $season " else "Season $season ") + (if (opening) "Opening" else "Ending") + if (number > 1) " $number" else ""
@@ -208,7 +210,7 @@ object OpeningsEndings {
                 if (end - start !in durationRange) return@forEachIndexed
                 val earlier = kept.getOrPut("$season-${mark.opening}") { mutableListOf() }
                 if (earlier.any { kotlin.math.abs((end - start) - (it.endMs - it.startMs)) <= SAME_SONG_SLACK_MS }) return@forEachIndexed
-                val clip = ThemeClip(mark.opening, season, earlier.size + 1, episode, start, end)
+                val clip = ThemeClip(mark.opening, season, earlier.size + 1, episode, start, end, picture = chapter.imageTag?.takeIf { it.startsWith("/library/") })
                 clips += clip
                 earlier += clip
             }

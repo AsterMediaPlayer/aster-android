@@ -43,6 +43,13 @@ class SongThemeCacheTest {
         assertEquals(1, back.parentIndexNumber)
     }
 
+    @Test fun aClipKeepsItsChapterPictureThroughTheFile() = runBlocking {
+        cache().putClips("s", series, 1, listOf(clip.copy(picture = "/library/media/8685/chapterImages/2"), clip.copy(number = 2)))
+        val back = cache().clips("s", series, 1)!!
+        assertEquals("/library/media/8685/chapterImages/2", back[0].picture)
+        assertNull(back[1].picture)
+    }
+
     @Test fun moreEpisodesReadTheChaptersAgain() = runBlocking {
         cache().putClips("http://plex:32400", series, 11, listOf(clip))
         assertNull(cache().clips("http://plex:32400", series, 12))

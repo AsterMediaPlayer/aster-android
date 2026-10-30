@@ -1027,7 +1027,7 @@ private fun MusicSection(content: DetailContent, onPlayTheme: (OpeningEnding) ->
                                     focusRequester = if (startedBy == keyOf(preferred(entry)) || startedBy == keyOf(entry)) returnFocus else null,
                                 ) { pressed(entry) }
                             }
-                            is OpeningEnding.Chapter -> ThemeClipCard(entry.clip, repo.imageUrl(entry.clip.episode, ImageType.PRIMARY, 480), isPlaying(entry), focusRequester = if (startedBy == keyOf(entry)) returnFocus else null) { pressed(entry) }
+                            is OpeningEnding.Chapter -> ThemeClipCard(entry.clip, repo.clipPictureUrl(entry.clip, 480), isPlaying(entry), focusRequester = if (startedBy == keyOf(entry)) returnFocus else null) { pressed(entry) }
                         }
                     }
                 }

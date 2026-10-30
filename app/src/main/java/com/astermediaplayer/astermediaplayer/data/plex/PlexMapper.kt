@@ -104,6 +104,8 @@ object PlexMapper {
                     add(buildJsonObject {
                         put("StartPositionTicks", c.optLong("startTimeOffset") * TICKS_PER_MS)
                         c.str("tag")?.let { put("Name", it) }
+                        // The chapter's picture, by its own path on the server, when Plex has made chapter thumbnails.
+                        c.str("thumb")?.let { put("ImageTag", it) }
                     })
                 }
             }

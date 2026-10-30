@@ -145,4 +145,14 @@ class PlexMapperTest {
         // Anything that isn't a number still gets one stable UUID.
         assertEquals(PlexMapper.id("Imagine Entertainment"), PlexMapper.id("Imagine Entertainment"))
     }
+
+    @Test fun aChaptersPictureIsKeptByItsPath() {
+        val json = """{"MediaContainer":{"Metadata":[{"ratingKey":"6126","type":"episode","title":"E1","Chapter":[
+            {"tag":"Part 01","startTimeOffset":0,"thumb":"/library/media/8685/chapterImages/1"},{"tag":"End Credits","startTimeOffset":1331000}]}]}}"""
+        val item = EmbyShapes.fill(PlexMapper.item(metadata(json)))
+        val chapters = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }.decodeFromJsonElement(BaseItemDto.serializer(), item).chapters!!
+        assertEquals("/library/media/8685/chapterImages/1", chapters[0].imageTag)
+        // A chapter Plex made no picture for has none.
+        assertNull(chapters[1].imageTag)
+    }
 }

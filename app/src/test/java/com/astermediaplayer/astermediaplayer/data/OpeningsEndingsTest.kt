@@ -8,6 +8,11 @@ import org.junit.Test
 import java.util.UUID
 
 class OpeningsEndingsTest {
+    private fun episodeWithPictures(vararg chapters: Triple<String, Long, String?>) = BaseItemDto(
+        id = UUID.randomUUID(), type = BaseItemKind.EPISODE, parentIndexNumber = 1, runTimeTicks = 14_400_000_000L,
+        chapters = chapters.map { (name, seconds, picture) -> ChapterInfo(startPositionTicks = seconds * 10_000_000, name = name, imagePath = null, imageDateModified = java.time.LocalDateTime.MIN, imageTag = picture) },
+    )
+
     private fun episode(vararg chapters: Pair<String, Long>) = BaseItemDto(
         id = UUID.randomUUID(), type = BaseItemKind.EPISODE, parentIndexNumber = 1, runTimeTicks = 14_400_000_000L,
         chapters = chapters.map { (name, seconds) -> ChapterInfo(startPositionTicks = seconds * 10_000_000, name = name, imagePath = null, imageDateModified = java.time.LocalDateTime.MIN, imageTag = null) },
@@ -36,6 +41,22 @@ class OpeningsEndingsTest {
     @Test fun embyIntroWithNoIntroEndEndsAtTheNextChapter() {
         val clips = OpeningsEndings.find(listOf(episode("Chapter 1" to 0, "Intro Start" to 62, "Chapter 2" to 150)))
         assertEquals(listOf(62_000L to 150_000L), clips.map { it.startMs to it.endMs })
+    }
+
+    /** Plex makes a picture for some chapters, by a path of its own: the clip keeps its chapter's. */
+    @Test fun aClipKeepsItsPlexChaptersPicture() {
+        val clips = OpeningsEndings.find(listOf(episodeWithPictures(
+            Triple("Part 01", 0, "/library/media/8685/chapterImages/1"), Triple("Intro", 138, "/library/media/8685/chapterImages/2"),
+            Triple("Part 02", 226, null), Triple("End Credits", 1331, null),
+        )))
+        assertEquals("/library/media/8685/chapterImages/2", clips.first { it.opening }.picture)
+        // An ending whose chapter has none has none.
+        assertEquals(null, clips.first { !it.opening }.picture)
+    }
+
+    @Test fun anotherServersChapterImageTagIsNotAPicturePath() {
+        val clips = OpeningsEndings.find(listOf(episodeWithPictures(Triple("OP", 90, "a1b2c3d4"), Triple("Part A", 180, null))))
+        assertEquals(null, clips.single().picture)
     }
 
     @Test fun namedOpeningsStillWork() {
