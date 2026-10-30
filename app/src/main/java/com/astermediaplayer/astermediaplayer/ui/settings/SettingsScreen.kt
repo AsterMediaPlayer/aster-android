@@ -27,6 +27,8 @@ import androidx.compose.material.icons.filled.PanTool
 import androidx.compose.material.icons.automirrored.filled.HelpOutline
 import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.Album
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.ClosedCaption
 import androidx.compose.material.icons.filled.Download
@@ -676,7 +678,7 @@ internal fun TvNote(text: String) {
 @Composable
 internal fun TvRow(
     title: String, value: String?, enabled: Boolean = true, destructive: Boolean = false, modifier: Modifier = Modifier,
-    icon: ImageVector? = null, chevron: Boolean = false, onClick: (() -> Unit)?,
+    icon: ImageVector? = null, chevron: Boolean = false, subtitle: String? = null, fold: Boolean? = null, onClick: (() -> Unit)?,
 ) {
     val u = Lockup.tvUnit
     var focused by remember { mutableStateOf(false) }
@@ -695,18 +697,23 @@ internal fun TvRow(
     ) {
         if (icon != null) Icon(icon, null, tint = tint, modifier = Modifier.padding(end = (20f * u).dp).size((38f * u).dp))
         // A long title wraps in what the value leaves; a long value gives way with an ellipsis, never out of the row.
-        Text(title, style = Type.callout, color = tint, modifier = Modifier.weight(1f))
+        if (subtitle != null) Column(Modifier.weight(1f)) {
+            Text(title, style = Type.callout, color = tint)
+            Text(subtitle, style = Type.caption, color = if (focused) Color.Black.copy(alpha = 0.6f) else SecondaryText)
+        } else Text(title, style = Type.callout, color = tint, modifier = Modifier.weight(1f))
         if (value != null) Text(
             value, style = Type.callout, color = if (focused) Color.Black.copy(alpha = 0.6f) else SecondaryText, maxLines = 1,
             overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(start = (16f * u).dp).widthIn(max = (900f * u).dp),
         )
+        // A row that opens or closes more beneath it, as the Apple apps' folds do.
+        if (fold != null) Icon(if (fold) Icons.Default.ExpandLess else Icons.Default.ExpandMore, null, tint = if (focused) Color.Black.copy(alpha = 0.5f) else SecondaryText, modifier = Modifier.padding(start = (12f * u).dp).size((34f * u).dp))
         if (chevron) Icon(Icons.Default.ChevronRight, null, tint = if (focused) Color.Black.copy(alpha = 0.5f) else SecondaryText, modifier = Modifier.padding(start = (12f * u).dp).size((34f * u).dp))
     }
 }
 
 @Composable
-internal fun TvSwitchRow(title: String, checked: Boolean, enabled: Boolean = true, modifier: Modifier = Modifier, onChange: (Boolean) -> Unit) =
-    TvRow(title, if (checked) "On" else "Off", enabled = enabled, modifier = modifier, onClick = { onChange(!checked) })
+internal fun TvSwitchRow(title: String, checked: Boolean, enabled: Boolean = true, modifier: Modifier = Modifier, subtitle: String? = null, onChange: (Boolean) -> Unit) =
+    TvRow(title, if (checked) "On" else "Off", enabled = enabled, modifier = modifier, subtitle = subtitle, onClick = { onChange(!checked) })
 
 /** A row showing the current choice; OK opens the glass menu of them below it. */
 @Composable

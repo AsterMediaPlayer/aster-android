@@ -1,5 +1,6 @@
 package com.astermediaplayer.astermediaplayer.ui.channels
 
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -254,9 +255,13 @@ fun ChannelSettingsScreen(viewModel: ChannelSettingsViewModel, only: String?, mo
         )
         when {
             !state.loaded -> Box(Modifier.fillMaxWidth().padding(top = 40.dp), Alignment.Center) { CircularProgressIndicator() }
-            playlists.isEmpty() -> Note(if (state.error != null) state.error!! else "No video playlists yet. Make one in Jellyfin, or with Add to Playlist on any movie.")
+            playlists.isEmpty() -> {
+                if (only == null) Note(CHANNELS_INTRO)
+                Note(if (state.error != null) state.error!! else "No video playlists yet. Make one in ${serverName()}, or with Add to Playlist on any movie.")
+                if (only == null && canEdit) NewChannel(state, viewModel)
+            }
             else -> {
-                if (only == null) Note("Turn video playlists into TV-style channels. Each plays its movies and episodes around the clock, the same on every device; tune in and you join whatever's on.")
+                if (only == null) Note(CHANNELS_INTRO)
                 if (!state.admin) Note("Only your server's administrator can set up channels. Ask them to, here or in Jellyfin.")
                 else if (state.refused) Note("The server wouldn't save that, so channels are read-only now.")
                 if (only != null && shownChannels.isEmpty()) Note("This playlist isn't a channel any more. Turn it back on in Edit Channels.")
@@ -266,21 +271,21 @@ fun ChannelSettingsScreen(viewModel: ChannelSettingsViewModel, only: String?, mo
                     val open = id in expanded
                     TvGroup("Channel ${numbers[id] ?: 0}")
                     TvRow(
-                        tags.name ?: playlist.name.orEmpty(), if (open) "Hide" else "Edit", modifier = if (index == 0) Modifier.focusRequester(first) else Modifier,
-                        onClick = { expanded = if (open) expanded - id else expanded + id },
+                        tags.name ?: playlist.name.orEmpty(), null, modifier = if (index == 0) Modifier.focusRequester(first) else Modifier,
+                        subtitle = summary(playlist, tags), fold = open, onClick = { expanded = if (open) expanded - id else expanded + id },
                     )
-                    Note(summary(playlist, tags))
                     if (open) ChannelSettingsRows(viewModel, state, playlist, tags, channels.mapNotNull { it.second.group }, numbers[id] ?: 0, canEdit, folded.filter { it.endsWith("|$id") }.map { it.substringBefore("|") }.toSet()) { key -> val k = "$key|$id"; folded = if (k in folded) folded - k else folded + k }
                 }
                 if (only == null && others.isNotEmpty()) {
                     TvGroup(if (channels.isEmpty()) "Video Playlists" else "More Playlists")
                     others.forEachIndexed { index, playlist ->
-                        TvSwitchRow(playlist.name.orEmpty(), false, enabled = canEdit, modifier = if (shownChannels.isEmpty() && index == 0) Modifier.focusRequester(first) else Modifier) { on ->
+                        TvSwitchRow(playlist.name.orEmpty(), false, enabled = canEdit, modifier = if (shownChannels.isEmpty() && index == 0) Modifier.focusRequester(first) else Modifier, subtitle = titles(playlist)) { on ->
                             if (on) { expanded = expanded + playlist.plainId(); viewModel.turnOn(playlist) }
                         }
                     }
                 }
                 if (only == null) clashes(channels).forEach { Note(it) }
+                if (only == null) HowChannelsWork()
             }
         }
     }
@@ -290,9 +295,10 @@ fun ChannelSettingsScreen(viewModel: ChannelSettingsViewModel, only: String?, mo
 }
 
 @Composable
-private fun Note(text: String) {
+private fun Note(text: String, readable: Boolean = false) {
     val u = Lockup.tvUnit
-    Text(text, style = Type.caption, color = SecondaryText, modifier = Modifier.padding(horizontal = (8f * u).dp, vertical = (4f * u).dp))
+    // Long help text takes the remote's focus, so the page scrolls down to it.
+    Text(text, style = Type.caption, color = SecondaryText, modifier = Modifier.then(if (readable) Modifier.focusable() else Modifier).padding(horizontal = (8f * u).dp, vertical = (4f * u).dp))
 }
 
 /** "Halloween and Sitcoms are both channel 3." */
@@ -311,10 +317,30 @@ private fun summary(playlist: BaseItemDto, tags: ChannelTags): String {
     playlist.childCount?.let { parts += if (it == 1) "1 title" else "$it titles" }
     if (tags.showsLogo) parts += "Logo"
     if (tags.showsBug) parts += "Bug"
-    if (tags.users.isNotEmpty()) parts += "Only " + tags.users.joinToString(", ")
+    if (tags.users.isNotEmpty()) parts += "Only " + andList(tags.users)
     if (tags.hasBreaks) parts += if (tags.breaks.align > 0) "Breaks, " + alignTitle(tags.breaks.align).lowercase() else "Breaks"
     return parts.joinToString(" · ")
 }
+
+/** "A", "A and B", "A, B and C". */
+private fun andList(names: List<String>) = if (names.size < 2) names.joinToString() else names.dropLast(1).joinToString(", ") + " and " + names.last()
+
+/** "1 title" or "12 titles", when the playlist says. */
+private fun titles(playlist: BaseItemDto): String? = playlist.childCount?.let { if (it == 1) "1 title" else "$it titles" }
+
+/** "Horror, Thriller · Movies", or the playlist's own titles, for the What It Plays fold when it's closed. */
+private fun playsSummary(playlist: BaseItemDto, tags: ChannelTags): String {
+    val sources = tags.genres + tags.networks + tags.collections
+    if (sources.isEmpty()) return titles(playlist) ?: "Its playlist"
+    return (listOf(sources.joinToString(", ")) + listOfNotNull(tags.content.takeIf { it != ChannelContent.All }?.title)).joinToString(" · ")
+}
+
+private const val CHANNELS_INTRO = "Turn video playlists into TV-style channels. Each plays its movies and episodes around the clock, the same on every device; tune in and you join whatever's on. Watching a channel doesn't touch your watch history. The Channels tab appears once there is one."
+
+/** The server's name for the footers and help, as the app shows it. */
+@Composable
+private fun serverName(): String =
+    (androidx.compose.ui.platform.LocalContext.current.applicationContext as AsterApp).repository.serverKind.displayName
 
 /** "On the Half Hour", "On the Hour", "Every 15 Minutes". */
 private fun alignTitle(minutes: Int) = when (minutes) { 30 -> "On the Half Hour"; 60 -> "On the Hour"; else -> "Every $minutes Minutes" }
@@ -339,7 +365,7 @@ private fun ChannelSettingsRows(
     fun change(edit: (ChannelTags) -> ChannelTags) = viewModel.update(playlist, edit)
     var naming by remember { mutableStateOf<String?>(null) }
 
-    TvSwitchRow("Channel", true, enabled = canEdit) { on -> if (!on) change { it.copy(isChannel = false) } }
+    TvSwitchRow(playlist.name.orEmpty(), true, enabled = canEdit, subtitle = titles(playlist)) { on -> if (!on) change { it.copy(isChannel = false) } }
     TvRow("Name", tags.name ?: playlist.name.orEmpty(), enabled = canEdit) { naming = "name" }
     val groupNames = (groups + listOfNotNull(tags.group)).distinct().sortedWith(String.CASE_INSENSITIVE_ORDER)
     TvChoiceRowIf(canEdit, "Group", listOf("None") + groupNames, if (tags.group == null) 0 else groupNames.indexOf(tags.group) + 1) { i -> change { it.copy(group = if (i == 0) null else groupNames[i - 1]) } }
@@ -347,7 +373,7 @@ private fun ChannelSettingsRows(
     val numberOptions = (1..maxOf(99, number)).toList()
     TvChoiceRowIf(canEdit, "Number", numberOptions.map { "$it" }, ((tags.number ?: number) - 1).coerceIn(0, numberOptions.lastIndex)) { i -> change { it.copy(number = numberOptions[i]) } }
 
-    TvRow("What It Plays", (tags.genres + tags.networks + tags.collections).joinToString(", ").ifEmpty { "Just the Playlist" }, onClick = { toggle("plays") })
+    TvRow("What It Plays", if ("plays" in open) null else playsSummary(playlist, tags), fold = "plays" in open, onClick = { toggle("plays") })
     if ("plays" in open) {
         TvMultiRow(canEdit, "Genres", state.genres, tags.genres, "None") { v -> change { it.copy(genres = v) } }
         TvMultiRow(canEdit, "Networks", state.networks, tags.networks, "None") { v -> change { it.copy(networks = v) } }
@@ -376,7 +402,7 @@ private fun ChannelSettingsRows(
         }
     }
 
-    TvRow("Advanced", if ("advanced" in open) "Hide" else "Show", onClick = { toggle("advanced") })
+    TvRow("Advanced", null, fold = "advanced" in open, onClick = { toggle("advanced") })
     if ("advanced" in open) {
         if (tags.mode == ChannelMode.Blocks) {
             val options = withCurrent(blockChoices, tags.blocks)
@@ -427,7 +453,7 @@ private fun ChannelSettingsRows(
         }
         val users = state.users + tags.users.filter { n -> state.users.none { it.equals(n, ignoreCase = true) } }
         if (users.isNotEmpty()) TvMultiRow(canEdit, "Users", users, tags.users, "Everyone") { v -> change { it.copy(users = v) } }
-        Note("Every setting is a tag on the playlist in Jellyfin, so you can change it there too.")
+        Note("Every setting is a tag on the playlist in ${serverName()}, so you can change it there too: see How Channels Work below.")
     }
     naming?.let { field ->
         TextDialog(
@@ -441,6 +467,21 @@ private fun ChannelSettingsRows(
                 if (field == "name") change { it.copy(name = value) } else if (value != null) change { it.copy(group = value) }
             },
         )
+    }
+}
+
+/** How Channels Work, folded open from a row at the foot of the page. */
+@Composable
+private fun HowChannelsWork() {
+    var open by remember { mutableStateOf(false) }
+    val server = serverName()
+    TvRow("How Channels Work", null, fold = open, onClick = { open = !open })
+    if (open) {
+        Note(readable = true, text = "Rotation plays one episode of each show in turn, and Blocks a few in a row; either way a show's episodes come in order and pick up where they left off, each movie takes a turn of its own, and specials are left out. Shuffle plays everything in its own order. These three deal a new order every day, week or month, as Reshuffle says, and Shuffle Again deals a different one. In Order plays the playlist as it's arranged, round and round.")
+        Note(readable = true, text = "Channels are saved as tags on the playlists in $server, so every device finds them. You can set them there too, in the playlist's Edit Metadata ▸ Tags: aster:channel, aster:number=3, aster:mode=blocks (or rotation, shuffle, sequential, airdate), aster:reshuffle=week (or day, month), aster:blocks=3-6, aster:seed=2, aster:logo=on, aster:bug=on (with aster:bug-location=top-left, top-right, bottom-left or bottom-right, aster:bug-size=150%, aster:bug-hide=30 and aster:bug-opacity=60%), aster:channel-name=Your Name, aster:group=Kids (channels go in the guide by group, groups in order of their lowest number), aster:min-length=20 and aster:max-length=60 (in minutes), aster:weight=Friends:2 (a show taking two turns to everyone else's one), and to fill a channel aster:genre=Horror, aster:network=NBC and aster:collection=Star Wars (once each), narrowed by aster:type=movies (or shows, all), aster:years=1980-1989, aster:rating=TV-PG,PG and aster:library=TV Shows (once per library, for genres and networks).")
+        Note(readable = true, text = "A channel with genres, networks or collections plays every movie and every episode of every show in them (any of them), as well as anything in its playlist. Air Date plays them all in the order they first aired.")
+        Note(readable = true, text = "A channel with filler playlists has a break after its programmes: a bumper, commercials, promos, trailers, interstitials, and a bumper back. Put the clips in $server as videos and tag each one with what it is: aster:commercial, aster:promo, aster:trailer, aster:interstitial or aster:bumper (aster:bumper=in only closes a break, right before the show, and aster:bumper=out only opens one); a clip without one isn't played. Put them in playlists tagged aster:filler, and pick those for a channel here, or name them with aster:filler-playlists=Its Name. aster:filler-types=commercials,bumpers keeps to some kinds; aster:bumpers-at=both (or out, in), aster:break-length=2 (minutes of commercials), aster:promo-count=1, aster:trailer-count=1, aster:interstitial-count=1 and aster:break-every=1 shape each break. With aster:align=30, programmes line up on the hour and half hour: Best Effort (aster:align-fit=best) fills each break with whole commercials, promos, trailers, interstitials and bumpers, as near the mark as they get, so a programme can start a few seconds early; Exact (aster:align-fit=exact) fills with interstitials and cuts the last one short to land right on it.")
+        Note(readable = true, text = "Other people on your server see a channel only if its playlist is shared with them, or public. Users (aster:user=peppy,jd) keeps a channel to certain people in Aster's Channels tab; it still lists every channel here, and doesn't hide the playlist in $server.")
     }
 }
 
