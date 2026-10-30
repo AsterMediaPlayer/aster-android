@@ -1,6 +1,7 @@
 package com.astermediaplayer.astermediaplayer.data
 
 import com.astermediaplayer.astermediaplayer.data.emby.ServerKind
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -30,5 +31,25 @@ class ServerLockTest {
     @Test fun plexIsNeverAsked() {
         assertFalse(server(asks = true, lockAfter = 15, kind = ServerKind.Plex).loosens(lockAfter = null))
         assertFalse(server(asks = true, kind = ServerKind.Plex).loosens(asksToSwitch = false))
+    }
+
+    @Test fun aPlexServerCanBeLockedOnlyWithAPinToAsk() {
+        fun plex(link: com.astermediaplayer.astermediaplayer.data.plex.PlexLink?) =
+            SavedServer(Session("http://192.168.1.240:32400", "t", "u", "peppy", ServerKind.Plex, "Server", link))
+        val withPin = com.astermediaplayer.astermediaplayer.data.plex.PlexLink("a", "m", emptyList(), homeUserUuid = "u", homeUserHasPin = true, homeToken = "h")
+        assertTrue(plex(withPin).canBeLocked)
+        assertEquals("PIN", plex(withPin).credential)
+        assertFalse(plex(withPin.copy(homeUserHasPin = false)).canBeLocked)
+        assertFalse(plex(null).canBeLocked)
+        assertEquals("password", server().credential)
+    }
+
+    @Test fun loosenWithAPlexPinAsksForIt() {
+        val link = com.astermediaplayer.astermediaplayer.data.plex.PlexLink("a", "m", emptyList(), homeUserUuid = "u", homeUserHasPin = true, homeToken = "h")
+        val locked = SavedServer(Session("http://plex", "t", "u", "peppy", ServerKind.Plex, "Server", link), asksPasswordToSwitch = true, lockAfterMinutes = 15)
+        assertTrue(locked.loosens(asksToSwitch = false))
+        assertTrue(locked.loosens(lockAfter = null))
+        // Without a PIN there's nothing to ask for, so nothing to loosen.
+        assertFalse(locked.copy(session = locked.session.copy(plex = link.copy(homeUserHasPin = false))).loosens(asksToSwitch = false))
     }
 }

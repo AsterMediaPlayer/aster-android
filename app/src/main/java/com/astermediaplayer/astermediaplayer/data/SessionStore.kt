@@ -37,8 +37,14 @@ data class SavedServer(
     val id: String get() = id(session.serverUrl, session.userId)
     val title: String get() = session.serverName ?: session.serverUrl.substringAfter("://").substringBefore("/")
 
-    /** Whether it can ask for a password: the server's own, checked by the server; Plex's sign-in has none to ask for. */
-    val canBeLocked: Boolean get() = session.kind != com.astermediaplayer.astermediaplayer.data.emby.ServerKind.Plex
+    /**
+     * Whether it can ask for anything: the user's password on Jellyfin and Emby, checked by the server; on Plex, the PIN of the Home
+     * profile signed in as, checked by plex.tv. A Plex sign-in as a profile with no PIN (or before the Home was kept) has none to ask for.
+     */
+    val canBeLocked: Boolean get() = session.kind != com.astermediaplayer.astermediaplayer.data.emby.ServerKind.Plex || session.plex?.canAskPin == true
+
+    /** What switching and Lock After ask for: "password", or a Plex Home profile's "PIN". */
+    val credential: String get() = if (session.kind == com.astermediaplayer.astermediaplayer.data.emby.ServerKind.Plex) "PIN" else "password"
 
     /** Whether a new Lock After lets more past the lock than the one set (never, or a longer wait): that asks for the password first. */
     fun loosens(lockAfter: Int?): Boolean {

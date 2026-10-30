@@ -9,6 +9,8 @@ import com.astermediaplayer.astermediaplayer.data.emby.ServerKind
 import com.astermediaplayer.astermediaplayer.data.plex.OkHttpPlexTransport
 import com.astermediaplayer.astermediaplayer.data.plex.PlexAccount
 import com.astermediaplayer.astermediaplayer.data.plex.PlexApiClient
+import com.astermediaplayer.astermediaplayer.data.plex.PlexHomeChoice
+import com.astermediaplayer.astermediaplayer.data.plex.PlexHomeUser
 import com.astermediaplayer.astermediaplayer.data.plex.PlexConnectionRace
 import com.astermediaplayer.astermediaplayer.data.plex.PlexDevice
 import com.astermediaplayer.astermediaplayer.data.plex.PlexLink
@@ -145,15 +147,21 @@ class AsterRepository(context: Context, private val store: SessionStore) {
     /** The servers the account can use, its own first. */
     suspend fun plexServers(accountToken: String): List<PlexResource> = plexAccount.servers(accountToken)
 
-    /** Signs in to one of the account's servers, at the first of its addresses that answers. */
-    suspend fun signInWithPlex(resource: PlexResource, accountToken: String) {
+    /** The account's Home profiles, for "who's watching"; none when it has no Home. */
+    suspend fun plexHomeUsers(token: String): List<PlexHomeUser> = plexAccount.homeUsers(token)
+
+    /** The profile's own token once plex.tv has accepted its PIN (it throws [PlexHttpException] when not). */
+    suspend fun plexSwitchUser(user: PlexHomeUser, pin: String?, homeToken: String): String? = plexAccount.switchUser(user.uuid, pin, homeToken)
+
+    /** Signs in to one of the account's servers, at the first of its addresses that answers; [home] is the profile it was signed in as. */
+    suspend fun signInWithPlex(resource: PlexResource, accountToken: String, home: PlexHomeChoice? = null) {
         val token = resource.accessToken ?: accountToken
         val connection = PlexConnectionRace.fastest(resource.rankedConnections, token, plexDevice)
             ?: throw IllegalStateException("${resource.name} isn't answering. Check that it's on; away from home, it also needs Remote Access turned on (in Plex's settings for the server, under Remote Access).")
         val (accountId, accountName) = plexAccount.accountName(accountToken)
         val saved = Session(
             connection.uri.trimEnd('/'), token, PlexMapper.id(accountId.toString()), accountName, ServerKind.Plex, resource.name,
-            PlexLink(accountToken, resource.clientIdentifier, resource.connections),
+            PlexLink(accountToken, resource.clientIdentifier, resource.connections, home?.user?.uuid, home?.user?.hasPin == true, home?.homeToken),
         )
         store.save(saved)
         serverKind = ServerKind.Plex
@@ -274,9 +282,19 @@ class AsterRepository(context: Context, private val store: SessionStore) {
         _locked.value = false
     }
 
-    /** Checks a saved server's password with the server itself; the fresh sign-in to switch or unlock with. */
+    /**
+     * Checks a saved server's password with the server itself, or a Plex profile's PIN with plex.tv; the fresh sign-in to switch or
+     * unlock with.
+     */
     suspend fun signInAgain(saved: SavedServer, password: String): Session {
         val s = saved.session
+        if (s.kind == ServerKind.Plex) {
+            val link = s.plex?.takeIf { it.canAskPin } ?: throw IllegalStateException("Sign in with Plex again to use a PIN.")
+            // plex.tv lets a profile switch to itself without a PIN, so an empty one is never sent.
+            require(password.isNotEmpty()) { "Enter the PIN." }
+            val own = plexAccount.switchUser(link.homeUserUuid!!, password, link.homeToken!!)
+            return s.copy(plex = link.copy(accountToken = own ?: link.accountToken))
+        }
         val result = connect(s.serverUrl, null, s.kind).authenticationApi.authenticateUserByName(AuthenticateUserByName(s.userName, password)).content
         val token = checkNotNull(result.accessToken) { "The server didn't return an access token" }
         val user = checkNotNull(result.user) { "The server didn't return a user" }

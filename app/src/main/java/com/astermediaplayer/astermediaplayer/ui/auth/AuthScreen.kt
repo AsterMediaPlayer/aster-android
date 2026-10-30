@@ -31,6 +31,10 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.foundation.layout.size
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.ImeAction
@@ -45,9 +49,10 @@ fun AuthScreen(viewModel: AuthViewModel, onSignedIn: () -> Unit) {
     val servers by viewModel.servers.collectAsStateWithLifecycle()
     LaunchedEffect(state.signedIn) { if (state.signedIn) onSignedIn() }
     // Back steps back a stage, as on the Apple apps: out of Quick Connect, then to the server screen, rather than leaving the app.
-    androidx.activity.compose.BackHandler(enabled = state.connectedServer != null || state.plexCode != null || state.plexServers != null) {
+    androidx.activity.compose.BackHandler(enabled = state.connectedServer != null || state.plexCode != null || state.plexServers != null || state.plexUsers != null) {
         when {
-            state.plexCode != null || state.plexServers != null -> viewModel.cancelPlex()
+            state.plexPinFor != null -> viewModel.backToPlexUsers()
+            state.plexCode != null || state.plexServers != null || state.plexUsers != null -> viewModel.cancelPlex()
             state.quickConnectCode != null -> viewModel.cancelQuickConnect()
             else -> viewModel.changeServer()
         }
@@ -63,6 +68,34 @@ fun AuthScreen(viewModel: AuthViewModel, onSignedIn: () -> Unit) {
                 Text("Link Aster to Plex", style = MaterialTheme.typography.titleMedium)
                 Text("On any device, go to plex.tv/link, sign in, and enter this code:", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text(state.plexCode!!, style = MaterialTheme.typography.displayMedium, color = MaterialTheme.colorScheme.primary)
+                TextButton(onClick = viewModel::cancelPlex) { Text("Cancel") }
+            } else if (state.plexPinFor != null) {
+                // A profile with a PIN: plex.tv checks it by switching to the profile.
+                var pin by remember { mutableStateOf("") }
+                val person = state.plexPinFor!!
+                Text("${person.title}'s PIN", style = MaterialTheme.typography.titleMedium)
+                OutlinedTextField(
+                    value = pin, onValueChange = { pin = it.filter(Char::isDigit).take(8); viewModel.setPlexPinTyping() }, label = { Text("PIN") }, singleLine = true,
+                    modifier = Modifier.fillMaxWidth(), visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword, imeAction = ImeAction.Go), keyboardActions = KeyboardActions(onGo = { viewModel.submitPlexPin(pin) }),
+                )
+                state.plexPinError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                Button(onClick = { viewModel.submitPlexPin(pin) }, enabled = !state.busy && pin.isNotEmpty(), modifier = Modifier.fillMaxWidth()) {
+                    if (state.busy) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp) else Text("Continue")
+                }
+                TextButton(onClick = viewModel::backToPlexUsers, enabled = !state.busy) { Text("Choose Another Profile") }
+            } else if (state.plexUsers != null) {
+                Text("Who's watching?", style = MaterialTheme.typography.titleMedium)
+                state.plexUsers!!.forEach { person ->
+                    OutlinedButton(onClick = { viewModel.pickPlexUser(person) }, enabled = !state.busy, modifier = Modifier.fillMaxWidth(), contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp)) {
+                        Column(Modifier.weight(1f)) {
+                            Text(person.title, style = MaterialTheme.typography.bodyLarge)
+                            if (person.hasPin) Text("Asks for a PIN", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+                if (state.busy) CircularProgressIndicator(Modifier.padding(2.dp))
+                state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                 TextButton(onClick = viewModel::cancelPlex) { Text("Cancel") }
             } else if (state.plexServers != null) {
                 Text("Choose a Plex server", style = MaterialTheme.typography.titleMedium)

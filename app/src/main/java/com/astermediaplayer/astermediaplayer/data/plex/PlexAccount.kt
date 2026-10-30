@@ -37,19 +37,38 @@ data class PlexConnection(val uri: String, val address: String?, val port: Int?,
 
 /**
  * What a saved Plex sign-in keeps beyond its token: the account's own token (plex.tv's, to ask for the server's addresses again
- * if the saved one stops answering), the server's machine id, and the addresses it listed.
+ * if the saved one stops answering), the server's machine id, and the addresses it listed. For a sign-in as a profile of a Plex Home,
+ * also the profile, whether it has a PIN, and the Home's own token, which plex.tv checks that PIN with by switching to the profile.
  */
-data class PlexLink(val accountToken: String, val machineId: String, val connections: List<PlexConnection>) {
+data class PlexLink(
+    val accountToken: String, val machineId: String, val connections: List<PlexConnection>,
+    val homeUserUuid: String? = null, val homeUserHasPin: Boolean = false, val homeToken: String? = null,
+) {
+    /** Whether there's a PIN to ask for: a profile that has one, and the Home's token to check it with. */
+    val canAskPin: Boolean get() = homeUserHasPin && homeUserUuid != null && homeToken != null
+
     fun toJson(): JSONObject = JSONObject().put("accountToken", accountToken).put("machineId", machineId)
         .put("connections", JSONArray().also { a -> connections.forEach { a.put(it.toJson()) } })
+        .apply {
+            homeUserUuid?.let { put("homeUserUuid", it) }
+            if (homeUserHasPin) put("homeUserHasPin", true)
+            homeToken?.let { put("homeToken", it) }
+        }
 
     companion object {
         fun fromJson(o: JSONObject) = PlexLink(
             o.getString("accountToken"), o.getString("machineId"),
             o.optJSONArray("connections")?.let { a -> List(a.length()) { PlexConnection.fromJson(a.getJSONObject(it)) } }.orEmpty(),
+            homeUserUuid = o.str("homeUserUuid"), homeUserHasPin = o.optBoolean("homeUserHasPin"), homeToken = o.str("homeToken"),
         )
     }
 }
+
+/** A profile of the account's Plex Home, which a PIN may guard. */
+data class PlexHomeUser(val uuid: String, val title: String, val hasPin: Boolean, val admin: Boolean)
+
+/** The Home profile signed in as, and the Home's own token (the one that listed the profiles), kept with the sign-in. */
+data class PlexHomeChoice(val user: PlexHomeUser, val homeToken: String)
 
 /** A link code: shown to the viewer, then asked about until plex.tv says it was entered. */
 data class PlexPin(val id: Long, val code: String, val authToken: String?, val expiresInSeconds: Int?)
@@ -123,6 +142,17 @@ class PlexAccount(private val device: PlexDevice, private val http: OkHttpClient
     suspend fun servers(token: String): List<PlexResource> =
         parseResources(send("api/v2/resources", query = mapOf("includeHttps" to "1", "includeRelay" to "1"), token = token))
 
+    /** The account's Home profiles; none for an account without a Home, or when plex.tv can't be asked. */
+    suspend fun homeUsers(token: String): List<PlexHomeUser> =
+        try { parseHomeUsers(send("api/v2/home/users", token = token)) } catch (e: CancellationException) { throw e } catch (e: Exception) { emptyList() }
+
+    /**
+     * Switches to a Home profile, with its PIN if it has one, which plex.tv checks (throws [PlexHttpException] 401 or 403 when wrong):
+     * the profile's own account token, or null if plex.tv doesn't say. The PIN goes in the request, never in a log.
+     */
+    suspend fun switchUser(uuid: String, pin: String?, token: String): String? =
+        JSONObject(send("api/v2/home/users/$uuid/switch", "POST", if (pin == null) emptyMap() else mapOf("pin" to pin), token)).str("authToken")
+
     private fun pin(o: JSONObject) = parsePin(o)
 
     companion object {
@@ -130,6 +160,15 @@ class PlexAccount(private val device: PlexDevice, private val http: OkHttpClient
 
         /** A link code's reply: until the code is entered its `authToken` is a JSON null, which `optString` would read as the text "null". */
         fun parsePin(o: JSONObject) = PlexPin(o.getLong("id"), o.getString("code"), o.str("authToken"), if (o.has("expiresIn") && !o.isNull("expiresIn")) o.getInt("expiresIn") else null)
+
+        /** plex.tv's Home: its profiles, whether each is guarded by a PIN, and which is the administrator's. */
+        fun parseHomeUsers(json: String): List<PlexHomeUser> {
+            val array = JSONObject(json).optJSONArray("users") ?: return emptyList()
+            return List(array.length()) { array.getJSONObject(it) }.mapNotNull { o ->
+                val uuid = o.str("uuid") ?: return@mapNotNull null
+                PlexHomeUser(uuid, o.str("title") ?: o.str("username") ?: "Plex", o.optBoolean("protected"), o.optBoolean("admin"))
+            }
+        }
 
         /** plex.tv's resource list, keeping the devices that are servers, the account's own first. */
         fun parseResources(json: String): List<PlexResource> {

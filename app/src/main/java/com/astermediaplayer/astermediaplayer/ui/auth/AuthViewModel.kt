@@ -14,6 +14,8 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import org.jellyfin.sdk.model.api.UserDto
 import com.astermediaplayer.astermediaplayer.data.plex.PlexResource
+import com.astermediaplayer.astermediaplayer.data.plex.PlexHomeChoice
+import com.astermediaplayer.astermediaplayer.data.plex.PlexHomeUser
 
 data class AuthState(
     val serverInput: String = "",
@@ -32,6 +34,11 @@ data class AuthState(
     val plexCode: String? = null,
     /** The Plex account's servers, to pick from once the code is entered; null until then. */
     val plexServers: List<PlexResource>? = null,
+    /** The Plex Home's profiles ("who's watching"), once the code is entered and the account has more than one; null otherwise. */
+    val plexUsers: List<PlexHomeUser>? = null,
+    /** A profile with a PIN, picked and waiting for it. */
+    val plexPinFor: PlexHomeUser? = null,
+    val plexPinError: String? = null,
 )
 
 class AuthViewModel(private val repo: AsterRepository, private val onServerChanged: () -> Unit = {}) : ViewModel() {
@@ -40,6 +47,9 @@ class AuthViewModel(private val repo: AsterRepository, private val onServerChang
     private var quickConnectJob: Job? = null
     private var plexJob: Job? = null
     private var plexToken: String? = null
+    /** The Home profile signed in as, and the Home's token, for the sign-in to keep. */
+    private var plexHome: PlexHomeChoice? = null
+    private var plexLinkToken: String? = null
 
     /** The servers already signed in to: back to one without typing it. */
     val servers: StateFlow<List<SavedServer>> = repo.savedServers
@@ -159,11 +169,12 @@ class AuthViewModel(private val repo: AsterRepository, private val onServerChang
                     delay(2_000)
                     token = runCatching { repo.plexLinkedToken(pin) }.getOrNull()
                 }
-                plexToken = token
-                val servers = repo.plexServers(token)
-                if (servers.isEmpty()) throw IllegalStateException("This Plex account has no servers.")
-                if (servers.size == 1) choosePlexServer(servers.single())
-                else _state.update { it.copy(plexCode = null, plexServers = servers) }
+                plexLinkToken = token
+                plexHome = null
+                // A Home with more than one profile asks who's watching first, and a profile's PIN if it has one.
+                val people = repo.plexHomeUsers(token)
+                if (people.size > 1) _state.update { it.copy(plexCode = null, plexUsers = people) }
+                else listPlexServers(token)
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -172,15 +183,61 @@ class AuthViewModel(private val repo: AsterRepository, private val onServerChang
         }
     }
 
+    /** The account's servers (or signed in to the only one), as the profile whose token this is. */
+    private suspend fun listPlexServers(token: String) {
+        plexToken = token
+        val servers = repo.plexServers(token)
+        if (servers.isEmpty()) throw IllegalStateException("This Plex account has no servers.")
+        if (servers.size == 1) choosePlexServer(servers.single())
+        else _state.update { it.copy(plexCode = null, plexUsers = null, plexPinFor = null, plexServers = servers) }
+    }
+
+    /** A profile picked: its PIN is asked for when it has one, else signed in as it at once. */
+    fun pickPlexUser(user: PlexHomeUser) {
+        if (_state.value.busy) return
+        if (user.hasPin) _state.update { it.copy(plexPinFor = user, plexPinError = null) } else switchPlexUser(user, null)
+    }
+
+    /** An empty PIN is never sent: plex.tv lets a profile switch to itself without one. */
+    fun submitPlexPin(pin: String) {
+        val user = _state.value.plexPinFor ?: return
+        if (pin.isNotEmpty()) switchPlexUser(user, pin)
+    }
+
+    private fun switchPlexUser(user: PlexHomeUser, pin: String?) {
+        val home = plexLinkToken ?: return
+        _state.update { it.copy(busy = true, plexPinError = null, error = null) }
+        plexJob = viewModelScope.launch {
+            try {
+                val own = repo.plexSwitchUser(user, pin, home)
+                plexHome = PlexHomeChoice(user, home)
+                listPlexServers(own ?: home)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: com.astermediaplayer.astermediaplayer.data.plex.PlexHttpException) {
+                if (e.code == 401 || e.code == 403) _state.update { it.copy(busy = false, plexPinError = "That PIN isn't right.") }
+                else _state.update { it.copy(busy = false, plexUsers = null, plexPinFor = null, error = "Couldn't switch to ${user.title}. ${e.userMessage()}") }
+            } catch (e: Exception) {
+                _state.update { it.copy(busy = false, plexUsers = null, plexPinFor = null, error = e.userMessage()) }
+            }
+        }
+    }
+
+    /** Typing again clears "That PIN isn't right." */
+    fun setPlexPinTyping() = _state.update { if (it.plexPinError != null) it.copy(plexPinError = null) else it }
+
+    /** Back from a profile's PIN to who's watching. */
+    fun backToPlexUsers() = _state.update { it.copy(plexPinFor = null, plexPinError = null) }
+
     fun choosePlexServer(server: PlexResource) {
         val token = plexToken ?: return
         if (_state.value.busy) return
         _state.update { it.copy(busy = true, plexCode = null, error = null) }
         plexJob = viewModelScope.launch {
             try {
-                repo.signInWithPlex(server, token)
+                repo.signInWithPlex(server, token, plexHome)
                 onServerChanged()
-                _state.update { it.copy(busy = false, plexServers = null, signedIn = true) }
+                _state.update { it.copy(busy = false, plexServers = null, plexUsers = null, plexPinFor = null, signedIn = true) }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -192,7 +249,9 @@ class AuthViewModel(private val repo: AsterRepository, private val onServerChang
     fun cancelPlex() {
         plexJob?.cancel()
         plexToken = null
-        _state.update { it.copy(busy = false, plexCode = null, plexServers = null, error = null) }
+        plexLinkToken = null
+        plexHome = null
+        _state.update { it.copy(busy = false, plexCode = null, plexServers = null, plexUsers = null, plexPinFor = null, plexPinError = null, error = null) }
     }
 
     fun cancelQuickConnect() {

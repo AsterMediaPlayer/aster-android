@@ -81,4 +81,41 @@ class PlexAccountTest {
         assertEquals(null, servers.single().accessToken)
         assertEquals(null, servers.single().connections.single().address)
     }
+
+    private val home = """{"id":1,"name":"Berryman","users":[
+        {"id":214934,"uuid":"5fc3161f66ce9f5e","title":"peppy6582","protected":true,"admin":true,"restricted":false},
+        {"id":166937416,"uuid":"0572256652940cc0","title":"Lady","protected":true,"admin":false,"restricted":true},
+        {"id":166937264,"uuid":"d064789a0670d4dd","title":"Lana","protected":false,"admin":false,"restricted":true},
+        {"id":5,"title":"No uuid"}]}"""
+
+    @Test fun homeProfilesSayWhichHaveAPin() {
+        val people = PlexAccount.parseHomeUsers(home)
+        assertEquals(listOf("peppy6582", "Lady", "Lana"), people.map { it.title })
+        assertEquals(listOf(true, true, false), people.map { it.hasPin })
+        assertEquals(listOf(true, false, false), people.map { it.admin })
+        assertEquals("0572256652940cc0", people[1].uuid)
+    }
+
+    @Test fun anAccountWithoutAHomeHasNoProfiles() {
+        assertEquals(emptyList<PlexHomeUser>(), PlexAccount.parseHomeUsers("""{"id":1}"""))
+    }
+
+    @Test fun aLinkKeepsTheProfileItWasSignedInAs() {
+        val link = PlexLink("own", "machine", emptyList(), homeUserUuid = "5fc3161f66ce9f5e", homeUserHasPin = true, homeToken = "home")
+        val back = PlexLink.fromJson(org.json.JSONObject(link.toJson().toString()))
+        assertEquals(link, back)
+        assertEquals(true, back.canAskPin)
+    }
+
+    @Test fun aLinkSavedBeforeProfilesWasKeptHasNoPinToAsk() {
+        val old = PlexLink.fromJson(org.json.JSONObject("""{"accountToken":"a","machineId":"m","connections":[]}"""))
+        assertEquals(null, old.homeUserUuid)
+        assertEquals(false, old.canAskPin)
+    }
+
+    @Test fun aPinNeedsAProfileThatHasOneAndTheHomesToken() {
+        assertEquals(false, PlexLink("a", "m", emptyList(), homeUserUuid = "u", homeUserHasPin = false, homeToken = "h").canAskPin)
+        assertEquals(false, PlexLink("a", "m", emptyList(), homeUserUuid = "u", homeUserHasPin = true, homeToken = null).canAskPin)
+        assertEquals(false, PlexLink("a", "m", emptyList(), homeUserUuid = null, homeUserHasPin = true, homeToken = "h").canAskPin)
+    }
 }

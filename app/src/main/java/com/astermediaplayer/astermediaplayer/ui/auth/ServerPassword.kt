@@ -51,7 +51,7 @@ import kotlinx.coroutines.launch
 @Composable
 fun ServerPasswordDialog(
     server: SavedServer, button: String, title: String = server.title,
-    /** What it's for, when not switching to the server: "Enter Ann's password to {purpose}." */
+    /** What it's for, when not switching to the server: "Enter Ann's password to {purpose}." (on Plex, "Plex Home PIN"). */
     purpose: String = "switch to this ${server.session.kind.displayName} server",
     onCheck: suspend (String) -> Unit, onDismiss: () -> Unit) {
     var password by remember { mutableStateOf("") }
@@ -64,19 +64,20 @@ fun ServerPasswordDialog(
         scope.launch {
             try { onCheck(password); onDismiss() }
             catch (e: CancellationException) { throw e }
-            catch (e: Exception) { busy = false; error = "That password didn't work." }
+            catch (e: Exception) { busy = false; error = "That ${server.credential} didn't work." }
         }
     }
+    val plex = server.credential == "PIN"
     AlertDialog(
         onDismissRequest = { if (!busy) onDismiss() },
         title = { Text(title) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("Enter ${server.session.userName}'s password to $purpose.")
+                Text("Enter ${server.session.userName}'s ${if (plex) "Plex Home PIN" else "password"} to $purpose.")
                 OutlinedTextField(
-                    value = password, onValueChange = { password = it; error = null }, label = { Text("Password") }, singleLine = true,
+                    value = password, onValueChange = { password = it; error = null }, label = { Text(if (plex) "PIN" else "Password") }, singleLine = true,
                     modifier = Modifier.fillMaxWidth(), visualTransformation = PasswordVisualTransformation(),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Go), keyboardActions = KeyboardActions(onGo = { check() }),
+                    keyboardOptions = KeyboardOptions(keyboardType = if (plex) KeyboardType.NumberPassword else KeyboardType.Password, imeAction = ImeAction.Go), keyboardActions = KeyboardActions(onGo = { check() }),
                 )
                 error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             }
@@ -102,7 +103,7 @@ fun ServerLockScreen(server: SavedServer, title: String = server.title, onUnlock
         scope.launch {
             try { onUnlock(password) }
             catch (e: CancellationException) { throw e }
-            catch (e: Exception) { busy = false; error = "That password didn't work." }
+            catch (e: Exception) { busy = false; error = "That ${server.credential} didn't work." }
         }
     }
     val field = remember { androidx.compose.ui.focus.FocusRequester() }
@@ -116,11 +117,12 @@ fun ServerLockScreen(server: SavedServer, title: String = server.title, onUnlock
         Column(Modifier.widthIn(max = 420.dp).fillMaxWidth().verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             Icon(Icons.Default.Lock, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(44.dp))
             Text(title, style = MaterialTheme.typography.titleLarge, maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
-            Text("Enter ${server.session.userName}'s password to carry on.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            val plex = server.credential == "PIN"
+            Text("Enter ${server.session.userName}'s ${if (plex) "Plex Home PIN" else "password"} to carry on.", color = MaterialTheme.colorScheme.onSurfaceVariant)
             OutlinedTextField(
-                value = password, onValueChange = { password = it; error = null }, label = { Text("Password") }, singleLine = true,
+                value = password, onValueChange = { password = it; error = null }, label = { Text(if (plex) "PIN" else "Password") }, singleLine = true,
                 modifier = Modifier.fillMaxWidth().focusRequester(field), visualTransformation = PasswordVisualTransformation(),
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Go), keyboardActions = KeyboardActions(onGo = { check() }),
+                keyboardOptions = KeyboardOptions(keyboardType = if (plex) KeyboardType.NumberPassword else KeyboardType.Password, imeAction = ImeAction.Go), keyboardActions = KeyboardActions(onGo = { check() }),
             )
             Button(onClick = ::check, enabled = !busy && password.isNotEmpty(), modifier = Modifier.fillMaxWidth()) { if (busy) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp) else Text("Unlock") }
             TextButton(onClick = onUseAnother, enabled = !busy) { Text("Use Another Server") }

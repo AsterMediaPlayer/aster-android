@@ -588,7 +588,7 @@ private fun AccountPage(session: Session?, servers: ServerActions, onSignOut: ()
     SNote("Servers you've signed in to stay signed in, to switch between. Add one to sign in to another Jellyfin or Emby server.")
 }
 
-/** One saved server: switch to it, ask for its password first, lock it after a while, or forget it. */
+/** One saved server: switch to it, ask for its password (a Plex profile's PIN) first, lock it after a while, or forget it. */
 @Composable
 private fun ServerPage(id: String, servers: ServerActions, open: (SettingsPage) -> Unit, back: () -> Unit) {
     val repo = servers.repo
@@ -606,17 +606,23 @@ private fun ServerPage(id: String, servers: ServerActions, open: (SettingsPage) 
     else SRow("Switch to This Server") {
         if (server.asksPasswordToSwitch) asking = true else scope.launch { repo.switchTo(server); servers.onSwitched() }
     }
-    // A password to switch or unlock is the server's own, checked by the server: Plex's sign-in has none to ask for.
-    if (server.session.kind != com.astermediaplayer.astermediaplayer.data.emby.ServerKind.Plex) {
-        SSwitch("Ask for Password to Switch", server.asksPasswordToSwitch) { asks ->
-            // Turning it off asks for the password, so nobody else can.
+    // A password to switch or unlock is the server's own, checked by the server; on Plex it's the Home profile's PIN, checked by plex.tv.
+    val plex = server.session.kind == com.astermediaplayer.astermediaplayer.data.emby.ServerKind.Plex
+    if (server.canBeLocked) {
+        val who = if (plex) "${server.session.userName}'s Plex Home PIN" else "${server.session.userName}'s password"
+        SSwitch("Ask for ${server.credential.replaceFirstChar { it.uppercase() }} to Switch", server.asksPasswordToSwitch) { asks ->
+            // Turning it off asks for the password (or PIN), so nobody else can.
             if (server.loosens(asksToSwitch = asks)) loosening = LockChange("stop asking for it to switch", "Turn Off") { repo.setAsksPasswordToSwitch(id, false) }
             else scope.launch { repo.setAsksPasswordToSwitch(id, asks) }
         }
-        SNote("Switching to this server asks for ${server.session.userName}'s password first, checked by the server, so others on this device can't switch to it.")
+        SNote("Switching to this server asks for $who first, checked by ${if (plex) "plex.tv" else "the server"}, so others on this device can't switch to it.")
         SGroup(" ")
         SRow("Lock After", SavedServer.lockTitle(server.lockAfterMinutes), chevron = true) { open(SettingsPage.LockAfter(id)) }
-        SNote("After this long away from Aster, coming back to this server asks for ${server.session.userName}'s password.")
+        SNote("After this long away from Aster, coming back to this server asks for $who.")
+    } else if (plex) {
+        // A profile with no PIN, or a sign-in from before the Home was kept: signing in again can pick a profile that has one.
+        SRow("Sign In with Plex Again") { servers.onAddServer() }
+        SNote("Asking for a PIN to switch, and Lock After, need a Plex Home profile with a PIN. If ${server.session.userName} has one now (set at plex.tv), sign in with Plex again to use it.")
     }
     if (!inUse) {
         SGroup(" ")
