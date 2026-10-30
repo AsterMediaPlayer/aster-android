@@ -533,16 +533,13 @@ private fun DetailBody(
     BoxWithConstraints(
         Modifier.fillMaxSize().then(
             if (!isTv) Modifier else Modifier.onKeyEvent { event ->
-                // Left, or Up, with nothing further that way to go to: back up to the page's top first (its title can be scrolled off), then
-                // out to the menu, as the pages a menu belongs to do.
+                // Left, or Up, with nothing further that way to go to slides the menu out, as on the pages a menu belongs to.
                 val direction = when (event.key) { Key.DirectionLeft -> FocusDirection.Left; Key.DirectionUp -> FocusDirection.Up; else -> null }
                 if (direction == null) false
                 else {
                     // Left on Play is the edge of the page, though the tabs below start a little further left and would take it.
                     val atEdge = direction == FocusDirection.Left && playFocused
-                    if (event.type == KeyEventType.KeyDown && (atEdge || !focusManager.moveFocus(direction))) {
-                        if (scroll.value > 0) pageScope.launch { scroll.animateScrollTo(0) } else onOpenMenu()
-                    }
+                    if (event.type == KeyEventType.KeyDown && (atEdge || !focusManager.moveFocus(direction))) onOpenMenu()
                     true
                 }
             },

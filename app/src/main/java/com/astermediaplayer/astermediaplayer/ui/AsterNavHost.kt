@@ -34,6 +34,7 @@ import androidx.compose.material.icons.filled.Sensors
 import androidx.compose.material3.IconButton
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.remember
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.astermediaplayer.astermediaplayer.data.Audiobook
@@ -377,9 +378,11 @@ fun AsterNavHost(signedIn: Boolean) {
                 val id = parseId(entry.arguments!!.getString("id").orEmpty())
                 if (id == null) { LaunchedEffect(Unit) { nav.popBackStack() }; return@composable }
                 val vm: DetailViewModel = viewModel(factory = viewModelFactory { initializer { DetailViewModel(repo, id) } })
+                var menuOpen by rememberSaveable { mutableStateOf(false) }
+                Box(Modifier.fillMaxSize()) {
                 DetailScreen(
                     vm, onBack = { nav.popBackStack() }, onPlay = { nav.navigate(Routes.player(it)) }, onItem = ::open,
-                    onOpenMenu = { app.menuRequested = true; nav.popBackStack(Routes.MAIN, inclusive = false) },
+                    onOpenMenu = { if (TvMenuState.items.isNotEmpty()) menuOpen = true },
                     onPlayFromBeginning = { nav.navigate(Routes.player(it, fromBeginning = true)) },
                     onDiscMenu = { nav.navigate(Routes.disc(it)) },
                     onGoToSeries = { nav.navigate(Routes.detail(it)) },
@@ -401,6 +404,17 @@ fun AsterNavHost(signedIn: Boolean) {
                         }
                     },
                 )
+                // Left or Up at the page's edge slides the menu out over it; the page stays, and only picking from the menu leaves it.
+                if (menuOpen && isTv) {
+                    androidx.activity.compose.BackHandler { menuOpen = false }
+                    val here = TvMenuState.selected
+                    TvMenu(
+                        TvMenuState.items, isSelected = { it == here || (here == null && it == TvMenuState.items.first()) },
+                        onPick = { item -> menuOpen = false; TvMenuState.pending = item; nav.popBackStack(Routes.MAIN, inclusive = false) },
+                        onClose = { menuOpen = false },
+                    )
+                }
+                }
             }
             composable(Routes.DISC, arguments = listOf(navArgument("id") { type = NavType.StringType })) { entry ->
                 val id = parseId(entry.arguments!!.getString("id").orEmpty())
@@ -626,7 +640,7 @@ fun AsterNavHost(signedIn: Boolean) {
 
 }
 
-private enum class Tab(val label: String, val icon: ImageVector) {
+internal enum class Tab(val label: String, val icon: ImageVector) {
     Home("Home", Icons.Default.Home),
     Movies("Movies", Icons.Default.Movie),
     Shows("TV Shows", Icons.Default.Tv),
@@ -635,7 +649,7 @@ private enum class Tab(val label: String, val icon: ImageVector) {
 }
 
 /** The More list, in the Apple apps' order; the ones built so far. */
-private enum class MoreDestination(val label: String, val icon: ImageVector) {
+internal enum class MoreDestination(val label: String, val icon: ImageVector) {
     Music("Music", Icons.Default.MusicNote),
     Audiobooks("Audiobooks", Icons.Default.LibraryBooks),
     Upcoming("Upcoming", Icons.Default.CalendarMonth),
@@ -648,7 +662,17 @@ private enum class MoreDestination(val label: String, val icon: ImageVector) {
 }
 
 /** What the bar shows: a tab, or a More destination given a place of its own while there's room (a phone on its side). */
-private data class BarItem(val label: String, val icon: ImageVector, val tab: Tab, val destination: MoreDestination? = null)
+internal data class BarItem(val label: String, val icon: ImageVector, val tab: Tab, val destination: MoreDestination? = null)
+
+/**
+ * The TV menu's items as the tabs screen last had them, for a page that isn't one of its tabs (a title's details) to slide the same
+ * menu out over itself. Picking from it leaves that page, [pending] telling the tabs screen which item to go to.
+ */
+internal object TvMenuState {
+    var items by mutableStateOf<List<BarItem>>(emptyList())
+    var selected by mutableStateOf<BarItem?>(null)
+    var pending by mutableStateOf<BarItem?>(null)
+}
 
 /** The destinations that move into the bar from More, in the Apple apps' tab order, as far as the width allows. */
 private val PromotedOrder = listOf(MoreDestination.Music, MoreDestination.Audiobooks, MoreDestination.Upcoming)
@@ -757,16 +781,6 @@ private fun MainTabs(
     }
     var menuOpen by rememberSaveable { mutableStateOf(false) }
     val chip = remember { mutableStateOf(true) }
-    // Asked for by a details page (Left or Up at its edge), which has no menu of its own.
-    val menuAsked = (LocalContext.current.applicationContext as com.astermediaplayer.astermediaplayer.AsterApp)
-    LaunchedEffect(menuAsked.menuRequested) {
-        if (menuAsked.menuRequested) {
-            // After the page's slide back, so the menu's request for focus isn't taken by the page settling.
-            delay(450)
-            menuAsked.menuRequested = false
-            if (isTv) menuOpen = true
-        }
-    }
     val focusManager = LocalFocusManager.current
     val barItems = if (isTv || landscape) {
         tabs.filter { it != Tab.More }.map { BarItem(it.label, it.icon, it) } +
@@ -781,6 +795,11 @@ private fun MainTabs(
         if (item.destination != null) { selected = tabs.indexOf(Tab.More); more = item.destination } else select(item.tab)
         menuOpen = false
         chip.value = true
+    }
+    if (isTv) {
+        // For a details page to show this menu over itself, and to be told what was picked from it.
+        SideEffect { TvMenuState.items = barItems; TvMenuState.selected = barItems.firstOrNull(::isSelected) }
+        LaunchedEffect(TvMenuState.pending) { TvMenuState.pending?.let { TvMenuState.pending = null; pick(it) } }
     }
     // Back from a page under More goes to the list; from one with a place in the bar, Home.
     fun back() { if (more in promoted) select(Tab.Home) else more = null }
@@ -938,7 +957,7 @@ private fun tvMenuIcon(item: BarItem): ImageVector = when (item.destination ?: i
  * The remote starts on the current page; Right, or Back, hands focus back to the page.
  */
 @Composable
-private fun TvMenu(items: List<BarItem>, isSelected: (BarItem) -> Boolean, onPick: (BarItem) -> Unit, onClose: () -> Unit) {
+internal fun TvMenu(items: List<BarItem>, isSelected: (BarItem) -> Boolean, onPick: (BarItem) -> Unit, onClose: () -> Unit) {
     val u = Lockup.tvUnit
     fun pt(points: Float) = (points * u).dp
     val current = remember { FocusRequester() }
