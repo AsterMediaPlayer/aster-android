@@ -135,6 +135,8 @@ class ChannelSettingsViewModel(private val app: AsterApp) : ViewModel() {
         _state.update { it.copy(creating = true) }
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.Default) {
             try {
+                // Its number goes past the highest, which would move the channels numbered by themselves.
+                keepNumbers()
                 var tags = ChannelTags(isChannel = true, number = (numbers(current.playlists).values.maxOrNull() ?: 0) + 1)
                 tags = when (source) {
                     NewChannelSource.Show -> tags.copy(showsLogo = true)
@@ -163,12 +165,16 @@ class ChannelSettingsViewModel(private val app: AsterApp) : ViewModel() {
         if (!current.admin || current.refused) return
         val before = current.playlists.firstOrNull { it.id == playlist.id } ?: return
         val previous = before.tags.orEmpty()
-        var tags = change(ChannelTags.from(previous))
+        val was = ChannelTags.from(previous)
+        var tags = change(was)
+        // Turning a channel on or off, or giving it a number, would move the channels numbered by themselves.
+        val movesOthers = tags.isChannel != was.isChannel || tags.number != was.number
         if (tags.number == null) tags = tags.copy(number = numbers(current.playlists)[playlist.plainId()])
         val updated = tags.applied(previous)
         replace(playlist, updated)
         viewModelScope.launch {
             try {
+                if (movesOthers) keepNumbers(except = playlist)
                 app.repository.setTags(playlist.id, updated)
                 // Channels, the guide and the player pick the change up.
                 app.channels.load(app.repository.session?.userName, force = true)
@@ -177,6 +183,24 @@ class ChannelSettingsViewModel(private val app: AsterApp) : ViewModel() {
                 val refused = e.message?.let { it.contains("401") || it.contains("403") } == true
                 _state.update { it.copy(error = e.message ?: "Couldn't save", refused = refused || it.refused) }
             }
+        }
+    }
+
+    /**
+     * Writes each channel numbered by itself (no aster:number) the number it has now: those come after the highest number set, so a
+     * channel added, removed or renumbered would otherwise move them.
+     */
+    private suspend fun keepNumbers(except: BaseItemDto? = null) {
+        val playlists = _state.value.playlists
+        val current = numbers(playlists)
+        for (p in playlists) {
+            if (p.id == except?.id) continue
+            val tags = ChannelTags.from(p.tags)
+            if (!tags.isChannel || tags.number != null) continue
+            val number = current[p.plainId()] ?: continue
+            val updated = tags.copy(number = number).applied(p.tags.orEmpty())
+            app.repository.setTags(p.id, updated)
+            replace(p, updated)
         }
     }
 
@@ -275,12 +299,12 @@ fun ChannelSettingsScreen(viewModel: ChannelSettingsViewModel, only: String?, mo
             !state.loaded -> Box(Modifier.fillMaxWidth().padding(top = 40.dp), Alignment.Center) { CircularProgressIndicator() }
             playlists.isEmpty() -> {
                 if (only == null) Note(CHANNELS_INTRO)
-                Note(if (state.error != null) state.error!! else "No video playlists yet. Make one in ${serverName()}, or with Add to Playlist on any movie.")
+                Note(if (state.error != null) state.error!! else if (serverKind() == com.astermediaplayer.astermediaplayer.data.emby.ServerKind.Plex) "No video playlists yet. Make one in Plex." else "No video playlists yet. Make one in ${serverName()}, or with Add to Playlist on any movie.")
                 if (only == null && canEdit) NewChannel(state, others, cameFrom, returnFocus) { cameFrom = it; picking = it }
             }
             else -> {
                 if (only == null) Note(CHANNELS_INTRO)
-                if (!state.admin) Note("Only your server's administrator can set up channels. Ask them to, here or in Jellyfin.")
+                if (!state.admin) Note("Only your server's administrator can set up channels. Ask them to, here or in ${serverName()}.")
                 else if (state.refused) Note("The server wouldn't save that, so channels are read-only now.")
                 if (only != null && shownChannels.isEmpty()) Note("This playlist isn't a channel any more. Turn it back on in Edit Channels.")
                 if (only == null && canEdit) NewChannel(state, others, cameFrom, returnFocus) { cameFrom = it; picking = it }
@@ -411,7 +435,9 @@ private fun ChannelSettingsRows(
     // Breaks: the filler playlists (tagged aster:filler) whose clips play between programmes.
     val fillers = state.playlists.filter { ChannelTagParsing.isFillerPlaylist(it.tags) }.mapNotNull { it.name }
     val fillerOptions = fillers + tags.fillerPlaylists.filter { n -> fillers.none { it.equals(n, ignoreCase = true) } }
-    if (fillerOptions.isNotEmpty()) TvMultiRow(canEdit, "Breaks", fillerOptions, tags.fillerPlaylists, "Off") { names ->
+    // Break clips are told apart by their tags, which Plex's videos don't have: no breaks there yet.
+    val plex = serverKind() == com.astermediaplayer.astermediaplayer.data.emby.ServerKind.Plex
+    if (fillerOptions.isNotEmpty() && !plex) TvMultiRow(canEdit, "Breaks", fillerOptions, tags.fillerPlaylists, "Off") { names ->
         change { t ->
             val turningOn = t.fillerPlaylists.isEmpty() && names.isNotEmpty()
             val next = t.copy(fillerPlaylists = names)
@@ -443,13 +469,13 @@ private fun ChannelSettingsRows(
             val size = withCurrent(bugSizeChoices, tags.bugSize, sort = true)
             TvChoiceRowIf(canEdit, "Logo Size", size.map { "$it%" }, size.indexOf(tags.bugSize)) { i -> change { it.copy(bugSize = size[i]) } }
         }
-        if (tags.fillerPlaylists.isNotEmpty()) {
+        if (tags.fillerPlaylists.isNotEmpty() && !plex) {
             TvMultiRow(canEdit, "Filler Types", BreakKind.entries.map { it.title }, BreakKind.entries.filter { it in tags.fillerTypes }.map { it.title }, "All") { titles ->
                 val kinds = BreakKind.entries.filter { it.title in titles }.toSet()
                 change { it.copy(fillerTypes = kinds.ifEmpty { BreakKind.entries.toSet() }) }
             }
         }
-        if (tags.hasBreaks) {
+        if (tags.hasBreaks && !plex) {
             val b = tags.breaks
             fun breaks(edit: (ChannelBreaks) -> ChannelBreaks) = change { it.copy(breaks = edit(it.breaks)) }
             val counts = (0..ChannelTags.MOST_PROMOS).toList()
@@ -471,7 +497,8 @@ private fun ChannelSettingsRows(
         }
         val users = state.users + tags.users.filter { n -> state.users.none { it.equals(n, ignoreCase = true) } }
         if (users.isNotEmpty()) TvMultiRow(canEdit, "Users", users, tags.users, "Everyone") { v -> change { it.copy(users = v) } }
-        Note("Every setting is a tag on the playlist in ${serverName()}, so you can change it there too: see How Channels Work below.")
+        Note(if (plex) "Every setting is kept in the playlist's description in Plex (aster:channel, aster:number=3, …), so you can change it there too: see How Channels Work."
+            else "Every setting is a tag on the playlist in ${serverName()}, so you can change it there too: see How Channels Work.")
     }
     naming?.let { field ->
         TextDialog(
@@ -488,18 +515,33 @@ private fun ChannelSettingsRows(
     }
 }
 
-/** How Channels Work, folded open from a row at the foot of the page. */
+/** Every setting there is, as written in a tag or a description. */
+private const val SETTINGS_LIST = "aster:channel, aster:number=3, aster:mode=blocks (or rotation, shuffle, sequential, airdate), aster:reshuffle=week (or day, month), aster:blocks=3-6, aster:seed=2, aster:logo=on, aster:bug=on (with aster:bug-location=top-left, top-right, bottom-left or bottom-right, aster:bug-size=150%, aster:bug-hide=30 and aster:bug-opacity=60%), aster:channel-name=Your Name, aster:group=Kids (channels go in the guide by group, groups in order of their lowest number), aster:min-length=20 and aster:max-length=60 (in minutes), aster:weight=Friends:2 (a show taking two turns to everyone else's one), and to fill a channel aster:genre=Horror, aster:network=NBC and aster:collection=Star Wars (once each), narrowed by aster:type=movies (or shows, all), aster:years=1980-1989, aster:rating=TV-PG,PG and aster:library=TV Shows (once per library, for genres and networks)."
+
+private const val HELP_MODES = "Rotation plays one episode of each show in turn, and Blocks a few in a row; either way a show's episodes come in order and pick up where they left off, each movie takes a turn of its own, and specials are left out. Shuffle plays everything in its own order. These three deal a new order every day, week or month, as Reshuffle says, and Shuffle Again deals a different one. In Order plays the playlist as it's arranged, round and round."
+private const val HELP_TAGS = "On Jellyfin and Emby, channels are saved as tags on the playlists, so every device finds them. You can set them there too, in the playlist's Edit Metadata ▸ Tags, one tag each: $SETTINGS_LIST"
+private const val HELP_PLEX = "On Plex, which has no tags on playlists, channels are saved in the playlist's description, so every device finds them. You can set them there too, in the playlist's Edit ▸ Description (Summary), as one line with a comma between settings: $SETTINGS_LIST"
+private const val HELP_SOURCES = "A channel with genres, networks or collections plays every movie and every episode of every show in them (any of them), as well as anything in its playlist. Air Date plays them all in the order they first aired."
+private const val HELP_BREAKS = "A channel with filler playlists has a break after its programmes: a bumper, commercials, promos, trailers, interstitials, and a bumper back. Put the clips in Jellyfin or Emby as videos and tag each one with what it is: aster:commercial, aster:promo, aster:trailer, aster:interstitial or aster:bumper (aster:bumper=in only closes a break, right before the show, and aster:bumper=out only opens one); a clip without one isn't played. Put them in playlists tagged aster:filler, and pick those for a channel here, or name them with aster:filler-playlists=Its Name. aster:filler-types=commercials,bumpers keeps to some kinds; aster:bumpers-at=both (or out, in), aster:break-length=2 (minutes of commercials), aster:promo-count=1, aster:trailer-count=1, aster:interstitial-count=1 and aster:break-every=1 shape each break. With aster:align=30, programmes line up on the hour and half hour: Best Effort (aster:align-fit=best) fills each break with whole commercials, promos, trailers, interstitials and bumpers, as near the mark as they get, so a programme can start a few seconds early; Exact (aster:align-fit=exact) fills with interstitials and cuts the last one short to land right on it."
+private const val HELP_WHO = "Other people on your server see a channel only if its playlist is shared with them, or public. Users (aster:user=peppy,jd) keeps a channel to certain people in Aster's Channels tab; it still lists every channel here, and doesn't hide the playlist on the server."
+private const val HELP_WHO_PLEX = "A Plex playlist belongs to the account that made it, so its channel is yours alone: others on your server make their own. Breaks (filler playlists) aren't available on Plex yet."
+
+/** How Channels Work, folded open from a row at the foot of the page: where settings are kept differs by server. */
 @Composable
 private fun HowChannelsWork() {
     var open by remember { mutableStateOf(false) }
-    val server = serverName()
+    val plex = serverKind() == com.astermediaplayer.astermediaplayer.data.emby.ServerKind.Plex
     TvRow("How Channels Work", null, fold = open, onClick = { open = !open })
     if (open) {
-        Note(readable = true, text = "Rotation plays one episode of each show in turn, and Blocks a few in a row; either way a show's episodes come in order and pick up where they left off, each movie takes a turn of its own, and specials are left out. Shuffle plays everything in its own order. These three deal a new order every day, week or month, as Reshuffle says, and Shuffle Again deals a different one. In Order plays the playlist as it's arranged, round and round.")
-        Note(readable = true, text = "Channels are saved as tags on the playlists in $server, so every device finds them. You can set them there too, in the playlist's Edit Metadata ▸ Tags: aster:channel, aster:number=3, aster:mode=blocks (or rotation, shuffle, sequential, airdate), aster:reshuffle=week (or day, month), aster:blocks=3-6, aster:seed=2, aster:logo=on, aster:bug=on (with aster:bug-location=top-left, top-right, bottom-left or bottom-right, aster:bug-size=150%, aster:bug-hide=30 and aster:bug-opacity=60%), aster:channel-name=Your Name, aster:group=Kids (channels go in the guide by group, groups in order of their lowest number), aster:min-length=20 and aster:max-length=60 (in minutes), aster:weight=Friends:2 (a show taking two turns to everyone else's one), and to fill a channel aster:genre=Horror, aster:network=NBC and aster:collection=Star Wars (once each), narrowed by aster:type=movies (or shows, all), aster:years=1980-1989, aster:rating=TV-PG,PG and aster:library=TV Shows (once per library, for genres and networks).")
-        Note(readable = true, text = "A channel with genres, networks or collections plays every movie and every episode of every show in them (any of them), as well as anything in its playlist. Air Date plays them all in the order they first aired.")
-        Note(readable = true, text = "A channel with filler playlists has a break after its programmes: a bumper, commercials, promos, trailers, interstitials, and a bumper back. Put the clips in $server as videos and tag each one with what it is: aster:commercial, aster:promo, aster:trailer, aster:interstitial or aster:bumper (aster:bumper=in only closes a break, right before the show, and aster:bumper=out only opens one); a clip without one isn't played. Put them in playlists tagged aster:filler, and pick those for a channel here, or name them with aster:filler-playlists=Its Name. aster:filler-types=commercials,bumpers keeps to some kinds; aster:bumpers-at=both (or out, in), aster:break-length=2 (minutes of commercials), aster:promo-count=1, aster:trailer-count=1, aster:interstitial-count=1 and aster:break-every=1 shape each break. With aster:align=30, programmes line up on the hour and half hour: Best Effort (aster:align-fit=best) fills each break with whole commercials, promos, trailers, interstitials and bumpers, as near the mark as they get, so a programme can start a few seconds early; Exact (aster:align-fit=exact) fills with interstitials and cuts the last one short to land right on it.")
-        Note(readable = true, text = "Other people on your server see a channel only if its playlist is shared with them, or public. Users (aster:user=peppy,jd) keeps a channel to certain people in Aster's Channels tab; it still lists every channel here, and doesn't hide the playlist in $server.")
+        val notes = buildList {
+            add(HELP_MODES)
+            add(if (plex) HELP_PLEX else HELP_TAGS)
+            add(HELP_SOURCES)
+            // Break clips are told apart by their tags, which Plex's videos don't have.
+            if (!plex) add(HELP_BREAKS)
+            add(if (plex) HELP_WHO_PLEX else HELP_WHO)
+        }
+        notes.forEach { Note(it, readable = true) }
     }
 }
 
@@ -519,7 +561,8 @@ private fun NewChannel(state: ChannelSettingsViewModel.State, others: List<BaseI
     sources.forEach { source ->
         TvRow(source.title, if (state.creating) "Making…" else null, enabled = !state.creating, chevron = true, modifier = if (source == cameFrom) Modifier.focusRequester(returnFocus) else Modifier, onClick = { onPick(source) })
     }
-    Note("A show plays its episodes in order; a genre, network or collection plays every movie and show in it. A playlist plays what you put in it. Each is shared with everyone on your server.")
+    Note(if (plex) "A show plays its episodes in order; a genre, network or collection plays every movie and show in it (a network is a show's network, or a movie's studio). A playlist plays what you put in it. On Plex a playlist, and so its channel, is only yours."
+        else "A show plays its episodes in order; a genre, network or collection plays every movie and show in it. A playlist plays what you put in it. Each is shared with everyone on your server.")
 }
 
 /** The page New Channel opens: what there is to make the channel from, one row each. */
