@@ -188,6 +188,8 @@ class AuthViewModel(private val repo: AsterRepository, private val onServerChang
         plexToken = token
         val servers = repo.plexServers(token)
         if (servers.isEmpty()) throw IllegalStateException("This Plex account has no servers.")
+        // Picking a profile left it busy, which would keep the list's buttons off (and have the only server's sign-in turned away).
+        _state.update { it.copy(busy = false) }
         if (servers.size == 1) choosePlexServer(servers.single())
         else _state.update { it.copy(plexCode = null, plexUsers = null, plexPinFor = null, plexServers = servers) }
     }
