@@ -9,6 +9,8 @@ import com.astermediaplayer.astermediaplayer.data.emby.ServerKind
 import com.astermediaplayer.astermediaplayer.data.plex.OkHttpPlexTransport
 import com.astermediaplayer.astermediaplayer.data.plex.PlexAccount
 import com.astermediaplayer.astermediaplayer.data.plex.PlexApiClient
+import kotlinx.coroutines.withTimeoutOrNull
+import com.astermediaplayer.astermediaplayer.data.plex.PlexReconnect
 import com.astermediaplayer.astermediaplayer.data.plex.PlexHomeChoice
 import com.astermediaplayer.astermediaplayer.data.plex.PlexHomeUser
 import com.astermediaplayer.astermediaplayer.data.plex.PlexConnectionRace
@@ -188,10 +190,36 @@ class AsterRepository(context: Context, private val store: SessionStore) {
         if (list.isEmpty() && saved != null) { list = listOf(SavedServer(saved)); store.saveServers(list) }
         _servers.value = list
         if (saved == null) return false
-        serverKind = saved.kind
-        client = connect(saved.serverUrl, saved.accessToken, saved.kind)
-        session = saved
+        // A Plex server whose saved address has stopped answering is found at another before anything loads from it.
+        val found = if (saved.kind == ServerKind.Plex) withTimeoutOrNull(14_000) { plexFindAgain(saved) } else null
+        val current = found ?: saved
+        if (found != null) { store.save(found); update(_servers.value.map { if (it.id == SavedServer.id(saved.serverUrl, saved.userId)) it.copy(session = found) else it }) }
+        serverKind = current.kind
+        client = connect(current.serverUrl, current.accessToken, current.kind)
+        session = current
         checkLock()
+        return true
+    }
+
+    /** The Plex sign-in with the address that answers now, if the saved one doesn't (see [PlexReconnect]); null when it's fine or none does. */
+    private suspend fun plexFindAgain(stored: Session): Session? = PlexReconnect.findAgain(
+        stored,
+        race = { connections, token, seconds -> PlexConnectionRace.fastest(connections, token, plexDevice, timeoutSeconds = seconds) },
+        servers = { accountToken -> plexAccount.servers(accountToken) },
+    )
+
+    /**
+     * Back in the app: a Plex server that has stopped answering where it was saved is looked for at its other addresses, and the one
+     * in use moves to the first that answers. True when it moved, for the app to start afresh on it.
+     */
+    suspend fun refindPlex(): Boolean {
+        val s = session?.takeIf { it.kind == ServerKind.Plex } ?: return false
+        val fresh = withTimeoutOrNull(14_000) { plexFindAgain(s) } ?: return false
+        store.save(fresh)
+        client = connect(fresh.serverUrl, fresh.accessToken, fresh.kind)
+        session = fresh
+        // Its settings go with it to the new address.
+        update(_servers.value.map { if (it.id == SavedServer.id(s.serverUrl, s.userId)) it.copy(session = fresh) else it })
         return true
     }
 

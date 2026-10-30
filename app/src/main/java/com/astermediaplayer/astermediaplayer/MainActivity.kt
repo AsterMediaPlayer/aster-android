@@ -55,6 +55,9 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
             override fun onStop(owner: androidx.lifecycle.LifecycleOwner) { lifecycleScope.launch { repo.noteLeftApp() } }
             override fun onStart(owner: androidx.lifecycle.LifecycleOwner) {
                 lifecycleScope.launch { repo.checkLock() }
+                // A Plex server that stopped answering where it was saved (this device on another network, a new address): found again,
+                // and the app starts afresh on it.
+                lifecycleScope.launch { if (repo.session != null && repo.refindPlex()) recreate() }
                 // The synced settings come from the server whenever the app opens or returns (and again when Settings opens).
                 lifecycleScope.launch { if (repo.session != null) (application as AsterApp).settingsSync.pull() }
             }
