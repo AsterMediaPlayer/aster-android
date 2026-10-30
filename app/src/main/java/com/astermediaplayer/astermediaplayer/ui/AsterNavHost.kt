@@ -5,7 +5,6 @@ import com.astermediaplayer.astermediaplayer.ui.detail.ThemeNowPlayingPanel
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.foundation.focusGroup
-import androidx.compose.ui.focus.focusProperties
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.CalendarMonth
@@ -79,6 +78,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.key
@@ -961,7 +961,17 @@ internal fun TvMenu(items: List<BarItem>, isSelected: (BarItem) -> Boolean, onPi
     val u = Lockup.tvUnit
     fun pt(points: Float) = (points * u).dp
     val current = remember { FocusRequester() }
-    LaunchedEffect(Unit) { runCatching { current.requestFocus() } }
+    // A page behind (Channels, once its guide has loaded) can take focus from the menu or send it to its first item, so until the
+    // remote is used in the menu, it holds the item for the page you're on, asking again if that isn't where focus is.
+    var onCurrent by remember { mutableStateOf(false) }
+    var focusedItems by remember { mutableIntStateOf(0) }
+    var moved by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            if (focusedItems == 0 || (!moved && !onCurrent)) runCatching { current.requestFocus() }
+            delay(200)
+        }
+    }
     val shape = RoundedCornerShape(pt(46f))
     Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.45f))) {
         Column(
@@ -971,7 +981,10 @@ internal fun TvMenu(items: List<BarItem>, isSelected: (BarItem) -> Boolean, onPi
                 .background(Color.White.copy(alpha = 0.07f))
                 .border(pt(1f), Color.White.copy(alpha = 0.16f), shape)
                 .verticalScroll(rememberScrollState()).padding(horizontal = pt(13f), vertical = pt(14f))
-                .onKeyEvent { if (it.key == Key.DirectionRight) { if (it.type == KeyEventType.KeyDown) onClose(); true } else false },
+                .onKeyEvent {
+                    if (it.key == Key.DirectionUp || it.key == Key.DirectionDown) moved = true
+                    if (it.key == Key.DirectionRight) { if (it.type == KeyEventType.KeyDown) onClose(); true } else false
+                },
             verticalArrangement = Arrangement.spacedBy(pt(1f)),
         ) {
             items.forEach { item ->
@@ -980,7 +993,11 @@ internal fun TvMenu(items: List<BarItem>, isSelected: (BarItem) -> Boolean, onPi
                 val label = if (item.destination == MoreDestination.Channels) "Channels (Beta)" else item.label
                 Row(
                     Modifier.fillMaxWidth().height(pt(75f)).then(if (isSelected(item)) Modifier.focusRequester(current) else Modifier)
-                        .onFocusChanged { focused = it.isFocused }
+                        .onFocusChanged {
+                            if (it.isFocused != focused) focusedItems += if (it.isFocused) 1 else -1
+                            focused = it.isFocused
+                            if (isSelected(item)) onCurrent = it.isFocused
+                        }
                         .clip(CircleShape).background(if (focused) Color.White else Color.Transparent)
                         .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onPick(item) }
                         .padding(start = pt(22f)),
