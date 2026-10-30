@@ -92,7 +92,8 @@ class ChannelSettingsViewModel(private val app: AsterApp) : ViewModel() {
     init { load() }
 
     fun load() {
-        viewModelScope.launch {
+        // Off the main thread: the playlists and the lists the pickers offer are JSON the SDK reads where it's called.
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.Default) {
             try {
                 val admin = app.repository.canEditChannels()
                 val playlists = app.repository.videoPlaylists()
@@ -132,7 +133,7 @@ class ChannelSettingsViewModel(private val app: AsterApp) : ViewModel() {
         val current = _state.value
         if (!current.admin || current.refused || current.creating) return
         _state.update { it.copy(creating = true) }
-        viewModelScope.launch {
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.Default) {
             try {
                 var tags = ChannelTags(isChannel = true, number = (numbers(current.playlists).values.maxOrNull() ?: 0) + 1)
                 tags = when (source) {

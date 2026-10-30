@@ -3,6 +3,8 @@ package com.astermediaplayer.astermediaplayer.data.channels
 import com.astermediaplayer.astermediaplayer.data.AsterRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -164,12 +166,12 @@ class ChannelsModel(private val repo: AsterRepository) {
     val error: StateFlow<String?> = _error.asStateFlow()
 
     /** Each channel's items as last fetched, with the playlist's item count then, so a big playlist isn't fetched again unless it changed. */
-    private val itemCache = HashMap<UUID, Pair<Int?, List<BaseItemDto>>>()
+    private val itemCache = java.util.concurrent.ConcurrentHashMap<UUID, Pair<Int?, List<BaseItemDto>>>()
     /** Each source channel's titles and what it plays from them, by playlist id, with the query that found them. */
     private class Source(val query: String, val titleIds: List<UUID>, val items: List<BaseItemDto>)
-    private val sourceCache = HashMap<UUID, Source>()
+    private val sourceCache = java.util.concurrent.ConcurrentHashMap<UUID, Source>()
     /** Each series' episodes, by series id, shared by every channel playing it. */
-    private val episodeCache = HashMap<UUID, List<BaseItemDto>>()
+    private val episodeCache = java.util.concurrent.ConcurrentHashMap<UUID, List<BaseItemDto>>()
 
     private class Tagged(val playlist: BaseItemDto, val tags: ChannelTags)
 
@@ -181,7 +183,15 @@ class ChannelsModel(private val repo: AsterRepository) {
     }
 
     /** Loads the channels [userName] gets (`aster:user=`), every one for null. */
-    suspend fun load(userName: String? = null, force: Boolean = false) {
+    suspend fun load(userName: String? = null, force: Boolean = false) = withContext(Dispatchers.Default) {
+        // A playlist's titles are JSON the SDK reads where it's called: seconds of work for a long one on a TV box, so never the main
+        // thread. One load at a time, so the Channels page and Edit Channels opened over it don't fetch everything twice.
+        loading.withLock { loadNow(userName, force) }
+    }
+
+    private val loading = kotlinx.coroutines.sync.Mutex()
+
+    private suspend fun loadNow(userName: String?, force: Boolean) {
         _error.value = null
         try {
             // Read each time, so an administrator's change counts on the next visit.
