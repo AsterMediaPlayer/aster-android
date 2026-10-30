@@ -140,6 +140,7 @@ class ChannelSettingsViewModel(private val app: AsterApp) : ViewModel() {
                     NewChannelSource.Genre -> tags.copy(genres = listOf(name))
                     NewChannelSource.Network -> tags.copy(networks = listOf(name))
                     NewChannelSource.Collection -> tags.copy(collections = listOf(name))
+                    NewChannelSource.Playlist -> tags
                 }
                 val episodes = if (seriesId != null) app.repository.seriesEpisodes(seriesId).map { it.id } else emptyList()
                 val id = app.repository.createVideoPlaylist(name, episodes)
@@ -230,6 +231,13 @@ fun ChannelSettingsScreen(viewModel: ChannelSettingsViewModel, only: String?, mo
     // Which of a channel's folded sections are open, as "plays|<id>" or "advanced|<id>".
     var folded by remember { mutableStateOf(setOf<String>()) }
     LaunchedEffect(state.created) { state.created?.let { expanded = expanded + it; viewModel.opened() } }
+    // New Channel's page for picking what to make it from, over the list, as on the Apple apps.
+    var picking by remember { mutableStateOf<NewChannelSource?>(null) }
+    // Back from the page lands on the row that opened it.
+    var cameFrom by remember { mutableStateOf<NewChannelSource?>(null) }
+    val returnFocus = remember { FocusRequester() }
+    LaunchedEffect(picking) { if (picking == null && cameFrom != null) repeat(10) { if (runCatching { returnFocus.requestFocus() }.isSuccess) return@LaunchedEffect else delay(60) } }
+    androidx.activity.compose.BackHandler(enabled = picking != null) { picking = null }
     val first = remember { FocusRequester() }
     LaunchedEffect(state.loaded) {
         if (!state.loaded) return@LaunchedEffect
@@ -249,6 +257,15 @@ fun ChannelSettingsScreen(viewModel: ChannelSettingsViewModel, only: String?, mo
         modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = (90f * u).dp).padding(top = (40f * u).dp, bottom = (80f * u).dp),
         verticalArrangement = Arrangement.spacedBy((6f * u).dp),
     ) {
+        val choosing = picking
+        if (choosing != null) {
+            NewChannelPicker(choosing, state, others) { id, name ->
+                picking = null
+                if (choosing == NewChannelSource.Playlist) others.firstOrNull { it.plainId() == id }?.let { expanded = expanded + id; viewModel.turnOn(it) }
+                else viewModel.create(choosing, name, if (choosing == NewChannelSource.Show) UUID.fromString(id) else null)
+            }
+            return@Column
+        }
         Text(
             if (only != null) shownChannels.firstOrNull()?.let { it.second.name ?: it.first.name } ?: "Channel" else "Channels (Beta)",
             style = Type.pageTitle.copy(fontSize = (76f * u).sp, lineHeight = (90f * u).sp), modifier = Modifier.padding(bottom = (12f * u).dp),
@@ -258,14 +275,14 @@ fun ChannelSettingsScreen(viewModel: ChannelSettingsViewModel, only: String?, mo
             playlists.isEmpty() -> {
                 if (only == null) Note(CHANNELS_INTRO)
                 Note(if (state.error != null) state.error!! else "No video playlists yet. Make one in ${serverName()}, or with Add to Playlist on any movie.")
-                if (only == null && canEdit) NewChannel(state, viewModel)
+                if (only == null && canEdit) NewChannel(state, others, cameFrom, returnFocus) { cameFrom = it; picking = it }
             }
             else -> {
                 if (only == null) Note(CHANNELS_INTRO)
                 if (!state.admin) Note("Only your server's administrator can set up channels. Ask them to, here or in Jellyfin.")
                 else if (state.refused) Note("The server wouldn't save that, so channels are read-only now.")
                 if (only != null && shownChannels.isEmpty()) Note("This playlist isn't a channel any more. Turn it back on in Edit Channels.")
-                if (only == null && canEdit) NewChannel(state, viewModel)
+                if (only == null && canEdit) NewChannel(state, others, cameFrom, returnFocus) { cameFrom = it; picking = it }
                 shownChannels.forEachIndexed { index, (playlist, tags) ->
                     val id = playlist.plainId()
                     val open = id in expanded
@@ -486,38 +503,47 @@ private fun HowChannelsWork() {
 }
 
 /** What New Channel can make a channel from. */
-enum class NewChannelSource(val title: String) {
-    Show("From a Show"), Genre("From a Genre"), Network("From a Network"), Collection("From a Collection"),
+enum class NewChannelSource(val title: String, val pickTitle: String) {
+    Show("From a Show", "Pick a Show"), Genre("From a Genre", "Pick a Genre"), Network("From a Network", "Pick a Network"),
+    Collection("From a Collection", "Pick a Collection"), Playlist("From One of Your Playlists", "Pick a Playlist"),
 }
 
-/** New Channel: what to make it from, then which one; picking it makes the channel and opens it here. */
+/** New Channel: what to make it from, then a page to pick which one; picking it makes the channel and opens it here. */
 @Composable
-private fun NewChannel(state: ChannelSettingsViewModel.State, viewModel: ChannelSettingsViewModel) {
+private fun NewChannel(state: ChannelSettingsViewModel.State, others: List<BaseItemDto>, cameFrom: NewChannelSource?, returnFocus: FocusRequester, onPick: (NewChannelSource) -> Unit) {
     TvGroup("New Channel")
-    // Genres, networks and collections as a channel's titles are Jellyfin's and Emby's; on Plex a channel is made from a show.
-    val sources = if (androidx.compose.ui.platform.LocalContext.current.let { (it.applicationContext as com.astermediaplayer.astermediaplayer.AsterApp).repository.serverKind } == com.astermediaplayer.astermediaplayer.data.emby.ServerKind.Plex) listOf(NewChannelSource.Show) else NewChannelSource.entries
+    // Genres, networks and collections as a channel's titles are Jellyfin's and Emby's; on Plex a channel is made from a show or a playlist.
+    val plex = serverKind() == com.astermediaplayer.astermediaplayer.data.emby.ServerKind.Plex
+    val sources = if (plex) listOf(NewChannelSource.Show, NewChannelSource.Playlist) else NewChannelSource.entries
     sources.forEach { source ->
-        val names = when (source) {
-            NewChannelSource.Show -> state.series.map { it.second }
-            NewChannelSource.Genre -> state.genres
-            NewChannelSource.Network -> state.networks
-            NewChannelSource.Collection -> state.collections
-        }
-        var open by remember { mutableStateOf(false) }
-        Box {
-            TvRow(source.title, if (state.creating) "Making…" else null, enabled = !state.creating && names.isNotEmpty(), onClick = { open = true })
-            MenuHost(expanded = open, onDismiss = { open = false }, below = true) {
-                names.forEachIndexed { i, name ->
-                    MenuItem(name, null, first = i == 0) {
-                        open = false
-                        viewModel.create(source, name, if (source == NewChannelSource.Show) state.series[i].first else null)
-                    }
-                }
-            }
-        }
+        TvRow(source.title, if (state.creating) "Making…" else null, enabled = !state.creating, chevron = true, modifier = if (source == cameFrom) Modifier.focusRequester(returnFocus) else Modifier, onClick = { onPick(source) })
     }
-    Note("A show plays its episodes in order; a genre, network or collection plays every movie and show in it. Each is shared with everyone on your server.")
+    Note("A show plays its episodes in order; a genre, network or collection plays every movie and show in it. A playlist plays what you put in it. Each is shared with everyone on your server.")
 }
+
+/** The page New Channel opens: what there is to make the channel from, one row each. */
+@Composable
+private fun NewChannelPicker(source: NewChannelSource, state: ChannelSettingsViewModel.State, others: List<BaseItemDto>, onPick: (id: String, name: String) -> Unit) {
+    val u = Lockup.tvUnit
+    Text(source.pickTitle, style = Type.pageTitle.copy(fontSize = (76f * u).sp, lineHeight = (90f * u).sp), modifier = Modifier.padding(bottom = (12f * u).dp))
+    // Each as an id to make it from and the name it's given.
+    val options: List<Pair<String, String>> = when (source) {
+        NewChannelSource.Show -> state.series.map { it.first.toString() to it.second }
+        NewChannelSource.Genre -> state.genres.map { it to it }
+        NewChannelSource.Network -> state.networks.map { it to it }
+        NewChannelSource.Collection -> state.collections.map { it to it }
+        NewChannelSource.Playlist -> others.map { it.plainId() to it.name.orEmpty() }
+    }
+    if (options.isEmpty()) Note(if (source == NewChannelSource.Playlist) "Every video playlist is a channel already." else "There's nothing to pick yet.", readable = true)
+    val first = remember { FocusRequester() }
+    LaunchedEffect(options.isNotEmpty()) { if (options.isNotEmpty()) repeat(10) { if (runCatching { first.requestFocus() }.isSuccess) return@LaunchedEffect else delay(100) } }
+    options.forEachIndexed { i, (id, name) ->
+        TvRow(name, null, enabled = !state.creating, modifier = if (i == 0) Modifier.focusRequester(first) else Modifier, onClick = { onPick(id, name) })
+    }
+}
+
+@Composable
+private fun serverKind() = (androidx.compose.ui.platform.LocalContext.current.applicationContext as AsterApp).repository.serverKind
 
 /** A row of several choices: OK opens the menu, each press checks or unchecks one and the menu stays open. */
 @Composable
