@@ -8,6 +8,8 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import kotlinx.coroutines.launch
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -109,6 +111,20 @@ private fun Pill(text: String, icon: androidx.compose.ui.graphics.vector.ImageVe
 }
 
 /**
+ * Brings the whole card, the text under its picture too, into view when its picture takes focus: the page otherwise scrolls only as far
+ * as the picture, and a row at the foot of the page has its song's title below the screen's edge.
+ */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@Composable
+private fun wholeCardInView(): Pair<Modifier, Modifier> {
+    val requester = remember { androidx.compose.foundation.relocation.BringIntoViewRequester() }
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    val onCard = Modifier.bringIntoViewRequester(requester)
+    val onPicture = Modifier.onFocusChanged { if (it.isFocused) scope.launch { requester.bringIntoView() } }
+    return onCard to onPicture
+}
+
+/**
  * An opening or ending from the OP/ED plugin: a frame from its own video (the show's picture until then, or for a song
  * alone), "OP 1" and its length over it, and the song, artist and episodes below.
  */
@@ -132,9 +148,10 @@ fun ThemeCard(
     val preview by produceState<ThemePreview?>(null, theme.id) { value = ThemePreviews.preview(theme, repo) }
     val badge = (if (theme.isOpening) "OP" else "ED") + " ${theme.sequence}" + if (theme.version > 1) " v${theme.version}" else ""
     val detail = listOfNotNull(seasonName, theme.episodes?.let { "Episodes $it" }).joinToString(" · ").ifEmpty { null }
-    Column(Modifier.width(Lockup.landscapeWidth), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    val (onCard, onPicture) = wholeCardInView()
+    Column(Modifier.width(Lockup.landscapeWidth).then(onCard), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Box(
-            Modifier.fillMaxWidth().aspectRatio(16f / 9f).then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier).tvFocus(14.dp)
+            Modifier.fillMaxWidth().aspectRatio(16f / 9f).then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier).tvFocus(14.dp).then(onPicture)
                 // Holding Select here opens this card's menu instead of going to the Now Playing panel.
                 .onFocusChanged { if (hasMenu) deck.cardHoldFocused = it.isFocused }
                 .clip(RoundedCornerShape(14.dp)).background(Color.Black)
@@ -179,8 +196,9 @@ fun ThemeClipCard(clip: ThemeClip, artwork: String?, isPlaying: Boolean, focusRe
     val season = clip.episode.parentIndexNumber
     val number = clip.episode.indexNumber
     val from = if (season != null && number != null) "From S$season, E$number" else clip.episode.name
-    Column(Modifier.width(Lockup.landscapeWidth), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier).tvFocus(14.dp).clip(RoundedCornerShape(14.dp)).background(Color.Black).clickable(onClick = onClick)) {
+    val (onCard, onPicture) = wholeCardInView()
+    Column(Modifier.width(Lockup.landscapeWidth).then(onCard), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier).tvFocus(14.dp).then(onPicture).clip(RoundedCornerShape(14.dp)).background(Color.Black).clickable(onClick = onClick)) {
             if (artwork != null) AsyncImage(artwork, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
             Row(Modifier.align(Alignment.TopStart)) { Pill(badge); if (isPlaying) Pill("Playing", Icons.Default.VolumeUp) }
             Box(Modifier.align(Alignment.BottomEnd)) { Pill(time(clip.seconds)) }
