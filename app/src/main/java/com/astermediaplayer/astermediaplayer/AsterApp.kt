@@ -18,6 +18,8 @@ import com.astermediaplayer.astermediaplayer.ui.audiobooks.AudiobookLibrary
 import com.astermediaplayer.astermediaplayer.ui.player.AudiobookPlayer
 import com.astermediaplayer.astermediaplayer.ui.player.MusicPlayer
 import com.astermediaplayer.astermediaplayer.ui.player.ThemePlayer
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
@@ -36,6 +38,8 @@ class AsterApp : Application(), SingletonImageLoader.Factory {
     val liveMini: com.astermediaplayer.astermediaplayer.ui.livetv.LiveMini by lazy { com.astermediaplayer.astermediaplayer.ui.livetv.LiveMini(this) }
     /** The video playing, for [com.astermediaplayer.astermediaplayer.ui.player.PlaybackService] to publish as a media session; null with none open. */
     var videoPlayer: androidx.media3.common.Player? = null
+    /** A page the remote left asked for the menu: the tabs screen opens it when it's back on screen (a TV's details pages have none of their own). */
+    var menuRequested: Boolean by androidx.compose.runtime.mutableStateOf(false)
     /** A title whose page should start playing once it opens: a banner's Play, so closing the player leaves the viewer on that page. */
     var playOnOpen: java.util.UUID? = null
     val audiobooks: AudiobookPlayer by lazy {

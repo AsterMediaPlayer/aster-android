@@ -161,6 +161,7 @@ import com.astermediaplayer.astermediaplayer.ui.disc.DiscMenuScreen
 import com.astermediaplayer.astermediaplayer.ui.search.SearchScreen
 import com.astermediaplayer.astermediaplayer.ui.search.SearchViewModel
 import com.astermediaplayer.astermediaplayer.ui.settings.SettingsScreen
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.jellyfin.sdk.model.api.BaseItemDto
 import org.jellyfin.sdk.model.api.BaseItemKind
@@ -378,6 +379,7 @@ fun AsterNavHost(signedIn: Boolean) {
                 val vm: DetailViewModel = viewModel(factory = viewModelFactory { initializer { DetailViewModel(repo, id) } })
                 DetailScreen(
                     vm, onBack = { nav.popBackStack() }, onPlay = { nav.navigate(Routes.player(it)) }, onItem = ::open,
+                    onOpenMenu = { app.menuRequested = true; nav.popBackStack(Routes.MAIN, inclusive = false) },
                     onPlayFromBeginning = { nav.navigate(Routes.player(it, fromBeginning = true)) },
                     onDiscMenu = { nav.navigate(Routes.disc(it)) },
                     onGoToSeries = { nav.navigate(Routes.detail(it)) },
@@ -755,6 +757,16 @@ private fun MainTabs(
     }
     var menuOpen by rememberSaveable { mutableStateOf(false) }
     val chip = remember { mutableStateOf(true) }
+    // Asked for by a details page (Left or Up at its edge), which has no menu of its own.
+    val menuAsked = (LocalContext.current.applicationContext as com.astermediaplayer.astermediaplayer.AsterApp)
+    LaunchedEffect(menuAsked.menuRequested) {
+        if (menuAsked.menuRequested) {
+            // After the page's slide back, so the menu's request for focus isn't taken by the page settling.
+            delay(450)
+            menuAsked.menuRequested = false
+            if (isTv) menuOpen = true
+        }
+    }
     val focusManager = LocalFocusManager.current
     val barItems = if (isTv || landscape) {
         tabs.filter { it != Tab.More }.map { BarItem(it.label, it.icon, it) } +

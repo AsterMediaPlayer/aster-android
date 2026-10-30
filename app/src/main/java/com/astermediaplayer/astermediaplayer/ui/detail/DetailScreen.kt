@@ -42,6 +42,12 @@ import androidx.compose.animation.animateContentSize
 import com.astermediaplayer.astermediaplayer.ui.theme.LocalIsTv
 import com.astermediaplayer.astermediaplayer.ui.theme.tvFocus
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import com.astermediaplayer.astermediaplayer.ui.theme.DetailMetrics
@@ -436,13 +442,14 @@ fun DetailScreen(
     onGoToSeries: (UUID) -> Unit,
     onItem: (BaseItemDto) -> Unit,
     onPlayTheme: (OpeningEnding) -> Unit,
+    onOpenMenu: () -> Unit = {},
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         when (val s = state) {
             Load.Loading -> LoadingBox()
             is Load.Failed -> ErrorBox(s.message, viewModel::load)
-            is Load.Ready -> DetailBody(s.value, viewModel, onPlay, onPlayFromBeginning, onDiscMenu, onGoToSeries, onItem, onPlayTheme)
+            is Load.Ready -> DetailBody(s.value, viewModel, onPlay, onPlayFromBeginning, onDiscMenu, onGoToSeries, onItem, onPlayTheme, onOpenMenu)
         }
         // Over the art, so a dark round button like the Apple apps' back button; a TV has Back on its remote.
         if (!LocalIsTv.current) IconButton(
@@ -466,6 +473,7 @@ private fun DetailBody(
     onGoToSeries: (UUID) -> Unit,
     onItem: (BaseItemDto) -> Unit,
     onPlayTheme: (OpeningEnding) -> Unit,
+    onOpenMenu: () -> Unit,
 ) {
     val app = LocalContext.current.applicationContext as AsterApp
     val repo = app.repository
@@ -519,7 +527,27 @@ private fun DetailBody(
     // The Play button's middle across the screen, which the episode strip lines the next episode up under.
     var playCenterPx by remember { mutableStateOf<Float?>(null) }
 
-    BoxWithConstraints(Modifier.fillMaxSize()) {
+    val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
+    val pageScope = rememberCoroutineScope()
+    var playFocused by remember { mutableStateOf(false) }
+    BoxWithConstraints(
+        Modifier.fillMaxSize().then(
+            if (!isTv) Modifier else Modifier.onKeyEvent { event ->
+                // Left, or Up, with nothing further that way to go to: back up to the page's top first (its title can be scrolled off), then
+                // out to the menu, as the pages a menu belongs to do.
+                val direction = when (event.key) { Key.DirectionLeft -> FocusDirection.Left; Key.DirectionUp -> FocusDirection.Up; else -> null }
+                if (direction == null) false
+                else {
+                    // Left on Play is the edge of the page, though the tabs below start a little further left and would take it.
+                    val atEdge = direction == FocusDirection.Left && playFocused
+                    if (event.type == KeyEventType.KeyDown && (atEdge || !focusManager.moveFocus(direction))) {
+                        if (scroll.value > 0) pageScope.launch { scroll.animateScrollTo(0) } else onOpenMenu()
+                    }
+                    true
+                }
+            },
+        ),
+    ) {
         val screenHeight = maxHeight
         val landscape = maxWidth > maxHeight
 
@@ -547,11 +575,16 @@ private fun DetailBody(
                 Box(Modifier.fillMaxWidth().height(screenHeight)) {
                     DetailTitle(item, repo, Modifier.align(Alignment.BottomStart).navigationBarsPadding().padding(start = 24.dp, bottom = 24.dp))
                 }
-                DetailInfo(content, viewModel, onPlay, onPlayFromBeginning, onDiscMenu, onGoToSeries, onPlayTheme, showTitle = false, playFocus = playFocus) { playCenterPx = it }
+                DetailInfo(content, viewModel, onPlay, onPlayFromBeginning, onDiscMenu, onGoToSeries, onPlayTheme, showTitle = false, playFocus = playFocus, onPlayFocused = { playFocused = it }) { playCenterPx = it }
             } else {
                 // A TV's header is 780 points tall, as on the Apple TV: the info sits at its foot over the art, the page's tabs below.
-                Column(Modifier.fillMaxWidth().heightIn(min = if (isTv) (780f * Lockup.tvUnit).dp else DetailMetrics.headerMinHeight), verticalArrangement = Arrangement.Bottom) {
-                    DetailInfo(content, viewModel, onPlay, onPlayFromBeginning, onDiscMenu, onGoToSeries, onPlayTheme, showTitle = true, playFocus = playFocus) { playCenterPx = it }
+                Column(
+                    Modifier.fillMaxWidth().heightIn(min = if (isTv) (780f * Lockup.tvUnit).dp else DetailMetrics.headerMinHeight)
+                        // The remote coming back to the buttons shows the title above them again.
+                        .onFocusChanged { if (isTv && it.hasFocus && scroll.value > 0) pageScope.launch { scroll.animateScrollTo(0) } },
+                    verticalArrangement = Arrangement.Bottom,
+                ) {
+                    DetailInfo(content, viewModel, onPlay, onPlayFromBeginning, onDiscMenu, onGoToSeries, onPlayTheme, showTitle = true, playFocus = playFocus, onPlayFocused = { playFocused = it }) { playCenterPx = it }
                 }
             }
             // On a TV the sections sit straight on the shaded backdrop, 36 points apart, as on the Apple TV.
@@ -625,6 +658,7 @@ private fun DetailInfo(
     onPlayTheme: (OpeningEnding) -> Unit,
     showTitle: Boolean,
     playFocus: FocusRequester,
+    onPlayFocused: (Boolean) -> Unit = {},
     onPlayCenter: (Float) -> Unit,
 ) {
     val repo = (LocalContext.current.applicationContext as AsterApp).repository
@@ -684,7 +718,7 @@ private fun DetailInfo(
                             else -> if (resumable) "Resume" else "Play"
                         },
                         Icons.Default.PlayArrow, prominent = true,
-                        modifier = Modifier.focusRequester(playFocus).onGloballyPositioned { onPlayCenter(it.boundsInRoot().center.x) },
+                        modifier = Modifier.focusRequester(playFocus).onFocusChanged { onPlayFocused(it.isFocused) }.onGloballyPositioned { onPlayCenter(it.boundsInRoot().center.x) },
                     ) { if (preferDisc && menuId != null) onDiscMenu(menuId) else onPlay(target.id) }
                     if (resumable) ActionButton("From Beginning", Icons.Default.Replay) { onPlayFromBeginning(target.id) }
                 }
