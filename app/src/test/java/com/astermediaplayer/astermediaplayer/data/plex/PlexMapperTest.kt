@@ -115,6 +115,12 @@ class PlexMapperTest {
         assertEquals("/library/metadata/1188/thumb/1", season.seriesPrimaryImageTag)
     }
 
+    @Test fun aHamaGuidAndAnAnidbIdMarkAnime() {
+        fun ids(json: String) = PlexMapper.item(JSONObject(json))["ProviderIds"]?.toString()
+        assertTrue(ids("""{"ratingKey":"1","type":"show","title":"A","guid":"com.plexapp.agents.hama://anidb-1234?lang=en"}""")!!.contains("\"AniDB\":\"1234\""))
+        assertTrue(ids("""{"ratingKey":"1","type":"show","title":"A","guid":"plex://show/abc","Guid":[{"id":"anidb://99"}]}""")!!.contains("\"AniDB\":\"99\""))
+    }
+
     @Test fun sectionsBecomeLibraries() {
         val directories = JSONObject("""{"MediaContainer":{"Directory":[{"key":"1","type":"movie","title":"Movies","agent":"tv.plex.agents.movie"},{"key":"4","type":"show","title":"Anime","agent":"tv.plex.agents.custom.shoko"}]}}""")
             .getJSONObject("MediaContainer").getJSONArray("Directory")

@@ -221,10 +221,12 @@ object PlexMapper {
         m.arr("Guid")?.objects()?.forEach { g ->
             val parts = g.optString("id").split("://")
             if (parts.size != 2) return@forEach
-            val name = when (parts[0]) { "tmdb" -> "Tmdb"; "imdb" -> "Imdb"; "tvdb" -> "Tvdb"; else -> parts[0].replaceFirstChar { it.uppercase() } }
+            val name = when (parts[0]) { "tmdb" -> "Tmdb"; "imdb" -> "Imdb"; "tvdb" -> "Tvdb"; "anidb" -> "AniDB"; else -> parts[0].replaceFirstChar { it.uppercase() } }
             ids[name] = parts[1]
         }
         m.str("guid")?.takeIf { ".shoko://" in it }?.let { ids["Shoko"] = it.substringAfterLast('/') }
+        // The Hama agent names the AniDB entry in the guid itself: "com.plexapp.agents.hama://anidb-1234?lang=en".
+        m.str("guid")?.let { Regex("""anidb\d?-(\d+)""").find(it) }?.let { ids.putIfAbsent("AniDB", it.groupValues[1]) }
         return if (ids.isEmpty()) null else JsonObject(ids.mapValues { JsonPrimitive(it.value) })
     }
 

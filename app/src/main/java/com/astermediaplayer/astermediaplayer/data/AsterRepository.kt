@@ -1187,7 +1187,7 @@ class AsterRepository(context: Context, private val store: SessionStore) {
 
     /**
      * The TV and movie libraries that hold anime. Reading a library's metadata settings needs an admin account,
-     * so a few titles in each are sampled: when at least half were matched by Shoko/AniDB, the library is anime.
+     * so a few titles in each are sampled: when at least half were matched by Shoko/AniDB (or tagged as anime), or the library is named for anime, it is anime.
      */
     suspend fun animeLibraries(views: List<BaseItemDto>): List<BaseItemDto> {
         animeLibraryCache?.let { return it }
@@ -1206,7 +1206,9 @@ class AsterRepository(context: Context, private val store: SessionStore) {
                                 ),
                             ).content.items
                         }.getOrDefault(emptyList())
-                        library to (sample.isNotEmpty() && sample.count { it.isAnime() } * 2 >= sample.size)
+                        library to (sample.isNotEmpty() && (sample.count { isAnimeTitle(it) } * 2 >= sample.size ||
+                            // Libraries without Shoko matches (and Plex's patchy genre tags) are still often named for what they hold.
+                            library.name?.contains("anime", ignoreCase = true) == true))
                     }
                 }
                 .awaitAll().filter { it.second }.map { it.first }
@@ -1505,11 +1507,11 @@ class AsterRepository(context: Context, private val store: SessionStore) {
 }
 
 /**
- * Whether a title is anime. Jellyfin's Shoko match is the sign; Emby has no Shoko, writes the provider ids in its own case
- * ("anidb"), and often has only the genre.
+ * Whether a title is anime. Jellyfin's Shoko match is the sign; Emby and Plex may have no Shoko, write the provider ids in
+ * their own case ("anidb"), and often have only the genre.
  */
 fun AsterRepository.isAnimeTitle(item: BaseItemDto): Boolean =
-    item.isAnime() || (serverKind == ServerKind.Emby &&
+    item.isAnime() || (serverKind != ServerKind.Jellyfin &&
         (item.providerIds?.keys?.any { it.lowercase() in setOf("anidb", "anilist", "myanimelist") } == true ||
             item.genres?.any { it.equals("Anime", ignoreCase = true) } == true))
 
