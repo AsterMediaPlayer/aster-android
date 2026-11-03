@@ -255,7 +255,7 @@ fun PlayerScreen(
             val shade by animateFloatAsState(if (controlsVisible) 1f else 0f, tween(250), label = "controls")
             if (isTv) {
                 // Not while the stall card, an error or the Up Next card is up: their buttons take the remote.
-                if (state.error == null && state.qualityOffer == null && state.upNext == null) TvPlayerControls(state, viewModel, clock, canSeek, onGoTo, onControlsHeight = { tvControlsHeight = it })
+                if (state.error == null && state.qualityOffer == null && state.upNext == null) TvPlayerControls(state, viewModel, clock, canSeek, onGoTo, onControlsHeight = { tvControlsHeight = it }, onClose = onBack)
             } else if (shade > 0f) Box(Modifier.fillMaxSize().alpha(shade)) {
                 // Darkens the edges so white text reads over a bright picture.
                 Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0f to Color.Black.copy(alpha = 0.6f), 0.35f to Color.Transparent, 0.65f to Color.Transparent, 1f to Color.Black.copy(alpha = 0.7f))))

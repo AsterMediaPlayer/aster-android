@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.MoreHoriz
@@ -178,6 +179,16 @@ internal fun BackButton(onClick: () -> Unit) {
         onClick = onClick,
         modifier = Modifier.statusBarsPadding().padding(start = Lockup.screenPadding, top = 4.dp).size(DetailMetrics.backButtonSize).clip(CircleShape).background(Color.Black.copy(alpha = 0.35f)),
     ) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Color.White) }
+}
+
+/** The remote's Back as a button, for a TV with a touchscreen; on the main screens, where Back opens the menu, it shows the menu's icon. */
+@Composable
+private fun TouchBackButton(menu: Boolean, modifier: Modifier = Modifier) {
+    val dispatcher = androidx.activity.compose.LocalOnBackPressedDispatcherOwner.current?.onBackPressedDispatcher
+    IconButton(
+        onClick = { dispatcher?.onBackPressed() },
+        modifier = modifier.padding(start = 20.dp, top = 20.dp).size(56.dp).clip(CircleShape).background(Color.Black.copy(alpha = 0.45f)),
+    ) { Icon(if (menu) Icons.Default.Menu else Icons.AutoMirrored.Filled.ArrowBack, if (menu) "Menu" else "Back", tint = Color.White, modifier = Modifier.size(30.dp)) }
 }
 
 /** Ids come either way: with dashes, or as 32 hex digits. */
@@ -577,6 +588,12 @@ fun AsterNavHost(signedIn: Boolean) {
                 )
             }
         }
+        }
+        // A TV with a touchscreen (the Echo Show 15): a button that does what the remote's Back does, which on the main screens
+        // opens the menu. The video players have their own controls; the auth and lock screens their own buttons.
+        val videoRoute = route.startsWith("player/") || route == Routes.LIVE || route.startsWith("theme") || route.startsWith("disc/") || route.startsWith("channel/")
+        if (com.astermediaplayer.astermediaplayer.ui.theme.LocalTouchTv.current && !videoRoute && route != Routes.AUTH && !locked) {
+            TouchBackButton(menu = route == Routes.MAIN && !presented && !musicPresented, Modifier.align(Alignment.TopStart))
         }
         // The slim Now Playing panel, over the browsing pages (a show's own page carries its own).
         val onDetail = route.startsWith("detail")

@@ -59,6 +59,14 @@ val MinimalBringIntoView = object : BringIntoViewSpec {
     }
 }
 
+/**
+ * A TV that also has a touchscreen, as the Echo Show 15 is: the TV's layout, which the remote steers, with what touch needs on
+ * top (a way back and to the menu, the player's controls on a tap).
+ */
+val LocalTouchTv = androidx.compose.runtime.staticCompositionLocalOf { false }
+
+fun hasTouchscreen(context: Context): Boolean = context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_TOUCHSCREEN)
+
 fun isTelevision(context: Context): Boolean =
     (context.getSystemService(Context.UI_MODE_SERVICE) as UiModeManager).currentModeType == Configuration.UI_MODE_TYPE_TELEVISION
 

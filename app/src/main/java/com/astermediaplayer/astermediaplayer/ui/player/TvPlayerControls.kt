@@ -6,6 +6,7 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -23,6 +24,11 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.Forward10
+import androidx.compose.material.icons.filled.Replay10
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.FastForward
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material3.Icon
@@ -52,6 +58,7 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -89,11 +96,16 @@ fun TvPlayerControls(
     onGoTo: (UUID) -> Unit = {},
     /** Told how far up the controls reach (zero while they're hidden), so the song card sits above them. */
     onControlsHeight: (androidx.compose.ui.unit.Dp) -> Unit = {},
+    /** Leaves the player: the touch screen's close button (the remote has Back). */
+    onClose: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val exo = viewModel.player
     val focusManager = LocalFocusManager.current
     var mode by remember { mutableStateOf(TvMode.Transport) }
+    // A TV with a touchscreen (the Echo Show 15): a tap brings the controls, which get buttons to press and a timeline to drag.
+    val touch = com.astermediaplayer.astermediaplayer.ui.theme.LocalTouchTv.current
+    var scrubbing by remember { mutableStateOf(false) }
     // How far up the controls reach, for the song card to sit above them.
     val u = com.astermediaplayer.astermediaplayer.ui.theme.Lockup.tvUnit
     LaunchedEffect(mode) {
@@ -169,23 +181,31 @@ fun TvPlayerControls(
 
     // A paused picture keeps its timeline, as the system player does.
     LaunchedEffect(clock.playing) { if (!clock.playing) show() }
-    LaunchedEffect(mode, activity, clock.playing) {
+    LaunchedEffect(mode, activity, clock.playing, scrubbing) {
         when (mode) {
-            TvMode.Transport -> if (clock.playing) { delay(5000); mode = TvMode.Hidden }
+            TvMode.Transport -> if (clock.playing && !scrubbing) { delay(5000); mode = TvMode.Hidden }
             TvMode.Panel -> { delay(8000); mode = if (clock.playing) TvMode.Hidden else TvMode.Transport }
             TvMode.Channels -> { delay(8000); closeChannels() }
             TvMode.Hidden -> Unit
         }
     }
-    // The tabs hold focus while the panel is open; the surface, the rest of the time.
+    // The tabs hold focus while the panel is open; the surface, the rest of the time. Opened by touch, nothing in the panel takes
+    // focus: a focused tab follows focus, so a tap on a choice would first land focus on the next tab over and change the choices.
     LaunchedEffect(mode) {
-        if (mode == TvMode.Panel) runCatching { tabFocus.getValue(activeTab).requestFocus() } else runCatching { surface.requestFocus() }
+        if (mode == TvMode.Panel) { if (!touch) runCatching { tabFocus.getValue(activeTab).requestFocus() } } else runCatching { surface.requestFocus() }
     }
     // Back steps back one level; with the controls already away it falls through to leaving the player.
     BackHandler(enabled = mode != TvMode.Hidden) { mode = if (mode == TvMode.Panel) TvMode.Transport else TvMode.Hidden }
 
     Box(
         modifier.fillMaxSize()
+            // A tap on the picture shows the controls, or puts them (and the panel) away.
+            .then(
+                if (!touch) Modifier
+                else Modifier.pointerInput(Unit) {
+                    detectTapGestures { mode = if (mode == TvMode.Hidden) TvMode.Transport else TvMode.Hidden; activity++ }
+                },
+            )
             .focusRequester(surface)
             .onKeyEvent { event ->
                 if (mode == TvMode.Panel || event.type != KeyEventType.KeyDown) return@onKeyEvent false
@@ -249,7 +269,8 @@ fun TvPlayerControls(
                             TvPill(
                                 t.title, Modifier.focusRequester(tabFocus.getValue(t)), current = t == activeTab,
                                 onFocus = { tab = t; activity++ },
-                                onClick = { focusManager.moveFocus(FocusDirection.Down) },
+                                // By remote, OK steps down to the choices; by touch, a tap only picks the tab.
+                                onClick = { if (touch) { tab = t; activity++ } else focusManager.moveFocus(FocusDirection.Down) },
                             )
                         }
                     }
@@ -282,10 +303,28 @@ fun TvPlayerControls(
                             Text("LIVE", style = Type.callout.copy(fontWeight = FontWeight.Bold, letterSpacing = 1.sp), color = Color.White)
                         }
                     } else {
-                        Timeline(clock, canScrub = false, onScrubbing = {}, onSeek = {}, preview = { null })
+                        // Dragged by touch, with the frame at the finger; the remote's Left and Right do it otherwise.
+                        Timeline(
+                            clock, canScrub = touch && canSeek, onScrubbing = { scrubbing = it; activity++ },
+                            onSeek = { exo.seekTo(it); activity++ }, preview = if (touch) viewModel::scrubFrame else ({ null }),
+                        )
                     }
-                    // The tabs as labels; they only become buttons when the panel opens, so they never take focus from the surface.
-                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) { tabs.forEach { TvPill(it.title) } }
+                    // The tabs as labels; they only become buttons when the panel opens, so they never take focus from the surface. By
+                    // touch, one opens the panel at itself.
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        tabs.forEach { t -> TvPill(t.title, onClick = if (touch) ({ tab = t; openPanel() }) else null) }
+                    }
+                }
+            }
+        }
+        // By touch: back and ahead 10 seconds and play or pause in the middle, and a way out at the top.
+        AnimatedVisibility(touch && mode == TvMode.Transport, Modifier.fillMaxSize(), enter = fadeIn(), exit = fadeOut()) {
+            Box(Modifier.fillMaxSize()) {
+                TouchButton(Icons.Default.Close, "Close", 56.dp, Modifier.align(Alignment.TopEnd).padding(24.dp), onClick = onClose)
+                Row(Modifier.align(Alignment.Center), horizontalArrangement = Arrangement.spacedBy(48.dp), verticalAlignment = Alignment.CenterVertically) {
+                    if (canSeek) TouchButton(Icons.Default.Replay10, "Back 10 seconds", 72.dp) { jump(-10) }
+                    TouchButton(if (clock.playing) Icons.Default.Pause else Icons.Default.PlayArrow, if (clock.playing) "Pause" else "Play", 96.dp) { togglePlay() }
+                    if (canSeek) TouchButton(Icons.Default.Forward10, "Ahead 10 seconds", 72.dp) { jump(10) }
                 }
             }
         }
@@ -297,6 +336,15 @@ fun TvPlayerControls(
             )
         }
     }
+}
+
+/** A round button over the picture, for a TV's touchscreen. */
+@Composable
+private fun TouchButton(icon: ImageVector, label: String, size: androidx.compose.ui.unit.Dp, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    Box(
+        modifier.size(size).clip(CircleShape).background(Color.Black.copy(alpha = 0.45f)).clickable(onClickLabel = label, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) { Icon(icon, label, tint = Color.White, modifier = Modifier.size(size * 0.55f)) }
 }
 
 /** The choices under a tab. */

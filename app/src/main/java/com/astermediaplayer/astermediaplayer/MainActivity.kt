@@ -65,7 +65,10 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
         setContent {
             val signedIn by produceState<Boolean?>(null) { value = repo.restore() }
             val tv = isTelevision(this)
-            CompositionLocalProvider(LocalIsTv provides tv, LocalBringIntoViewSpec provides if (tv) MinimalBringIntoView else LocalBringIntoViewSpec.current) {
+            CompositionLocalProvider(
+                LocalIsTv provides tv, com.astermediaplayer.astermediaplayer.ui.theme.LocalTouchTv provides (tv && com.astermediaplayer.astermediaplayer.ui.theme.hasTouchscreen(this)),
+                LocalBringIntoViewSpec provides if (tv) MinimalBringIntoView else LocalBringIntoViewSpec.current,
+            ) {
                 AsterTheme {
                     Surface(Modifier.fillMaxSize()) {
                         signedIn?.let { AsterNavHost(signedIn = it) }
