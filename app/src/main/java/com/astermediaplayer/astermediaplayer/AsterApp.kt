@@ -76,6 +76,7 @@ class AsterApp : Application(), SingletonImageLoader.Factory {
 
     override fun onCreate() {
         super.onCreate()
+        com.astermediaplayer.astermediaplayer.data.diagnostics.DebugLog.install(this)
         // The repository asks the setting before it contacts AnimeThemes; switching it back on gets the library's songs fetched.
         kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Default).launch {
             settings.settings.map { it.songLookups }.distinctUntilChanged().collect { on ->

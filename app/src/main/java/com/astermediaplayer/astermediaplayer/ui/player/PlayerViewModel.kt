@@ -323,6 +323,11 @@ class PlayerViewModel(
         }
 
         override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+            com.astermediaplayer.astermediaplayer.data.diagnostics.DebugLog.note(
+                "Playback",
+                "Failed: ${error.errorCodeName} (${error.cause?.javaClass?.simpleName ?: "no cause"}: ${error.cause?.message ?: error.message}) while ${playMethod}" +
+                    if (forcedTranscode) ", already transcoding" else "",
+            )
             // The streams tried in turn, each asking the server for something safer, as on the Apple apps.
             when {
                 // A channel that fails to start (a tuner still being let go, an encode not ready) gets one fresh stream.
@@ -354,6 +359,25 @@ class PlayerViewModel(
         }
     }
     private var forcedTranscode = false
+
+    /** One playback attempt, for a debug report: what's played, from what file, and how (direct, or the server's transcode and why). */
+    private fun playbackSummary(dto: BaseItemDto, source: org.jellyfin.sdk.model.api.MediaSourceInfo, url: String): String {
+        val streams = source.mediaStreams.orEmpty()
+        val video = streams.firstOrNull { it.type == MediaStreamType.VIDEO }
+        val audio = streams.filter { it.type == MediaStreamType.AUDIO }
+        val reasons = Regex("TranscodeReasons=([^&]+)").find(url)?.groupValues?.get(1)?.let { java.net.URLDecoder.decode(it, "UTF-8") }
+        return buildList {
+            add("${dto.type}")
+            add(if (playMethod == PlayMethod.DIRECT_PLAY) "direct play" else "transcode" + (reasons?.let { " ($it)" } ?: ""))
+            source.container?.let { add("container $it") }
+            video?.let { add("video ${it.codec} ${it.width}x${it.height} ${it.bitDepth ?: "?"}-bit ${it.videoRangeType ?: it.videoRange ?: ""}".trim()) }
+            if (audio.isNotEmpty()) add("audio " + audio.joinToString("/") { "${it.codec} ${it.channels ?: "?"}ch" })
+            source.bitrate?.let { add("${it / 1000} kbps") }
+            if (_state.value.live) add("live")
+            if (offline != null) add("from a download")
+            if (cast?.isConnected == true) add("casting")
+        }.joinToString(", ")
+    }
     /** The last stream tried: one encoded afresh as H.264 and AAC, copying nothing from the file. */
     private var mostCompatible = false
     private var liveRetried = false
@@ -530,6 +554,7 @@ class PlayerViewModel(
                     else -> error("The server can't stream this item to this device")
                 }.let { if (casting) repo.withApiKey(it) else it }
                 playMethod = if (direct) PlayMethod.DIRECT_PLAY else PlayMethod.TRANSCODE
+                com.astermediaplayer.astermediaplayer.data.diagnostics.DebugLog.note("Playback", playbackSummary(dto, source, url))
 
                 val externalText = source.mediaStreams.orEmpty()
                     .filter { it.type == MediaStreamType.SUBTITLE && it.deliveryMethod == SubtitleDeliveryMethod.EXTERNAL && it.deliveryUrl != null }

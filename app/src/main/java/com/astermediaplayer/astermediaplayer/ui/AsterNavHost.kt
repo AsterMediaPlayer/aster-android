@@ -617,6 +617,9 @@ fun AsterNavHost(signedIn: Boolean) {
             MusicPlayerScreen()
         }
         // The server in use was left too long: its password, or another server, before anything shows. Focus can't leave it.
+        // The last run ended in a crash: offered once, as the app opens again.
+        var crashOffer by remember { mutableStateOf(com.astermediaplayer.astermediaplayer.data.diagnostics.DebugLog.lastCrash() != null) }
+        if (crashOffer && !locked) com.astermediaplayer.astermediaplayer.ui.settings.DebugReportDialog(afterCrash = true) { crashOffer = false }
         if (locked) {
             val server = repo.currentServer
             if (server != null) {

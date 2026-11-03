@@ -39,6 +39,7 @@ import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -447,6 +448,10 @@ private fun AboutPage(open: (SettingsPage) -> Unit) {
     AboutLink("Help & Support", Icons.AutoMirrored.Filled.HelpOutline, "https://astermediaplayer.com/support.html")
     AboutLink("Privacy Policy", Icons.Default.PanTool, "https://astermediaplayer.com/privacy.html")
     SRow("Open Source & Licenses", icon = Icons.Default.Description, chevron = true) { open(SettingsPage.OpenSource) }
+    var reporting by remember { mutableStateOf(false) }
+    SRow("Send Debug Report", icon = Icons.Default.BugReport, chevron = true) { reporting = true }
+    SNote("When something goes wrong, send a report and quote its code in a bug report.")
+    if (reporting) DebugReportDialog { reporting = false }
 }
 
 /** One of Aster's web pages, as on the Apple apps: opened in the browser, or on a TV, which has none, the address to type in elsewhere. */
