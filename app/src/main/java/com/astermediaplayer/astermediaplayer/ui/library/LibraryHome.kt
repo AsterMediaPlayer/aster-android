@@ -1,10 +1,13 @@
 package com.astermediaplayer.astermediaplayer.ui.library
 
+import android.content.res.Configuration
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
@@ -27,12 +30,14 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -52,6 +57,7 @@ import com.astermediaplayer.astermediaplayer.ui.components.PosterCard
 import com.astermediaplayer.astermediaplayer.ui.components.userMessage
 import com.astermediaplayer.astermediaplayer.ui.home.TabBarClearance
 import com.astermediaplayer.astermediaplayer.ui.theme.Lockup
+import com.astermediaplayer.astermediaplayer.ui.theme.LocalIsTv
 import com.astermediaplayer.astermediaplayer.ui.theme.Type
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -90,6 +96,7 @@ class LibraryHomeViewModel(private val repo: AsterRepository) : ViewModel() {
 }
 
 /** The Library tab: every library as a tile, then the favourites and the playlists (the Apple apps' `LibraryView`). */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun LibraryHomeScreen(viewModel: LibraryHomeViewModel, onItem: (BaseItemDto) -> Unit, modifier: Modifier = Modifier, topInset: Dp = 0.dp) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -101,7 +108,15 @@ fun LibraryHomeScreen(viewModel: LibraryHomeViewModel, onItem: (BaseItemDto) -> 
             verticalArrangement = Arrangement.spacedBy(Lockup.sectionSpacing),
         ) {
             Text("Library", style = Type.pageTitle.copy(fontSize = 34.sp, lineHeight = 41.sp, letterSpacing = 1.0.sp), modifier = Modifier.padding(horizontal = Lockup.screenPadding))
-            if (s.value.libraries.isNotEmpty()) {
+            val portrait = LocalConfiguration.current.orientation == Configuration.ORIENTATION_PORTRAIT && !LocalIsTv.current
+            if (s.value.libraries.isNotEmpty() && portrait) {
+                // A phone held upright wraps the tiles down the page, instead of a row that runs off the side.
+                FlowRow(
+                    modifier = Modifier.padding(horizontal = Lockup.screenPadding, vertical = Lockup.shelfVerticalPadding),
+                    horizontalArrangement = Arrangement.spacedBy(Lockup.shelfSpacing),
+                    verticalArrangement = Arrangement.spacedBy(Lockup.shelfSpacing),
+                ) { s.value.libraries.forEach { library -> key(library.id) { LibraryTile(library) { onItem(library) } } } }
+            } else if (s.value.libraries.isNotEmpty()) {
                 LazyRow(
                     contentPadding = PaddingValues(horizontal = Lockup.screenPadding, vertical = Lockup.shelfVerticalPadding),
                     horizontalArrangement = Arrangement.spacedBy(Lockup.shelfSpacing),
