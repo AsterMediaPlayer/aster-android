@@ -43,6 +43,9 @@ object DebugLog {
 
     fun recent(): List<String> = synchronized(events) { events.toList() }
 
+    /** What was last played, field by field (container, codecs, how it played, any error), for a report's `playback`. */
+    @Volatile var lastPlayback: Map<String, String> = emptyMap()
+
     /** The crash the last run ended in, if there was one and it hasn't been sent or put aside. */
     fun lastCrash(): String? = crashFile?.takeIf { it.exists() }?.let { runCatching { it.readText() }.getOrNull() }
 

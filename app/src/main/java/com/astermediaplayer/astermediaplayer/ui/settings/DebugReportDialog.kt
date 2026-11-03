@@ -2,6 +2,7 @@ package com.astermediaplayer.astermediaplayer.ui.settings
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -26,7 +27,7 @@ import kotlinx.coroutines.launch
 private const val ISSUES = "github.com/AsterMediaPlayer/aster-android/issues"
 
 /**
- * Send Debug Report: says what a report holds, sends it, and shows the code to quote in a bug report. [afterCrash] opens it as
+ * Send Debug Report: asks what happened, says what a report holds, sends it, and shows the id the service gave it. [afterCrash] opens it as
  * the app's offer after the last run ended in a crash, which goes with the report; choosing Not Now puts that crash aside.
  */
 @Composable
@@ -36,6 +37,10 @@ fun DebugReportDialog(afterCrash: Boolean = false, onDismiss: () -> Unit) {
     var sending by remember { mutableStateOf(false) }
     var code by remember { mutableStateOf<String?>(null) }
     var failure by remember { mutableStateOf<String?>(null) }
+    var description by remember { mutableStateOf("") }
+    var email by remember { mutableStateOf("") }
+    // A TV's remote makes typing slow: there the words are optional and no reply address is asked for.
+    val tv = com.astermediaplayer.astermediaplayer.ui.theme.LocalIsTv.current
 
     fun send() {
         sending = true
@@ -43,7 +48,7 @@ fun DebugReportDialog(afterCrash: Boolean = false, onDismiss: () -> Unit) {
         scope.launch {
             runCatching {
                 val crash = DebugLog.lastCrash()
-                DebugReport.send(DebugReport.build(context, crash)).also { if (crash != null) DebugLog.clearCrash() }
+                DebugReport.send(DebugReport.build(context, description, crash, email.takeIf { !tv })).also { if (crash != null) DebugLog.clearCrash() }
             }.onSuccess { code = it }.onFailure { failure = it.message ?: "The report couldn't be sent." }
             sending = false
         }
@@ -56,16 +61,26 @@ fun DebugReportDialog(afterCrash: Boolean = false, onDismiss: () -> Unit) {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 when {
                     code != null -> {
-                        Text("Your report's code is")
+                        Text("Thanks. Your report is")
                         Text(code!!, fontSize = 32.sp, fontWeight = FontWeight.Bold, modifier = androidx.compose.ui.Modifier.align(Alignment.CenterHorizontally))
-                        Text("Quote it in a bug report at $ISSUES, with what you were doing when it went wrong.")
+                        Text("If you open a bug report at $ISSUES, quote it there.")
                     }
                     sending -> {
                         CircularProgressIndicator(androidx.compose.ui.Modifier.align(Alignment.CenterHorizontally))
                         Text("Sending…")
                     }
                     else -> {
-                        if (afterCrash) Text("Sending a debug report helps find out why. You'll get a code to quote in a bug report.")
+                        if (afterCrash) Text("Sending a debug report helps find out why.")
+                        androidx.compose.material3.OutlinedTextField(
+                            description, { description = it.take(10_000) }, label = { Text("What happened?") },
+                            placeholder = { Text(if (tv) "Optional" else "What you were doing, and what went wrong") },
+                            minLines = if (tv) 1 else 3, modifier = androidx.compose.ui.Modifier.fillMaxWidth(),
+                        )
+                        if (!tv) androidx.compose.material3.OutlinedTextField(
+                            email, { email = it.take(254) }, label = { Text("Email for a reply (optional)") }, singleLine = true,
+                            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Email),
+                            modifier = androidx.compose.ui.Modifier.fillMaxWidth(),
+                        )
                         Text(DebugReport.CONTENTS, style = MaterialTheme.typography.bodySmall)
                         failure?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                     }

@@ -323,6 +323,7 @@ class PlayerViewModel(
         }
 
         override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+            com.astermediaplayer.astermediaplayer.data.diagnostics.DebugLog.lastPlayback += ("error" to error.errorCodeName)
             com.astermediaplayer.astermediaplayer.data.diagnostics.DebugLog.note(
                 "Playback",
                 "Failed: ${error.errorCodeName} (${error.cause?.javaClass?.simpleName ?: "no cause"}: ${error.cause?.message ?: error.message}) while ${playMethod}" +
@@ -366,6 +367,23 @@ class PlayerViewModel(
         val video = streams.firstOrNull { it.type == MediaStreamType.VIDEO }
         val audio = streams.filter { it.type == MediaStreamType.AUDIO }
         val reasons = Regex("TranscodeReasons=([^&]+)").find(url)?.groupValues?.get(1)?.let { java.net.URLDecoder.decode(it, "UTF-8") }
+        com.astermediaplayer.astermediaplayer.data.diagnostics.DebugLog.lastPlayback = buildMap {
+            put("type", dto.type.toString())
+            put("method", if (playMethod == PlayMethod.DIRECT_PLAY) "direct play" else "transcode")
+            reasons?.let { put("transcodeReasons", it) }
+            source.container?.let { put("container", it) }
+            video?.let { v ->
+                v.codec?.let { put("videoCodec", it) }
+                put("resolution", "${v.width}x${v.height}")
+                v.bitDepth?.let { put("bitDepth", it.toString()) }
+                (v.videoRangeType ?: v.videoRange)?.let { put("videoRange", it.toString()) }
+            }
+            if (audio.isNotEmpty()) put("audioCodec", audio.joinToString("/") { "${it.codec} ${it.channels ?: "?"}ch" })
+            source.bitrate?.let { put("bitrateKbps", (it / 1000).toString()) }
+            if (_state.value.live) put("live", "true")
+            if (offline != null) put("download", "true")
+            if (cast?.isConnected == true) put("casting", "true")
+        }
         return buildList {
             add("${dto.type}")
             add(if (playMethod == PlayMethod.DIRECT_PLAY) "direct play" else "transcode" + (reasons?.let { " ($it)" } ?: ""))
