@@ -6,6 +6,10 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.material.icons.Icons
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.focusable
+import com.astermediaplayer.astermediaplayer.ui.theme.tvFocus
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material3.Icon
@@ -46,6 +50,21 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 @Composable
 fun AuthScreen(viewModel: AuthViewModel, onSignedIn: () -> Unit) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    // On a TV the remote's Up and Down always move between the fields and buttons: a text field being typed in would otherwise
+    // keep them, and the remote could never leave it for Quick Connect.
+    val tv = com.astermediaplayer.astermediaplayer.ui.theme.LocalIsTv.current
+    val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
+    // The rest of the TV app's focus ring, so the remote's place shows plainly; it draws nothing on a touch screen.
+    val ring = if (tv) Modifier.tvFocus(24.dp) else Modifier
+    val leaves = if (!tv) Modifier else Modifier.onPreviewKeyEvent { event ->
+        val direction = when (event.key) {
+            androidx.compose.ui.input.key.Key.DirectionDown -> androidx.compose.ui.focus.FocusDirection.Down
+            androidx.compose.ui.input.key.Key.DirectionUp -> androidx.compose.ui.focus.FocusDirection.Up
+            else -> return@onPreviewKeyEvent false
+        }
+        if (event.type == androidx.compose.ui.input.key.KeyEventType.KeyDown) focusManager.moveFocus(direction)
+        true
+    }
     val servers by viewModel.servers.collectAsStateWithLifecycle()
     LaunchedEffect(state.signedIn) { if (state.signedIn) onSignedIn() }
     // Back steps back a stage, as on the Apple apps: out of Quick Connect, then to the server screen, rather than leaving the app.
@@ -68,7 +87,7 @@ fun AuthScreen(viewModel: AuthViewModel, onSignedIn: () -> Unit) {
                 Text("Link Aster to Plex", style = MaterialTheme.typography.titleMedium)
                 Text("On any device, go to plex.tv/link, sign in, and enter this code:", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text(state.plexCode!!, style = MaterialTheme.typography.displayMedium, color = MaterialTheme.colorScheme.primary)
-                TextButton(onClick = viewModel::cancelPlex) { Text("Cancel") }
+                TextButton(onClick = viewModel::cancelPlex, modifier = ring) { Text("Cancel") }
             } else if (state.plexPinFor != null) {
                 // A profile with a PIN: plex.tv checks it by switching to the profile.
                 var pin by remember { mutableStateOf("") }
@@ -76,18 +95,18 @@ fun AuthScreen(viewModel: AuthViewModel, onSignedIn: () -> Unit) {
                 Text("${person.title}'s PIN", style = MaterialTheme.typography.titleMedium)
                 OutlinedTextField(
                     value = pin, onValueChange = { pin = it.filter(Char::isDigit).take(8); viewModel.setPlexPinTyping() }, label = { Text("PIN") }, singleLine = true,
-                    modifier = Modifier.fillMaxWidth(), visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                    modifier = Modifier.fillMaxWidth().then(leaves), visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword, imeAction = ImeAction.Go), keyboardActions = KeyboardActions(onGo = { viewModel.submitPlexPin(pin) }),
                 )
                 state.plexPinError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-                Button(onClick = { viewModel.submitPlexPin(pin) }, enabled = !state.busy && pin.isNotEmpty(), modifier = Modifier.fillMaxWidth()) {
+                Button(onClick = { viewModel.submitPlexPin(pin) }, enabled = !state.busy && pin.isNotEmpty(), modifier = Modifier.fillMaxWidth().then(ring)) {
                     if (state.busy) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp) else Text("Continue")
                 }
-                TextButton(onClick = viewModel::backToPlexUsers, enabled = !state.busy) { Text("Choose Another Profile") }
+                TextButton(onClick = viewModel::backToPlexUsers, enabled = !state.busy, modifier = ring) { Text("Choose Another Profile") }
             } else if (state.plexUsers != null) {
                 Text("Who's watching?", style = MaterialTheme.typography.titleMedium)
                 state.plexUsers!!.forEach { person ->
-                    OutlinedButton(onClick = { viewModel.pickPlexUser(person) }, enabled = !state.busy, modifier = Modifier.fillMaxWidth(), contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp)) {
+                    OutlinedButton(onClick = { viewModel.pickPlexUser(person) }, enabled = !state.busy, modifier = Modifier.fillMaxWidth().then(ring), contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp)) {
                         Column(Modifier.weight(1f)) {
                             Text(person.title, style = MaterialTheme.typography.bodyLarge)
                             if (person.hasPin) Text("Asks for a PIN", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -96,11 +115,11 @@ fun AuthScreen(viewModel: AuthViewModel, onSignedIn: () -> Unit) {
                 }
                 if (state.busy) CircularProgressIndicator(Modifier.padding(2.dp))
                 state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-                TextButton(onClick = viewModel::cancelPlex) { Text("Cancel") }
+                TextButton(onClick = viewModel::cancelPlex, modifier = ring) { Text("Cancel") }
             } else if (state.plexServers != null) {
                 Text("Choose a Plex server", style = MaterialTheme.typography.titleMedium)
                 state.plexServers!!.forEach { server ->
-                    OutlinedButton(onClick = { viewModel.choosePlexServer(server) }, enabled = !state.busy, modifier = Modifier.fillMaxWidth(), contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp)) {
+                    OutlinedButton(onClick = { viewModel.choosePlexServer(server) }, enabled = !state.busy, modifier = Modifier.fillMaxWidth().then(ring), contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp)) {
                         Column(Modifier.weight(1f)) {
                             Text(server.name, style = MaterialTheme.typography.bodyLarge)
                             Text(if (server.owned) "Yours" else "Shared with you", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -108,26 +127,26 @@ fun AuthScreen(viewModel: AuthViewModel, onSignedIn: () -> Unit) {
                     }
                 }
                 if (state.busy) CircularProgressIndicator(Modifier.padding(2.dp))
-                TextButton(onClick = viewModel::cancelPlex) { Text("Cancel") }
+                TextButton(onClick = viewModel::cancelPlex, modifier = ring) { Text("Cancel") }
             } else if (state.connectedServer == null) {
                 Text("Connect to your Jellyfin or Emby server, or sign in with Plex", style = MaterialTheme.typography.titleMedium)
                 OutlinedTextField(
                     value = state.serverInput, onValueChange = viewModel::setServer,
                     label = { Text("Server address") }, placeholder = { Text("jellyfin.example.com:8096") },
-                    singleLine = true, modifier = Modifier.fillMaxWidth(),
+                    singleLine = true, modifier = Modifier.fillMaxWidth().then(leaves),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Go),
                     keyboardActions = KeyboardActions(onGo = { viewModel.connect() }),
                 )
                 Button(
                     onClick = viewModel::connect, enabled = !state.busy && state.serverInput.isNotBlank(),
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().then(ring),
                 ) { if (state.busy) CircularProgressIndicator(Modifier.padding(2.dp)) else Text("Connect") }
-                OutlinedButton(onClick = viewModel::startPlex, enabled = !state.busy, modifier = Modifier.fillMaxWidth()) { Text("Sign in with Plex") }
+                OutlinedButton(onClick = viewModel::startPlex, enabled = !state.busy, modifier = Modifier.fillMaxWidth().then(ring)) { Text("Sign in with Plex") }
                 // Servers already signed in to: back to one without typing it.
                 if (servers.isNotEmpty()) {
                     Text("Your Servers", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 10.dp))
                     servers.forEach { server ->
-                        OutlinedButton(onClick = { viewModel.switchTo(server) }, modifier = Modifier.fillMaxWidth(), contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp)) {
+                        OutlinedButton(onClick = { viewModel.switchTo(server) }, modifier = Modifier.fillMaxWidth().then(ring), contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp)) {
                             Column(Modifier.weight(1f)) {
                                 Text(server.titleAmong(servers), style = MaterialTheme.typography.bodyLarge)
                                 Text("${server.session.kind.displayName} · ${server.session.userName}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -142,7 +161,7 @@ fun AuthScreen(viewModel: AuthViewModel, onSignedIn: () -> Unit) {
                     Text("Approve this code in Jellyfin", style = MaterialTheme.typography.titleMedium)
                     Text("Open any signed-in Jellyfin app, go to Settings ▸ Quick Connect and enter:", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text(state.quickConnectCode!!, style = MaterialTheme.typography.displayMedium, color = MaterialTheme.colorScheme.primary)
-                    TextButton(onClick = viewModel::cancelQuickConnect) { Text("Cancel") }
+                    TextButton(onClick = viewModel::cancelQuickConnect, modifier = ring) { Text("Cancel") }
                 } else {
                     Text("Sign in", style = MaterialTheme.typography.titleMedium)
                     if (state.users.isNotEmpty()) {
@@ -154,12 +173,12 @@ fun AuthScreen(viewModel: AuthViewModel, onSignedIn: () -> Unit) {
                     }
                     OutlinedTextField(
                         value = state.username, onValueChange = viewModel::setUsername,
-                        label = { Text("Username") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+                        label = { Text("Username") }, singleLine = true, modifier = Modifier.fillMaxWidth().then(leaves),
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
                     )
                     OutlinedTextField(
                         value = state.password, onValueChange = viewModel::setPassword,
-                        label = { Text("Password") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+                        label = { Text("Password") }, singleLine = true, modifier = Modifier.fillMaxWidth().then(leaves),
                         visualTransformation = PasswordVisualTransformation(),
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Go),
                         keyboardActions = KeyboardActions(onGo = { viewModel.signIn() }),
@@ -179,13 +198,14 @@ fun AuthScreen(viewModel: AuthViewModel, onSignedIn: () -> Unit) {
                         }
                     }
                     Button(
-                        onClick = viewModel::signIn, enabled = !state.busy && state.username.isNotBlank(),
-                        modifier = Modifier.fillMaxWidth(),
+                        // On a TV it stays enabled, so the remote can stop on it on the way to Quick Connect; with no name it says so.
+                        onClick = viewModel::signIn, enabled = !state.busy && (tv || state.username.isNotBlank()),
+                        modifier = Modifier.fillMaxWidth().then(ring),
                     ) { if (state.busy) CircularProgressIndicator(Modifier.padding(2.dp)) else Text("Sign in") }
                     if (state.quickConnectAvailable) {
-                        OutlinedButton(onClick = viewModel::startQuickConnect, modifier = Modifier.fillMaxWidth()) { Text("Use Quick Connect") }
+                        OutlinedButton(onClick = viewModel::startQuickConnect, modifier = Modifier.fillMaxWidth().then(ring)) { Text("Use Quick Connect") }
                     }
-                    TextButton(onClick = viewModel::changeServer) { Text("Use a different server") }
+                    TextButton(onClick = viewModel::changeServer, modifier = ring) { Text("Use a different server") }
                 }
             }
             state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }

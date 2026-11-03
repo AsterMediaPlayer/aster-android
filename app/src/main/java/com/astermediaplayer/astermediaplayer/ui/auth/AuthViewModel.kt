@@ -117,7 +117,8 @@ class AuthViewModel(private val repo: AsterRepository, private val onServerChang
     fun signIn() {
         val s = _state.value
         val server = s.connectedServer ?: return
-        if (s.busy || s.username.isBlank()) return
+        if (s.busy) return
+        if (s.username.isBlank()) { _state.update { it.copy(error = "Enter your username, or use Quick Connect.") }; return }
         _state.update { it.copy(busy = true, error = null) }
         viewModelScope.launch {
             try {
