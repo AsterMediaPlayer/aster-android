@@ -13,7 +13,7 @@ android {
 
     defaultConfig {
         // -PappIdSuffix=.test installs a copy beside the real app, with its own sign-ins, for trying things on a device.
-        applicationId = "com.astermediaplayer.astermediaplayer" + ((findProperty("appIdSuffix") as String?) ?: "")
+        applicationId = "com.astermediaplayer.app" + ((findProperty("appIdSuffix") as String?) ?: "")
         minSdk = 26
         targetSdk = 37
         versionCode = 8

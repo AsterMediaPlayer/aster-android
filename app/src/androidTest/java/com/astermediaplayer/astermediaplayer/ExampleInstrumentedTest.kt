@@ -19,6 +19,6 @@ class ExampleInstrumentedTest {
     fun useAppContext() {
         // Context of the app under test.
         val appContext = InstrumentationRegistry.getInstrumentation().targetContext
-        assertEquals("com.astermediaplayer.astermediaplayer", appContext.packageName)
+        assertEquals("com.astermediaplayer.app", appContext.packageName)
     }
 }
