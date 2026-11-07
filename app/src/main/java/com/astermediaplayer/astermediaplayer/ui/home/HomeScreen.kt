@@ -1,5 +1,9 @@
 package com.astermediaplayer.astermediaplayer.ui.home
 
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.json.Json
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -118,7 +122,49 @@ data class HomeContent(
     val featured: List<BaseItemDto> = (resume.take(3) + nextUp.take(4) + movies.take(2) + shows.take(1))
         .distinctBy { it.id }
         .take(10)
+
+    /**
+     * As kept on disk between launches: a line for each row ("resume", "nextUp"…, then "shelf" lines of the library and its
+     * items), each its items' JSON as the server sent them, so reading it back is the same streaming decode as the server's.
+     */
+    fun encode(): String {
+        val list = ListSerializer(BaseItemDto.serializer())
+        return buildString {
+            fun line(name: String, items: List<BaseItemDto>) { append(name).append('\t').append(SnapshotJson.encodeToString(list, items)).append('\n') }
+            append(VERSION).append('\n')
+            line("resume", resume); line("nextUp", nextUp); line("movies", movies); line("shows", shows); line("anime", anime)
+            libraryShelves.forEach { (view, items) -> line("shelf", listOf(view) + items) }
+        }
+    }
+
+    companion object {
+        private const val VERSION = "home-1"
+        private val SnapshotJson = Json { ignoreUnknownKeys = true; explicitNulls = false; encodeDefaults = false }
+
+        /** A Home kept by [encode]; null for one that can't be read (an older app's, say). */
+        fun decode(text: String): HomeContent? = runCatching {
+            val lines = text.lineSequence().filter { it.isNotEmpty() }.toList()
+            if (lines.firstOrNull() != VERSION) return null
+            val list = ListSerializer(BaseItemDto.serializer())
+            val rows = mutableMapOf<String, List<BaseItemDto>>()
+            val shelves = mutableListOf<Pair<BaseItemDto, List<BaseItemDto>>>()
+            for (line in lines.drop(1)) {
+                val tab = line.indexOf('\t')
+                val items = SnapshotJson.decodeFromString(list, line.substring(tab + 1))
+                when (val name = line.substring(0, tab)) {
+                    "shelf" -> items.firstOrNull()?.let { shelves += it to items.drop(1) }
+                    else -> rows[name] = items
+                }
+            }
+            HomeContent(
+                resume = rows["resume"].orEmpty(), nextUp = rows["nextUp"].orEmpty(), movies = rows["movies"].orEmpty(),
+                shows = rows["shows"].orEmpty(), anime = rows["anime"].orEmpty(), libraryShelves = shelves,
+            )
+        }.getOrNull()
+    }
 }
+
+private const val SNAPSHOT = "home"
 
 class HomeViewModel(private val repo: AsterRepository) : ViewModel() {
     private val _state = MutableStateFlow<Load<HomeContent>>(Load.Loading)
@@ -126,18 +172,35 @@ class HomeViewModel(private val repo: AsterRepository) : ViewModel() {
     private val _refreshing = MutableStateFlow(false)
     val refreshing: StateFlow<Boolean> = _refreshing.asStateFlow()
 
-    init { load() }
-
-    fun load(refresh: Boolean = false) {
+    init {
         viewModelScope.launch {
-            if (refresh) _refreshing.value = true else _state.value = Load.Loading
+            // Last time's Home at once, as the Apple apps do; then the server's, row by row in place of it.
+            val started = android.os.SystemClock.elapsedRealtime()
+            val text = repo.snapshot(SNAPSHOT)
+            val read = android.os.SystemClock.elapsedRealtime() - started
+            // Read away from the main thread: a Home of a few hundred items is a lot of JSON for a TV box's CPU.
+            val kept = text?.let { withContext(Dispatchers.Default) { HomeContent.decode(it) } }
+            android.util.Log.i("Aster", "[Home] Last time's Home: ${if (text == null) "none" else if (kept == null) "unreadable (${text.length} chars)" else "shown"} in ${android.os.SystemClock.elapsedRealtime() - started} ms (the file in $read ms)")
+            if (kept != null && _state.value is Load.Loading) _state.value = Load.Ready(kept)
+            load(quietly = kept != null)
+        }
+    }
+
+    /** [refresh] for pull to refresh; [quietly] keeps what's showing until the new Home is in, without a spinner. */
+    fun load(refresh: Boolean = false, quietly: Boolean = false) {
+        viewModelScope.launch {
+            if (refresh) _refreshing.value = true else if (!quietly || _state.value !is Load.Ready) _state.value = Load.Loading
+            val shown = _state.value
+            val started = android.os.SystemClock.elapsedRealtime()
             _state.value = try {
                 coroutineScope {
                     val views = repo.views()
+                    android.util.Log.i("Aster", "[Home] Libraries in ${android.os.SystemClock.elapsedRealtime() - started} ms")
                     val resume = async { repo.resume() }
                     val nextUp = async { repo.nextUp() }
                     // Anime has its own shelf, so the Movies and TV shelves skip its libraries.
                     val animeLibraries = repo.animeLibraries(views)
+                    android.util.Log.i("Aster", "[Home] Anime libraries known in ${android.os.SystemClock.elapsedRealtime() - started} ms")
                     val animeIds = animeLibraries.map { it.id }.toSet()
                     val movies = views.firstOrNull { it.collectionType == CollectionType.MOVIES && it.id !in animeIds }
                         ?.let { library -> async { runCatching { repo.latest(library.id, kinds = listOf(BaseItemKind.MOVIE)) }.getOrDefault(emptyList()) } }
@@ -160,7 +223,12 @@ class HomeViewModel(private val repo: AsterRepository) : ViewModel() {
                     )
                 }
             } catch (e: Exception) {
-                Load.Failed(e.userMessage())
+                // Offline, say: keep showing last time's Home rather than an error over it.
+                if (shown is Load.Ready) shown else Load.Failed(e.userMessage())
+            }
+            android.util.Log.i("Aster", "[Home] From the server in ${android.os.SystemClock.elapsedRealtime() - started} ms")
+            (_state.value as? Load.Ready)?.takeIf { it !== shown }?.let { ready ->
+                launch(Dispatchers.Default) { repo.keepSnapshot(SNAPSHOT, ready.value.encode()) }
             }
             _refreshing.value = false
         }

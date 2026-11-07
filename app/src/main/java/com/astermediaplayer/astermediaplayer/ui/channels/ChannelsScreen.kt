@@ -91,7 +91,7 @@ fun ChannelsScreen(onTune: (String) -> Unit, onOpen: (BaseItemDto) -> Unit, modi
             Modifier.fillMaxWidth().padding(horizontal = Lockup.screenPadding + inset).padding(top = if (tv) (118f * u).dp else 0.dp, bottom = if (tv) 4.dp else 10.dp),
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween,
         ) {
-            Text("Channels (Beta)", style = if (tv) Type.pageTitle.copy(fontSize = (76f * u).sp, lineHeight = (90f * u).sp) else Type.pageTitle.copy(fontSize = 34.sp, lineHeight = 41.sp))
+            Text("Channels", style = if (tv) Type.pageTitle.copy(fontSize = (76f * u).sp, lineHeight = (90f * u).sp) else Type.pageTitle.copy(fontSize = 34.sp, lineHeight = 41.sp))
             // Where to change them: shown to everyone, who see the settings read-only.
             EditChannelsButton { onEdit(null) }
         }

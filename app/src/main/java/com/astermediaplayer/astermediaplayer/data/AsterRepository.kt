@@ -1,5 +1,6 @@
 package com.astermediaplayer.astermediaplayer.data
 
+import kotlinx.coroutines.sync.withLock
 import android.content.Context
 import org.jellyfin.sdk.Jellyfin
 import org.jellyfin.sdk.api.client.ApiClient
@@ -81,20 +82,53 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.UUID
 
+/**
+ * The one HTTP client for the server's API, the SDK and pictures, as the official Android TV app and Wholphin share theirs: one
+ * pool of connections to the server (no handshake per client), and twelve requests at once to it rather than OkHttp's five.
+ */
+val sharedHttp: OkHttpClient by lazy {
+    OkHttpClient.Builder().credentialSafeRedirects()
+        .dispatcher(okhttp3.Dispatcher().apply { maxRequests = 32; maxRequestsPerHost = 12 })
+        .build()
+}
+
 /** Thin wrapper over the Jellyfin SDK; the Kotlin counterpart of the app's `JellyfinClient`. */
-class AsterRepository(context: Context, private val store: SessionStore) {
+class AsterRepository(val context: Context, private val store: SessionStore) {
     /** Whether song names may be asked of AnimeThemes (Settings > Title Pages); the app keeps this in step with the setting. */
     @Volatile var songLookups: Boolean = true
 
     /** What title pages have found where the server has no OP/ED plugin (openings from chapters, their songs), kept between runs. */
+    /** The last answer of each screen, by server and user, to show at once while the server's asked again. */
+    private val responses = ResponseCache(java.io.File(context.applicationContext.cacheDir, "responses"))
+
+    /**
+     * The server's calls run here, away from the main thread: the SDK reads and decodes its answer on whichever thread
+     * asked, and a screen's lists of titles decoded on the main thread held up every frame on a TV box.
+     */
+    private suspend inline fun <T> io(crossinline block: suspend () -> T): T = withContext(Dispatchers.IO) { block() }
+
+    /** Items the lists have shown, by id, so a title page opens on the card's item at once (see [seen]). */
+    private val seenItems = android.util.LruCache<UUID, BaseItemDto>(400)
+
+    /** Remembers an item a card showed, for its page to open on. */
+    fun noteSeen(item: BaseItemDto) { seenItems.put(item.id, item) }
+
+    /** The item as a card last showed it, if one did. */
+    fun seen(id: UUID): BaseItemDto? = seenItems.get(id)
+
+    /** A screen's last snapshot for this server and user ([name]: "home", "discover"…), or null. */
+    suspend fun snapshot(name: String): String? = session?.let { responses.read("${it.serverUrl}|${it.userId}|$name") }
+
+    fun keepSnapshot(name: String, text: String) { session?.let { responses.write("${it.serverUrl}|${it.userId}|$name", text) } }
+
     private val songThemes = SongThemeCache(java.io.File(context.applicationContext.filesDir, "song-themes.json"))
         // The first version of this kept only Plex's, in a file of its own.
         .also { java.io.File(context.applicationContext.filesDir, "plex-themes.json").delete() }
     private val jellyfin: Jellyfin = createJellyfin {
-        this.context = context.applicationContext
+        this.context = this@AsterRepository.context.applicationContext
         clientInfo = ClientInfo(name = "Aster", version = "0.1")
         // The sign-in goes along a redirect only within the server it was sent to (see CredentialSafeRedirects).
-        val signedIn = org.jellyfin.sdk.api.okhttp.OkHttpFactory(OkHttpClient.Builder().credentialSafeRedirects().build())
+        val signedIn = org.jellyfin.sdk.api.okhttp.OkHttpFactory(sharedHttp)
         apiClientFactory = signedIn
         socketConnectionFactory = signedIn
     }
@@ -246,7 +280,7 @@ class AsterRepository(context: Context, private val store: SessionStore) {
         throw IllegalStateException("Couldn't reach a Jellyfin or Emby server at $trimmed", failure)
     }
 
-    suspend fun publicUsers(): List<UserDto> = api.userApi.getPublicUsers().content
+    suspend fun publicUsers(): List<UserDto> = io { api.userApi.getPublicUsers().content }
 
     suspend fun signIn(serverUrl: String, username: String, password: String) {
         val result = api.authenticationApi.authenticateUserByName(AuthenticateUserByName(username, password)).content
@@ -255,12 +289,12 @@ class AsterRepository(context: Context, private val store: SessionStore) {
 
     /** Emby has no Quick Connect. */
     suspend fun quickConnectAvailable(): Boolean =
-        serverKind == ServerKind.Jellyfin && runCatching { api.authenticationApi.getQuickConnectEnabled().content }.getOrDefault(false)
+        io { serverKind == ServerKind.Jellyfin && runCatching { api.authenticationApi.getQuickConnectEnabled().content }.getOrDefault(false) }
 
-    suspend fun quickConnectInitiate(): QuickConnectResult = api.authenticationApi.initiateQuickConnect().content
+    suspend fun quickConnectInitiate(): QuickConnectResult = io { api.authenticationApi.initiateQuickConnect().content }
 
     suspend fun quickConnectState(secret: String): QuickConnectResult =
-        api.authenticationApi.getQuickConnectState(secret).content
+        io { api.authenticationApi.getQuickConnectState(secret).content }
 
     suspend fun signInWithQuickConnect(serverUrl: String, secret: String) {
         val result = api.authenticationApi.authenticateWithQuickConnect(QuickConnectDto(secret)).content
@@ -281,6 +315,7 @@ class AsterRepository(context: Context, private val store: SessionStore) {
     /** Signs out of the server in use and forgets it; the others stay saved. */
     suspend fun signOut() {
         runCatching { api.sessionApi.reportSessionEnded() }
+        responses.clear()
         currentServerId?.let { id -> update(_servers.value.filterNot { it.id == id }) }
         store.clearCredentials()
         animeLibraryCache = null
@@ -396,43 +431,47 @@ class AsterRepository(context: Context, private val store: SessionStore) {
 
     // MARK: Browsing
 
-    suspend fun views(): List<BaseItemDto> = api.userViewApi.getUserViews(userId = userId).content.items
+    suspend fun views(): List<BaseItemDto> = io { api.userViewApi.getUserViews(userId = userId).content.items }
 
     /**
-     * What a shelf card or a hero page shows of a title: its overview and genres, and the video's streams for the HD or 4K badge.
-     * The Apple apps ask for these (and more) on every list; a list that doesn't gets titles with no description or badge.
+     * What a shelf card or a hero page shows of a title: its overview and genres, and the video's width for the HD or 4K badge.
+     * The width alone, not the media sources or streams: every audio and subtitle track of 150 titles made Home a megabyte,
+     * three quarters of it streams, slow to send, to read and to keep.
      */
-    private val listFields = listOf(ItemFields.OVERVIEW, ItemFields.GENRES, ItemFields.MEDIA_SOURCES)
+    private val listFields = listOf(ItemFields.OVERVIEW, ItemFields.GENRES, ItemFields.WIDTH, ItemFields.HEIGHT)
 
-    suspend fun resume(limit: Int = 20, parentId: UUID? = null): List<BaseItemDto> = api.libraryApi.getResumeItems(
+    /** One picture of each kind a card or hero shows, as the Apple apps ask on every list, not every backdrop a title has. */
+    private val listImages = listOf(ImageType.PRIMARY, ImageType.BACKDROP, ImageType.THUMB, ImageType.LOGO)
+
+    suspend fun resume(limit: Int = 20, parentId: UUID? = null): List<BaseItemDto> = io { api.libraryApi.getResumeItems(
         GetResumeItemsRequest(
             userId = userId, limit = limit, parentId = parentId, fields = listFields,
-            mediaTypes = listOf(org.jellyfin.sdk.model.api.MediaType.VIDEO),
+            mediaTypes = listOf(org.jellyfin.sdk.model.api.MediaType.VIDEO), enableImageTypes = listImages, imageTypeLimit = 1,
         ),
-    ).content.items
+    ).content.items }
 
-    suspend fun nextUp(limit: Int = 20, seriesId: UUID? = null, parentId: UUID? = null): List<BaseItemDto> = api.showApi.getNextUp(
-        GetNextUpRequest(userId = userId, limit = limit, seriesId = seriesId, parentId = parentId, fields = listFields),
-    ).content.items
+    suspend fun nextUp(limit: Int = 20, seriesId: UUID? = null, parentId: UUID? = null): List<BaseItemDto> = io { api.showApi.getNextUp(
+        GetNextUpRequest(userId = userId, limit = limit, seriesId = seriesId, parentId = parentId, fields = listFields, enableImageTypes = listImages, imageTypeLimit = 1),
+    ).content.items }
 
     /** Episodes of shows in the library that air soon, soonest first; most are placeholders from the show's schedule rather than files. */
-    suspend fun upcoming(limit: Int = 100): List<BaseItemDto> = api.showApi.getUpcomingEpisodes(
+    suspend fun upcoming(limit: Int = 100): List<BaseItemDto> = io { api.showApi.getUpcomingEpisodes(
         org.jellyfin.sdk.model.api.request.GetUpcomingEpisodesRequest(
             userId = userId, limit = limit, fields = listOf(ItemFields.OVERVIEW, ItemFields.GENRES),
             enableImageTypes = listOf(ImageType.PRIMARY, ImageType.BACKDROP, ImageType.THUMB, ImageType.LOGO), imageTypeLimit = 1,
         ),
-    ).content.items
+    ).content.items }
 
-    suspend fun latest(parentId: UUID?, limit: Int = 20, kinds: List<BaseItemKind>? = null): List<BaseItemDto> = api.libraryApi.getLatestMedia(
+    suspend fun latest(parentId: UUID?, limit: Int = 20, kinds: List<BaseItemKind>? = null): List<BaseItemDto> = io { api.libraryApi.getLatestMedia(
         userId = userId, parentId = parentId, limit = limit, includeItemTypes = kinds,
-        fields = listFields,
-    ).content
+        fields = listFields, enableImageTypes = listImages, imageTypeLimit = 1,
+    ).content }
 
     /**
      * The newest series, by when they were added, across these libraries (everywhere when [libraryIds] holds null). `latest`
      * filtered to series returns nothing on a Jellyfin server, so this is an ordinary search sorted by date added.
      */
-    suspend fun recentlyAddedShows(libraryIds: List<UUID?>, limit: Int = 20): List<BaseItemDto> = coroutineScope {
+    suspend fun recentlyAddedShows(libraryIds: List<UUID?>, limit: Int = 20): List<BaseItemDto> = io { coroutineScope {
         libraryIds.map { parent ->
             async {
                 runCatching {
@@ -440,21 +479,21 @@ class AsterRepository(context: Context, private val store: SessionStore) {
                         GetItemsRequest(
                             userId = userId, parentId = parent, recursive = true, includeItemTypes = listOf(BaseItemKind.SERIES),
                             sortBy = listOf(ItemSortBy.DATE_CREATED), sortOrder = listOf(SortOrder.DESCENDING), limit = limit,
-                            fields = listFields + ItemFields.DATE_CREATED,
+                            fields = listFields + ItemFields.DATE_CREATED, enableImageTypes = listImages, imageTypeLimit = 1,
                         ),
                     ).content.items
                 }.getOrDefault(emptyList())
             }
         }.awaitAll().flatten().sortedByDescending { it.dateCreated }.take(limit)
-    }
+    } }
 
     /** The movies and shows a person is in, the newest first, for their page. */
-    suspend fun filmography(personId: UUID): List<BaseItemDto> = api.libraryApi.getItems(
+    suspend fun filmography(personId: UUID): List<BaseItemDto> = io { api.libraryApi.getItems(
         GetItemsRequest(
             userId = userId, recursive = true, includeItemTypes = listOf(BaseItemKind.MOVIE, BaseItemKind.SERIES), personIds = listOf(personId),
             sortBy = listOf(ItemSortBy.PREMIERE_DATE), sortOrder = listOf(SortOrder.DESCENDING), fields = listFields,
         ),
-    ).content.items
+    ).content.items }
 
     /** The official ratings of the server's movies and shows, the most used first, for a channel's rating filter. */
     suspend fun videoRatings(): List<String> = allItems(
@@ -475,19 +514,19 @@ class AsterRepository(context: Context, private val store: SessionStore) {
 
     /** The server's user names, for restricting a channel to some of them; only an administrator may list them. */
     suspend fun userNames(): List<String> =
-        runCatching { api.userApi.getUsers().content.mapNotNull { it.name } }.getOrDefault(emptyList()).sortedWith(String.CASE_INSENSITIVE_ORDER)
+        io { runCatching { api.userApi.getUsers().content.mapNotNull { it.name } }.getOrDefault(emptyList()).sortedWith(String.CASE_INSENSITIVE_ORDER) }
 
     /** A new public video playlist holding [itemIds], as a channel's playlist; its id. */
     suspend fun createVideoPlaylist(name: String, itemIds: List<UUID>): UUID =
-        api.playlistApi.createPlaylist(
+        io { api.playlistApi.createPlaylist(
             org.jellyfin.sdk.model.api.CreatePlaylistDto(name = name, ids = itemIds, users = emptyList(), userId = userId, mediaType = org.jellyfin.sdk.model.api.MediaType.VIDEO, isPublic = true),
         ).content.id.let { id ->
             // The server answers with 32 hex digits, no dashes.
             UUID.fromString(if (id.length == 32) "${id.substring(0, 8)}-${id.substring(8, 12)}-${id.substring(12, 16)}-${id.substring(16, 20)}-${id.substring(20)}" else id)
-        }
+        } }
 
     /** A new private video playlist holding [itemIds], from Add to Playlist. Emby reads the details from the query, not a body. */
-    suspend fun createPlaylist(name: String, itemIds: List<UUID>) {
+    suspend fun createPlaylist(name: String, itemIds: List<UUID>) = io {
         if (serverKind == ServerKind.Emby) {
             serverRequest("POST", "/Playlists?Name=${android.net.Uri.encode(name)}&Ids=${itemIds.joinToString(",") { wire(it) }}&UserId=${checkNotNull(session).userId}&MediaType=Video")
         } else {
@@ -502,22 +541,22 @@ class AsterRepository(context: Context, private val store: SessionStore) {
     }
 
     /** The version of the server in use, for Account. */
-    suspend fun serverVersion(): String? = runCatching { api.systemApi.getPublicSystemInfo().content.version }.getOrNull()
+    suspend fun serverVersion(): String? = io { runCatching { api.systemApi.getPublicSystemInfo().content.version }.getOrNull() }
 
     /** Whether this account can set up channels: the administrator, or anyone on Plex, where a playlist is its maker's own. */
     suspend fun canEditChannels(): Boolean = serverKind == ServerKind.Plex || isAdministrator()
 
     /** Whether this account is the server's administrator, who alone can change the tags that make a playlist a channel. */
     suspend fun isAdministrator(): Boolean =
-        runCatching { api.userApi.getCurrentUser().content.policy?.isAdministrator == true }.getOrDefault(false)
+        io { runCatching { api.userApi.getCurrentUser().content.policy?.isAdministrator == true }.getOrDefault(false) }
 
     /** The parental controls on this account, read fresh so an administrator's change counts on the next visit. */
     suspend fun contentPolicy(): com.astermediaplayer.astermediaplayer.data.channels.ContentPolicy? =
-        api.userApi.getCurrentUser().content.policy?.let { com.astermediaplayer.astermediaplayer.data.channels.ContentPolicy.from(it) }
+        io { api.userApi.getCurrentUser().content.policy?.let { com.astermediaplayer.astermediaplayer.data.channels.ContentPolicy.from(it) } }
 
     /** The ratings the server knows and how they rank. */
     suspend fun parentalRatings(): List<com.astermediaplayer.astermediaplayer.data.channels.RatingRank> =
-        api.localizationApi.getParentalRatings().content.map { com.astermediaplayer.astermediaplayer.data.channels.RatingRank.from(it) }
+        io { api.localizationApi.getParentalRatings().content.map { com.astermediaplayer.astermediaplayer.data.channels.RatingRank.from(it) } }
 
     /** The user's settings on the server (Jellyfin's or Emby's), as it sent them; null on Plex, which has none. */
     suspend fun userConfiguration(): org.json.JSONObject? {
@@ -535,7 +574,7 @@ class AsterRepository(context: Context, private val store: SessionStore) {
      * Sets an item's tags, as the Apple apps do: its own record read back with the tags replaced and posted, so everything
      * else on it stays as it was. The server refuses anyone but an administrator.
      */
-    suspend fun setTags(itemId: UUID, tags: List<String>) {
+    suspend fun setTags(itemId: UUID, tags: List<String>) = io {
         val record = api.libraryApi.getItem(itemId = itemId, userId = userId).content
         api.itemUpdateApi.updateItem(itemId, record.copy(tags = tags))
     }
@@ -555,14 +594,14 @@ class AsterRepository(context: Context, private val store: SessionStore) {
     // MARK: Channel sources
 
     /** The user's video playlists, with their tags: the channels among them are tagged `aster:channel`. */
-    suspend fun videoPlaylists(): List<BaseItemDto> = playlists(
+    suspend fun videoPlaylists(): List<BaseItemDto> = io { playlists(
         org.jellyfin.sdk.model.api.MediaType.VIDEO,
         GetItemsRequest(
             userId = userId, recursive = true, includeItemTypes = listOf(BaseItemKind.PLAYLIST),
             sortBy = listOf(ItemSortBy.SORT_NAME), sortOrder = listOf(SortOrder.ASCENDING),
             fields = listOf(ItemFields.TAGS, ItemFields.CHILD_COUNT, ItemFields.OVERVIEW),
         ),
-    )
+    ) }
 
     /**
      * The playlists [request] finds of one [mediaType]. Emby gives a playlist no media type, and asked for one drops the playlist
@@ -570,8 +609,8 @@ class AsterRepository(context: Context, private val store: SessionStore) {
      * either. As the Windows app.
      */
     private suspend fun playlists(mediaType: org.jellyfin.sdk.model.api.MediaType, request: GetItemsRequest): List<BaseItemDto> {
-        if (serverKind != ServerKind.Emby) return api.libraryApi.getItems(request.copy(mediaTypes = listOf(mediaType))).content.items
-        val found = api.libraryApi.getItems(request.copy(mediaTypes = null, startIndex = null, limit = null)).content.items.filter { it.type == BaseItemKind.PLAYLIST }
+        if (serverKind != ServerKind.Emby) return io { api.libraryApi.getItems(request.copy(mediaTypes = listOf(mediaType))).content.items }
+        val found = io { api.libraryApi.getItems(request.copy(mediaTypes = null, startIndex = null, limit = null)).content.items.filter { it.type == BaseItemKind.PLAYLIST } }
         return kotlinx.coroutines.coroutineScope {
             found.map { playlist ->
                 async {
@@ -587,16 +626,16 @@ class AsterRepository(context: Context, private val store: SessionStore) {
     private val channelImages = listOf(ImageType.PRIMARY, ImageType.BACKDROP, ImageType.THUMB, ImageType.LOGO)
 
     /** A playlist's movies, episodes and clips, tagged and ready for the schedule. */
-    suspend fun channelPlaylistItems(playlistId: UUID): List<BaseItemDto> = api.playlistApi.getPlaylistItems(
+    suspend fun channelPlaylistItems(playlistId: UUID): List<BaseItemDto> = io { api.playlistApi.getPlaylistItems(
         playlistId = playlistId, userId = userId, fields = channelFields, enableImages = true, enableUserData = false,
         imageTypeLimit = 1, enableImageTypes = channelImages,
-    ).content.items
+    ).content.items }
 
     /** Every item the request finds, 500 at a time. */
     private suspend fun allItems(base: GetItemsRequest): List<BaseItemDto> {
         val found = mutableListOf<BaseItemDto>()
         while (true) {
-            val result = api.libraryApi.getItems(base.copy(startIndex = found.size, limit = 500)).content
+            val result = io { api.libraryApi.getItems(base.copy(startIndex = found.size, limit = 500)).content }
             found += result.items
             if (result.items.size < 500 || found.size >= result.totalRecordCount) break
         }
@@ -608,17 +647,17 @@ class AsterRepository(context: Context, private val store: SessionStore) {
     )
 
     /** The genres, studios and collections of the server's movies and shows, by name, for channels filled from them. */
-    suspend fun videoGenres(): List<BaseItemDto> = api.genreApi.getGenres(
+    suspend fun videoGenres(): List<BaseItemDto> = io { api.genreApi.getGenres(
         userId = userId, includeItemTypes = listOf(BaseItemKind.MOVIE, BaseItemKind.SERIES), sortBy = listOf(ItemSortBy.SORT_NAME),
-    ).content.items
+    ).content.items }
 
-    suspend fun videoStudios(): List<BaseItemDto> = api.studioApi.getStudios(
+    suspend fun videoStudios(): List<BaseItemDto> = io { api.studioApi.getStudios(
         userId = userId, includeItemTypes = listOf(BaseItemKind.MOVIE, BaseItemKind.SERIES),
-    ).content.items
+    ).content.items }
 
-    suspend fun collections(): List<BaseItemDto> = api.libraryApi.getItems(
+    suspend fun collections(): List<BaseItemDto> = io { api.libraryApi.getItems(
         GetItemsRequest(userId = userId, recursive = true, includeItemTypes = listOf(BaseItemKind.BOX_SET), sortBy = listOf(ItemSortBy.SORT_NAME)),
-    ).content.items
+    ).content.items }
 
     /**
      * The movies and series in any of [genreIds], or from any of [studioIds] (ids, not names, so a name with "&" in it
@@ -648,12 +687,12 @@ class AsterRepository(context: Context, private val store: SessionStore) {
 
     /** The server's TV channels with what's on each now, in the guide's order: favourites first, then by number. */
     suspend fun liveChannels(): List<BaseItemDto> {
-        val channels = api.liveTvApi.getLiveTvChannels(
+        val channels = io { api.liveTvApi.getLiveTvChannels(
             org.jellyfin.sdk.model.api.request.GetLiveTvChannelsRequest(
                 userId = userId, addCurrentProgram = true, limit = 500,
                 fields = listOf(ItemFields.OVERVIEW),
             ),
-        ).content.items
+        ).content.items }
         return guideOrder(withAiringNow(channels))
     }
 
@@ -684,39 +723,39 @@ class AsterRepository(context: Context, private val store: SessionStore) {
     )
 
     /** The programme on [channelId] now, for the paused player. */
-    suspend fun airingNow(channelId: UUID): BaseItemDto? = runCatching {
+    suspend fun airingNow(channelId: UUID): BaseItemDto? = io { runCatching {
         api.liveTvApi.getLiveTvPrograms(
             org.jellyfin.sdk.model.api.request.GetLiveTvProgramsRequest(
                 userId = userId, channelIds = listOf(channelId), isAiring = true, limit = 1,
                 fields = listOf(ItemFields.OVERVIEW),
             ),
         ).content.items.firstOrNull()
-    }.getOrNull()
+    }.getOrNull() }
 
     /** What's on now across channels, optionally just one kind of programme. */
     suspend fun recommendedPrograms(
         limit: Int = 24, movie: Boolean? = null, sports: Boolean? = null, kids: Boolean? = null, news: Boolean? = null,
-    ): List<BaseItemDto> = api.liveTvApi.getRecommendedPrograms(
+    ): List<BaseItemDto> = io { api.liveTvApi.getRecommendedPrograms(
         org.jellyfin.sdk.model.api.request.GetRecommendedProgramsRequest(
             userId = userId, limit = limit, isAiring = true, isMovie = movie, isSports = sports, isKids = kids, isNews = news,
             enableImageTypes = listOf(ImageType.PRIMARY, ImageType.THUMB, ImageType.BACKDROP),
             fields = listOf(ItemFields.OVERVIEW, ItemFields.CHANNEL_INFO),
         ),
-    ).content.items
+    ).content.items }
 
-    suspend fun recordings(limit: Int = 100): List<BaseItemDto> = api.liveTvApi.getRecordings(
+    suspend fun recordings(limit: Int = 100): List<BaseItemDto> = io { api.liveTvApi.getRecordings(
         org.jellyfin.sdk.model.api.request.GetRecordingsRequest(userId = userId, limit = limit, fields = listOf(ItemFields.OVERVIEW)),
-    ).content.items
+    ).content.items }
 
     /** A channel's programmes overlapping [from, to] (seconds since 1970), in order, with the pictures and overview the guide's cells and the program page start from. */
-    suspend fun livePrograms(channelId: UUID, from: Double, to: Double): List<BaseItemDto> = api.liveTvApi.getLiveTvPrograms(
+    suspend fun livePrograms(channelId: UUID, from: Double, to: Double): List<BaseItemDto> = io { api.liveTvApi.getLiveTvPrograms(
         org.jellyfin.sdk.model.api.request.GetLiveTvProgramsRequest(
             channelIds = listOf(channelId), userId = userId,
             minEndDate = utc(from), maxStartDate = utc(to), sortBy = listOf(ItemSortBy.START_DATE), limit = 200,
             enableImages = true, imageTypeLimit = 1, enableImageTypes = listOf(ImageType.PRIMARY, ImageType.THUMB),
             fields = listOf(ItemFields.OVERVIEW), enableUserData = false,
         ),
-    ).content.items
+    ).content.items }
 
     /** A moment as the SDK wants a date: the device's own zone, which it sends to the server as the instant it is. */
     private fun utc(seconds: Double): java.time.LocalDateTime = java.time.LocalDateTime.ofInstant(java.time.Instant.ofEpochSecond(seconds.toLong()), java.time.ZoneId.systemDefault())
@@ -743,28 +782,28 @@ class AsterRepository(context: Context, private val store: SessionStore) {
     }
 
     /** A title's trickplay listing, which the plain item fetch leaves out. */
-    suspend fun trickplayOf(id: UUID): BaseItemDto? = runCatching {
+    suspend fun trickplayOf(id: UUID): BaseItemDto? = io { runCatching {
         api.libraryApi.getItems(GetItemsRequest(userId = userId, ids = listOf(id), fields = listOf(ItemFields.TRICKPLAY))).content.items.firstOrNull()
-    }.getOrNull()
+    }.getOrNull() }
 
     /** The programme last opened from a guide or list, so its page opens with what that already showed while the full record loads. */
     val openedPrograms = HashMap<String, BaseItemDto>()
 
     /** One programme with everything the server knows of it, and whether it's set to record. */
-    suspend fun liveProgram(id: String): BaseItemDto = api.liveTvApi.getProgram(id, userId).content
+    suspend fun liveProgram(id: String): BaseItemDto = io { api.liveTvApi.getProgram(id, userId).content }
 
     suspend fun timers(): List<org.jellyfin.sdk.model.api.TimerInfoDto> =
-        api.liveTvApi.getTimers(isScheduled = true).content.items.sortedBy { it.startDate }
+        io { api.liveTvApi.getTimers(isScheduled = true).content.items.sortedBy { it.startDate } }
 
-    suspend fun seriesTimers(): List<org.jellyfin.sdk.model.api.SeriesTimerInfoDto> = api.liveTvApi.getSeriesTimers().content.items
+    suspend fun seriesTimers(): List<org.jellyfin.sdk.model.api.SeriesTimerInfoDto> = io { api.liveTvApi.getSeriesTimers().content.items }
 
-    suspend fun seriesTimer(id: String): org.jellyfin.sdk.model.api.SeriesTimerInfoDto = api.liveTvApi.getSeriesTimer(id).content
+    suspend fun seriesTimer(id: String): org.jellyfin.sdk.model.api.SeriesTimerInfoDto = io { api.liveTvApi.getSeriesTimer(id).content }
 
-    suspend fun updateSeriesTimer(timer: org.jellyfin.sdk.model.api.SeriesTimerInfoDto) { api.liveTvApi.updateSeriesTimer(timer.id!!, timer) }
+    suspend fun updateSeriesTimer(timer: org.jellyfin.sdk.model.api.SeriesTimerInfoDto) = io { api.liveTvApi.updateSeriesTimer(timer.id!!, timer) }
 
-    suspend fun cancelTimer(id: String) { api.liveTvApi.cancelTimer(id) }
+    suspend fun cancelTimer(id: String) = io { api.liveTvApi.cancelTimer(id) }
 
-    suspend fun cancelSeriesTimer(id: String) { api.liveTvApi.cancelSeriesTimer(id) }
+    suspend fun cancelSeriesTimer(id: String) = io { api.liveTvApi.cancelSeriesTimer(id) }
 
     /** Schedules a recording of one programme using the server's defaults, posting them back as the server's own clients do. */
     suspend fun recordProgram(programId: String) = postDefaults(programId, "/LiveTv/Timers")
@@ -783,7 +822,7 @@ class AsterRepository(context: Context, private val store: SessionStore) {
     }
 
     /** Lets go of a channel's tuner once playback of it ends. */
-    suspend fun closeLiveStream(liveStreamId: String) {
+    suspend fun closeLiveStream(liveStreamId: String) = io {
         runCatching { api.mediaInfoApi.closeLiveStream(liveStreamId) }
     }
 
@@ -811,7 +850,7 @@ class AsterRepository(context: Context, private val store: SessionStore) {
             )
             return ItemPage(all.drop(startIndex).take(limit), all.size)
         }
-        val result = api.libraryApi.getItems(
+        val result = io { api.libraryApi.getItems(
             GetItemsRequest(
                 userId = userId, recursive = true, includeItemTypes = listOf(kind),
                 mediaTypes = if (kind == BaseItemKind.PLAYLIST) listOf(org.jellyfin.sdk.model.api.MediaType.AUDIO) else null,
@@ -822,45 +861,45 @@ class AsterRepository(context: Context, private val store: SessionStore) {
                 },
                 fields = listOf(ItemFields.OVERVIEW, ItemFields.GENRES),
             ),
-        ).content
+        ).content }
         return ItemPage(result.items, result.totalRecordCount)
     }
 
     /** Artists credited on albums, paged. */
     suspend fun albumArtists(startIndex: Int, limit: Int = 100): ItemPage {
-        val result = api.artistApi.getAlbumArtists(
+        val result = io { api.artistApi.getAlbumArtists(
             userId = userId, startIndex = startIndex, limit = limit,
             fields = listOf(ItemFields.OVERVIEW), sortBy = listOf(ItemSortBy.SORT_NAME), sortOrder = listOf(SortOrder.ASCENDING),
-        ).content
+        ).content }
         return ItemPage(result.items, result.totalRecordCount)
     }
 
     /** An album's songs in disc and track order. */
-    suspend fun albumTracks(albumId: UUID): List<BaseItemDto> = api.libraryApi.getItems(
+    suspend fun albumTracks(albumId: UUID): List<BaseItemDto> = io { api.libraryApi.getItems(
         GetItemsRequest(
             userId = userId, parentId = albumId, includeItemTypes = listOf(BaseItemKind.AUDIO),
             sortBy = listOf(ItemSortBy.PARENT_INDEX_NUMBER, ItemSortBy.INDEX_NUMBER, ItemSortBy.SORT_NAME),
         ),
-    ).content.items
+    ).content.items }
 
     /** Albums an artist is credited on, newest first. */
-    suspend fun artistAlbums(artistId: UUID): List<BaseItemDto> = api.libraryApi.getItems(
+    suspend fun artistAlbums(artistId: UUID): List<BaseItemDto> = io { api.libraryApi.getItems(
         GetItemsRequest(
             userId = userId, albumArtistIds = listOf(artistId), includeItemTypes = listOf(BaseItemKind.MUSIC_ALBUM), recursive = true,
             sortBy = listOf(ItemSortBy.PRODUCTION_YEAR, ItemSortBy.SORT_NAME), sortOrder = listOf(SortOrder.DESCENDING),
         ),
-    ).content.items
+    ).content.items }
 
     /** Every song by an artist, in album order, for Play and Shuffle. */
-    suspend fun artistTracks(artistId: UUID, limit: Int = 400): List<BaseItemDto> = api.libraryApi.getItems(
+    suspend fun artistTracks(artistId: UUID, limit: Int = 400): List<BaseItemDto> = io { api.libraryApi.getItems(
         GetItemsRequest(
             userId = userId, artistIds = listOf(artistId), includeItemTypes = listOf(BaseItemKind.AUDIO), recursive = true,
             sortBy = listOf(ItemSortBy.ALBUM, ItemSortBy.PARENT_INDEX_NUMBER, ItemSortBy.INDEX_NUMBER), limit = limit,
         ),
-    ).content.items
+    ).content.items }
 
     suspend fun playlistItems(playlistId: UUID): List<BaseItemDto> =
-        api.playlistApi.getPlaylistItems(playlistId = playlistId, userId = userId).content.items
+        io { api.playlistApi.getPlaylistItems(playlistId = playlistId, userId = userId).content.items }
 
     /** Takes entries out of a playlist, by their place in it ([BaseItemDto.playlistItemId]), not the titles' own ids. */
     suspend fun removeFromPlaylist(playlistId: UUID, entryIds: List<String>) {
@@ -874,12 +913,12 @@ class AsterRepository(context: Context, private val store: SessionStore) {
 
     /** Songs the server thinks go with an item: a song, album, artist or genre. */
     suspend fun instantMix(itemId: UUID, limit: Int = 100): List<BaseItemDto> =
-        api.instantMixApi.getInstantMixFromItem(itemId = itemId, userId = userId, limit = limit).content.items
+        io { api.instantMixApi.getInstantMixFromItem(itemId = itemId, userId = userId, limit = limit).content.items }
 
     /** A song's lyrics: timed lines when a synced file exists, plain lines otherwise; null when the server has none. */
-    suspend fun lyrics(itemId: UUID): org.jellyfin.sdk.model.api.LyricDto? = runCatching {
+    suspend fun lyrics(itemId: UUID): org.jellyfin.sdk.model.api.LyricDto? = io { runCatching {
         if (serverKind == ServerKind.Emby) embyLyrics(itemId) else api.lyricApi.getLyrics(itemId).content
-    }.getOrNull()
+    }.getOrNull() }
 
     /**
      * Emby has no lyrics route: it lists a song's lyrics (an .lrc beside it, or the file's own tag) as a subtitle stream,
@@ -909,7 +948,7 @@ class AsterRepository(context: Context, private val store: SessionStore) {
     suspend fun bookLibraries(): List<BaseItemDto> = views().filter { it.collectionType == CollectionType.BOOKS }
 
     /** Every book in [libraries], files grouped into books and authors and series read from the folders. */
-    suspend fun audiobooks(libraries: List<BaseItemDto>): List<Audiobook> = coroutineScope {
+    suspend fun audiobooks(libraries: List<BaseItemDto>): List<Audiobook> = io { coroutineScope {
         libraries.map { library ->
             async {
                 val folders = async {
@@ -929,11 +968,11 @@ class AsterRepository(context: Context, private val store: SessionStore) {
                 Audiobook.group(files, folders.await())
             }
         }.awaitAll().flatten()
-    }
+    } }
 
     /** The parts' listening state, fresh from the server. */
     suspend fun audiobookParts(ids: List<UUID>): List<BaseItemDto> =
-        api.libraryApi.getItems(GetItemsRequest(userId = userId, ids = ids, fields = Audiobook.Fields)).content.items
+        io { api.libraryApi.getItems(GetItemsRequest(userId = userId, ids = ids, fields = Audiobook.Fields)).content.items }
 
     /** A book's cover: its first file's square picture. */
     fun bookCoverUrl(book: Audiobook, maxWidth: Int): String? =
@@ -945,10 +984,10 @@ class AsterRepository(context: Context, private val store: SessionStore) {
 
     /** A title's theme songs and videos, inherited from its series when it has none of its own. */
     suspend fun themeSongs(itemId: UUID): List<BaseItemDto> =
-        runCatching { api.libraryApi.getThemeSongs(itemId = itemId, userId = userId, inheritFromParent = true).content.items }.getOrDefault(emptyList())
+        io { runCatching { api.libraryApi.getThemeSongs(itemId = itemId, userId = userId, inheritFromParent = true).content.items }.getOrDefault(emptyList()) }
 
     suspend fun themeVideos(itemId: UUID): List<BaseItemDto> =
-        runCatching { api.libraryApi.getThemeVideos(itemId = itemId, userId = userId, inheritFromParent = true).content.items }.getOrDefault(emptyList())
+        io { runCatching { api.libraryApi.getThemeVideos(itemId = itemId, userId = userId, inheritFromParent = true).content.items }.getOrDefault(emptyList()) }
 
     fun audioStreamUrl(itemId: UUID): String = api.audioApi.getAudioStreamUrl(itemId = itemId, static = true)
 
@@ -997,6 +1036,15 @@ class AsterRepository(context: Context, private val store: SessionStore) {
         val server = currentServerId ?: return null
         val asked = trackingFeaturesAskedAt[server]
         if (asked != null && System.currentTimeMillis() - asked < maxAgeMs) return trackingFeaturesByServer[server]
+        // One request for everyone asking at once (the menu, Discover and Seerr all ask at launch).
+        return trackingFeaturesLock.withLock { trackingFeaturesNow(server, maxAgeMs) }
+    }
+
+    private val trackingFeaturesLock = kotlinx.coroutines.sync.Mutex()
+
+    private suspend fun trackingFeaturesNow(server: String, maxAgeMs: Long): TrackingFeatures? {
+        val asked = trackingFeaturesAskedAt[server]
+        if (asked != null && System.currentTimeMillis() - asked < maxAgeMs) return trackingFeaturesByServer[server]
         return withContext(Dispatchers.IO) {
             val answer = runCatching {
                 http.newCall(Request.Builder().url(serverUrl.trimEnd('/') + "/AsterTracking/Features").header("Authorization", authorizationHeader()).build()).execute().use { r ->
@@ -1022,14 +1070,122 @@ class AsterRepository(context: Context, private val store: SessionStore) {
     }
 
     /** The signed-in person's Discover page, built by the server; [fresh] has it built again now (pull to refresh). */
-    suspend fun discoverHome(fresh: Boolean = false): DiscoverPage =
-        DiscoverPage.parse(serverRequest("GET", "/AsterTracking/Discover/Home" + if (fresh) "?fresh=true" else ""))
+    suspend fun discoverHome(fresh: Boolean = false): DiscoverPage {
+        val text = serverRequest("GET", "/AsterTracking/Discover/Home" + if (fresh) "?fresh=true" else "")
+        return withContext(Dispatchers.Default) { DiscoverPage.parse(text) }.also { keepSnapshot("discover-home", text) }
+    }
+
+    /** The server's Discover page as it was last time, to show while it's asked again. */
+    suspend fun keptDiscoverHome(): DiscoverPage? = snapshot("discover-home")?.let { withContext(Dispatchers.Default) { runCatching { DiscoverPage.parse(it) }.getOrNull() } }
 
     /** A Discover poster's address: a web one as it is, a path on the server with the sign-in on it (pictures can't send headers). */
     fun discoverPosterUrl(poster: String?): String? {
         val url = DiscoverPage.posterUrl(poster, serverUrl) ?: return null
         return if (url.startsWith(serverUrl.trimEnd('/'))) withToken(url) else url
     }
+
+    /** Seerr as the signed-in person reaches it through the plugin: who they are there, kept per server; see [seerr]. */
+    data class SeerrAccount(val client: com.astermediaplayer.astermediaplayer.data.seerr.SeerrClient, val userId: Int, val name: String, val managesRequests: Boolean)
+
+    private val seerrAccounts = java.util.concurrent.ConcurrentHashMap<String, SeerrAccount>()
+
+    /**
+     * Seerr through the server's plugin, or null when requests are off (no plugin, or Seerr not turned on). Its user is asked
+     * once per server; a Seerr briefly out of reach still gives the account, to try again as pages ask.
+     */
+    suspend fun seerr(): SeerrAccount? {
+        val features = trackingFeatures() ?: return null
+        if (!features.seerrEnabled) return null
+        val server = currentServerId ?: return null
+        seerrAccounts[server]?.let { return it }
+        val base = seerrBase(features.seerrProxy)
+        val client = com.astermediaplayer.astermediaplayer.data.seerr.SeerrClient { method, path, body -> seerrSend(base, method, path, body) }
+        return try {
+            val me = client.me()
+            SeerrAccount(client, me.id, me.displayName.orEmpty(), me.managesRequests).also { seerrAccounts[server] = it }
+        } catch (e: com.astermediaplayer.astermediaplayer.data.seerr.SeerrException.Off) {
+            null
+        } catch (e: Exception) {
+            com.astermediaplayer.astermediaplayer.data.diagnostics.DebugLog.note("Seerr", "Its user couldn't be read: ${e.message}")
+            SeerrAccount(client, 0, "", false)
+        }
+    }
+
+    /** Where a title stands on one of the person's watchlists: [on] is null when it couldn't be told. */
+    data class WatchlistState(val service: String, val linked: Boolean, val on: Boolean?)
+
+    /**
+     * Where a title stands on the watchlists the server can add to (the plugin's `/AsterTracking/Watchlist`), linked ones
+     * and not; empty without the plugin or on one too old to add to watchlists.
+     */
+    suspend fun watchlistState(mediaType: String, ids: Map<String, String>): List<WatchlistState> {
+        val features = trackingFeatures() ?: return emptyList()
+        if (features.watchlist.isEmpty()) return emptyList()
+        val query = (listOf("mediaType" to mediaType) + ids.filterValues { it.isNotBlank() }.toList())
+            .joinToString("&") { (k, v) -> "$k=${android.net.Uri.encode(v)}" }
+        return runCatching {
+            val reply = JSONObject(serverRequest("GET", "/AsterTracking/Watchlist?$query"))
+            val list = reply.ci("Services") as? org.json.JSONArray ?: return@runCatching emptyList()
+            (0 until list.length()).mapNotNull { list.optJSONObject(it) }.map { o ->
+                WatchlistState((o.ci("Service") as? String).orEmpty(), o.ci("Linked") == true, o.ci("On") as? Boolean)
+            }.filter { it.service in features.watchlist }
+        }.onFailure { android.util.Log.w("Aster", "Watchlist state: $it") }.getOrDefault(emptyList())
+    }
+
+    /** Puts a title on a service's watchlist ([on]) or takes it off; whether it's on it now. Throws with words to show. */
+    suspend fun setWatchlist(service: String, on: Boolean, mediaType: String, anime: Boolean, ids: Map<String, String>, title: String?, year: Int?): Boolean =
+        withContext(Dispatchers.IO) {
+            val body = JSONObject().put("MediaType", mediaType).put("Anime", anime)
+                .put("Ids", JSONObject(ids.filterValues { it.isNotBlank() }))
+            title?.let { body.put("Title", it) }
+            year?.let { body.put("Year", it) }
+            val request = Request.Builder().url(serverUrl.trimEnd('/') + "/AsterTracking/Watchlist/" + android.net.Uri.encode(service))
+                .header("Authorization", authorizationHeader())
+                .method(if (on) "POST" else "DELETE", body.toString().toRequestBody("application/json".toMediaType()))
+                .build()
+            http.newCall(request).execute().use { r ->
+                val text = r.body.string()
+                if (r.isSuccessful) return@use runCatching { JSONObject(text).ci("On") as? Boolean }.getOrNull() ?: on
+                val name = service.replaceFirstChar { it.uppercase() }
+                error(when (r.code) {
+                    409 -> "Link $name first, in Settings ▸ Tracking."
+                    410 -> "$name needs linking again."
+                    422 -> "$name doesn't know this title."
+                    502 -> "$name couldn't be reached. Try again."
+                    else -> "The server said ${r.code}."
+                })
+            }
+        }
+
+    /** "{server}/AsterTracking/Seerr": where Seerr's `/api/v1/…` paths go on. */
+    private fun seerrBase(proxy: String?): String {
+        var path = proxy ?: "/AsterTracking/Seerr/api/v1"
+        if (path.endsWith("/api/v1")) path = path.removeSuffix("/api/v1")
+        path = path.trimEnd('/')
+        return serverUrl.trimEnd('/') + (if (path.startsWith("/")) path else "/$path")
+    }
+
+    /** One call on Seerr's API through the plugin: its own paths, with the Jellyfin authorization and no Seerr cookie. */
+    private suspend fun seerrSend(base: String, method: String, path: String, body: String?): Pair<Int, String> = withContext(Dispatchers.IO) {
+        val auth = authorizationHeader()
+        val builder = Request.Builder().url("$base/api/v1$path").header("Accept", "application/json")
+            .header("Authorization", auth).header("X-Emby-Authorization", auth)
+        if (method == "GET") builder.get()
+        else builder.method(method, (body ?: "").toRequestBody("application/json".toMediaType()))
+        try {
+            http.newCall(builder.build()).execute().use { r -> r.code to r.body.string() }
+        } catch (e: java.io.IOException) {
+            throw com.astermediaplayer.astermediaplayer.data.seerr.SeerrException.Unreachable()
+        }
+    }
+
+    /** The anime libraries' series ids, for telling anime episodes from others. */
+    suspend fun animeSeriesIds(): Set<UUID> = io { runCatching {
+        val libraries = animeLibraries(views())
+        libraries.flatMap { lib ->
+            api.libraryApi.getItems(GetItemsRequest(userId = userId, parentId = lib.id, includeItemTypes = listOf(BaseItemKind.SERIES), recursive = true, enableImages = false)).content.items.map { it.id }
+        }.toSet()
+    }.getOrDefault(emptySet()) }
 
     // MARK: Disc menus (the Aster Disc plugin)
 
@@ -1081,7 +1237,7 @@ class AsterRepository(context: Context, private val store: SessionStore) {
 
     // MARK: OP/ED plugin
 
-    private val http = OkHttpClient.Builder().credentialSafeRedirects().build()
+    private val http = sharedHttp
 
     /** The `MediaBrowser` header the server's own API clients send; plugin endpoints reject a bare token. */
     private fun authorizationHeader(): String {
@@ -1207,7 +1363,7 @@ class AsterRepository(context: Context, private val store: SessionStore) {
     }
 
     /** A library's newest music videos, for a shelf. */
-    suspend fun latestMusicVideos(libraryId: UUID, limit: Int = 20): List<BaseItemDto> = runCatching {
+    suspend fun latestMusicVideos(libraryId: UUID, limit: Int = 20): List<BaseItemDto> = io { runCatching {
         api.libraryApi.getItems(
             GetItemsRequest(
                 userId = userId, parentId = libraryId, recursive = true,
@@ -1216,7 +1372,7 @@ class AsterRepository(context: Context, private val store: SessionStore) {
                 limit = limit,
             ),
         ).content.items
-    }.getOrDefault(emptyList())
+    }.getOrDefault(emptyList()) }
 
     /** The openings and endings in a series' episodes' chapter markers: what the plugin falls back to. */
     suspend fun chapterThemes(seriesId: UUID, episodeCount: Int? = null): List<ThemeClip> {
@@ -1246,7 +1402,7 @@ class AsterRepository(context: Context, private val store: SessionStore) {
         val found = coroutineScope {
             views.filter { it.collectionType == CollectionType.MOVIES || it.collectionType == CollectionType.TVSHOWS }
                 .map { library ->
-                    async {
+                    async(Dispatchers.IO) {
                         val sample = runCatching {
                             api.libraryApi.getItems(
                                 GetItemsRequest(
@@ -1268,7 +1424,7 @@ class AsterRepository(context: Context, private val store: SessionStore) {
     }
 
     /** The newest series and films across the anime libraries; a season that got new episodes shows as its series. */
-    suspend fun recentlyAddedAnime(libraries: List<BaseItemDto>, limit: Int = 20): List<BaseItemDto> = coroutineScope {
+    suspend fun recentlyAddedAnime(libraries: List<BaseItemDto>, limit: Int = 20): List<BaseItemDto> = io { coroutineScope {
         val all = libraries.map { async { runCatching { latest(it.id, limit) }.getOrDefault(emptyList()) } }.awaitAll().flatten()
         val newest = all.sortedByDescending { it.dateCreated }
         val seriesIds = newest.filter { it.type == BaseItemKind.SEASON }.mapNotNull { it.seriesId }.toSet()
@@ -1282,12 +1438,12 @@ class AsterRepository(context: Context, private val store: SessionStore) {
             if (shown.none { it.id == entry.id }) shown += entry
         }
         shown.take(limit)
-    }
+    } }
 
     private val libraryKinds = mutableMapOf<UUID, List<BaseItemKind>>()
 
     suspend fun libraryPage(parentId: UUID, startIndex: Int, limit: Int, kinds: List<BaseItemKind>? = null): ItemPage {
-        val result = api.libraryApi.getItems(
+        val result = io { api.libraryApi.getItems(
             GetItemsRequest(
                 userId = userId,
                 parentId = parentId,
@@ -1304,19 +1460,19 @@ class AsterRepository(context: Context, private val store: SessionStore) {
                 limit = limit,
                 fields = listOf(ItemFields.OVERVIEW),
             ),
-        ).content
+        ).content }
         return ItemPage(result.items, result.totalRecordCount)
     }
 
     /** Every title of a kind across the server, in the order asked for, a page at a time. */
     suspend fun typePage(kind: BaseItemKind, startIndex: Int, limit: Int, sortBy: List<ItemSortBy>, order: SortOrder): ItemPage {
-        val result = api.libraryApi.getItems(
+        val result = io { api.libraryApi.getItems(
             GetItemsRequest(
                 userId = userId, recursive = true, includeItemTypes = listOf(kind),
                 sortBy = sortBy, sortOrder = listOf(order), startIndex = startIndex, limit = limit,
-                fields = listOf(ItemFields.OVERVIEW, ItemFields.SORT_NAME),
+                fields = listOf(ItemFields.OVERVIEW, ItemFields.SORT_NAME), enableImageTypes = listImages, imageTypeLimit = 1,
             ),
-        ).content
+        ).content }
         return ItemPage(result.items, result.totalRecordCount)
     }
 
@@ -1335,26 +1491,27 @@ class AsterRepository(context: Context, private val store: SessionStore) {
             CollectionType.MUSICVIDEOS -> BaseItemKind.MUSIC_VIDEO
             else -> null
         }
-        val result = api.libraryApi.getItems(
+        val result = io { api.libraryApi.getItems(
             GetItemsRequest(
                 userId = userId, parentId = parentId, recursive = kind != null, includeItemTypes = kind?.let { listOf(it) },
                 sortBy = sortBy, sortOrder = listOf(order), startIndex = startIndex, limit = limit,
-                fields = listOf(ItemFields.OVERVIEW, ItemFields.SORT_NAME),
+                fields = listOf(ItemFields.OVERVIEW, ItemFields.SORT_NAME), enableImageTypes = listImages, imageTypeLimit = 1,
             ),
-        ).content
+        ).content }
         return ItemPage(result.items, result.totalRecordCount)
     }
 
     /** The titles marked as favourites, for the Library page's shelf. */
-    suspend fun favoriteTitles(limit: Int = 40): List<BaseItemDto> = api.libraryApi.getItems(
+    suspend fun favoriteTitles(limit: Int = 40): List<BaseItemDto> = io { api.libraryApi.getItems(
         GetItemsRequest(
             userId = userId, recursive = true, filters = listOf(org.jellyfin.sdk.model.api.ItemFilter.IS_FAVORITE),
             includeItemTypes = listOf(BaseItemKind.MOVIE, BaseItemKind.SERIES, BaseItemKind.EPISODE),
             sortBy = listOf(ItemSortBy.SORT_NAME), limit = limit, fields = listOf(ItemFields.OVERVIEW, ItemFields.GENRES),
+            enableImageTypes = listImages, imageTypeLimit = 1,
         ),
-    ).content.items
+    ).content.items }
 
-    suspend fun itemIds(libraryIds: List<UUID>, kind: BaseItemKind): Set<UUID> = coroutineScope {
+    suspend fun itemIds(libraryIds: List<UUID>, kind: BaseItemKind): Set<UUID> = io { coroutineScope {
         libraryIds.map { id ->
             async {
                 runCatching {
@@ -1367,64 +1524,71 @@ class AsterRepository(context: Context, private val store: SessionStore) {
                 }.getOrDefault(emptyList())
             }
         }.awaitAll().flatten().toSet()
-    }
+    } }
 
-    suspend fun item(id: UUID): BaseItemDto = api.libraryApi.getItem(itemId = id, userId = userId).content
+    suspend fun item(id: UUID): BaseItemDto = io { api.libraryApi.getItem(itemId = id, userId = userId).content }
 
     suspend fun seasons(seriesId: UUID): List<BaseItemDto> =
-        api.showApi.getSeasons(seriesId = seriesId, userId = userId).content.items
+        io { api.showApi.getSeasons(seriesId = seriesId, userId = userId, enableImageTypes = listImages, imageTypeLimit = 1).content.items }
 
-    suspend fun episodes(seriesId: UUID, seasonId: UUID?, fields: List<ItemFields> = listOf(ItemFields.OVERVIEW)): List<BaseItemDto> = api.showApi.getEpisodes(
-        seriesId = seriesId, userId = userId, seasonId = seasonId, fields = fields,
-    ).content.items
+    suspend fun episodes(seriesId: UUID, seasonId: UUID?, fields: List<ItemFields> = listOf(ItemFields.OVERVIEW)): List<BaseItemDto> = io { api.showApi.getEpisodes(
+        seriesId = seriesId, userId = userId, seasonId = seasonId, fields = fields, enableImageTypes = listImages, imageTypeLimit = 1,
+    ).content.items }
 
     /** Extras: behind the scenes, trailers, deleted scenes. */
     suspend fun specialFeatures(id: UUID): List<BaseItemDto> =
-        runCatching { api.libraryApi.getSpecialFeatures(itemId = id, userId = userId).content }.getOrDefault(emptyList())
+        io { runCatching { api.libraryApi.getSpecialFeatures(itemId = id, userId = userId).content }.getOrDefault(emptyList()) }
 
     suspend fun similar(id: UUID, limit: Int = 12): List<BaseItemDto> =
-        api.libraryApi.getSimilarItems(itemId = id, userId = userId, limit = limit).content.items
+        io { api.libraryApi.getSimilarItems(itemId = id, userId = userId, limit = limit, fields = listFields).content.items }
 
     suspend fun search(term: String, limit: Int = 60): List<BaseItemDto> {
-        val hints = api.searchApi.getSearchHints(
+        val hints = io { api.searchApi.getSearchHints(
             searchTerm = term, userId = userId, limit = limit,
             includeItemTypes = listOf(
                 BaseItemKind.MOVIE, BaseItemKind.SERIES, BaseItemKind.EPISODE,
                 BaseItemKind.MUSIC_ALBUM, BaseItemKind.MUSIC_ARTIST, BaseItemKind.AUDIO, BaseItemKind.PLAYLIST,
             ),
-        ).content.searchHints
+        ).content.searchHints }
         // Hints are thin; fetch the full items so cards have images and user data.
         if (hints.isEmpty()) return emptyList()
-        return api.libraryApi.getItems(
-            GetItemsRequest(userId = userId, ids = hints.map { it.itemId }, fields = listOf(ItemFields.OVERVIEW)),
-        ).content.items
+        return io { api.libraryApi.getItems(
+            GetItemsRequest(userId = userId, ids = hints.map { it.itemId }, fields = listFields, enableImageTypes = listImages, imageTypeLimit = 1),
+        ).content.items }
     }
 
-    suspend fun setFavorite(id: UUID, favorite: Boolean) {
+    suspend fun setFavorite(id: UUID, favorite: Boolean) = io {
         if (favorite) api.userDataApi.markFavoriteItem(itemId = id, userId = userId)
         else api.userDataApi.unmarkFavoriteItem(itemId = id, userId = userId)
     }
 
-    suspend fun setPlayed(id: UUID, played: Boolean) {
+    suspend fun setPlayed(id: UUID, played: Boolean) = io {
         if (played) api.userDataApi.markPlayedItem(itemId = id, userId = userId)
         else api.userDataApi.markUnplayedItem(itemId = id, userId = userId)
     }
 
     // MARK: Images
 
+    /**
+     * A picture on the server at [maxWidth]: cards (800 wide or less) at quality 80, which is about 40% smaller than the
+     * server's 90 with no difference to see at that size (as the Apple apps ask); larger art at 90.
+     */
+    private fun picture(itemId: UUID, imageType: ImageType, imageIndex: Int? = null, maxWidth: Int, tag: String?): String =
+        api.imageApi.getItemImageUrl(itemId, imageType, imageIndex = imageIndex, maxWidth = maxWidth, tag = tag, quality = if (maxWidth <= 800) 80 else 90)
+
     fun imageUrl(item: BaseItemDto, type: ImageType, maxWidth: Int): String? {
         val tag = item.imageTags?.get(type)
         return when {
-            tag != null -> api.imageApi.getItemImageUrl(item.id, type, maxWidth = maxWidth, tag = tag)
+            tag != null -> picture(item.id, type, maxWidth = maxWidth, tag = tag)
             // Episodes and seasons borrow art from their series.
             type == ImageType.PRIMARY && item.seriesPrimaryImageTag != null && item.seriesId != null ->
-                api.imageApi.getItemImageUrl(item.seriesId!!, type, maxWidth = maxWidth, tag = item.seriesPrimaryImageTag)
+                picture(item.seriesId!!, type, maxWidth = maxWidth, tag = item.seriesPrimaryImageTag)
             type == ImageType.LOGO && item.parentLogoItemId != null && item.parentLogoImageTag != null ->
-                api.imageApi.getItemImageUrl(item.parentLogoItemId!!, type, maxWidth = maxWidth, tag = item.parentLogoImageTag)
+                picture(item.parentLogoItemId!!, type, maxWidth = maxWidth, tag = item.parentLogoImageTag)
             type == ImageType.BACKDROP && !item.backdropImageTags.isNullOrEmpty() ->
-                api.imageApi.getItemImageUrl(item.id, type, imageIndex = 0, maxWidth = maxWidth, tag = item.backdropImageTags!!.first())
+                picture(item.id, type, imageIndex = 0, maxWidth = maxWidth, tag = item.backdropImageTags!!.first())
             type == ImageType.BACKDROP && item.parentBackdropImageTags?.isNotEmpty() == true && item.parentBackdropItemId != null ->
-                api.imageApi.getItemImageUrl(item.parentBackdropItemId!!, type, imageIndex = 0, maxWidth = maxWidth, tag = item.parentBackdropImageTags!!.first())
+                picture(item.parentBackdropItemId!!, type, imageIndex = 0, maxWidth = maxWidth, tag = item.parentBackdropImageTags!!.first())
             else -> null
         }
     }
@@ -1433,15 +1597,15 @@ class AsterRepository(context: Context, private val store: SessionStore) {
     fun seriesPosterUrl(item: BaseItemDto, maxWidth: Int): String? {
         val seriesId = item.seriesId ?: return null
         val tag = item.seriesPrimaryImageTag ?: return null
-        return api.imageApi.getItemImageUrl(seriesId, ImageType.PRIMARY, maxWidth = maxWidth, tag = tag)
+        return picture(seriesId, ImageType.PRIMARY, maxWidth = maxWidth, tag = tag)
     }
 
     /** An item's primary picture by its id and tag, for art that belongs to another item (a song's album). */
     fun imageUrlFor(id: UUID, tag: String, maxWidth: Int, type: ImageType = ImageType.PRIMARY): String =
-        api.imageApi.getItemImageUrl(id, type, maxWidth = maxWidth, tag = tag)
+        picture(id, type, maxWidth = maxWidth, tag = tag)
 
     fun personImageUrl(person: BaseItemPerson, maxWidth: Int): String? =
-        person.primaryImageTag?.let { api.imageApi.getItemImageUrl(person.id, ImageType.PRIMARY, maxWidth = maxWidth, tag = it) }
+        person.primaryImageTag?.let { picture(person.id, ImageType.PRIMARY, maxWidth = maxWidth, tag = it) }
 
     // MARK: Playback
 
@@ -1456,7 +1620,7 @@ class AsterRepository(context: Context, private val store: SessionStore) {
         /** A fresh encode that copies nothing from the file, the last stream tried when the others won't play. */
         mostCompatible: Boolean = false,
         cast: Boolean = false,
-    ): PlaybackInfoResponse = api.mediaInfoApi.getPostedPlaybackInfo(
+    ): PlaybackInfoResponse = io { api.mediaInfoApi.getPostedPlaybackInfo(
         itemId,
         PlaybackInfoDto(
             userId = userId,
@@ -1473,15 +1637,15 @@ class AsterRepository(context: Context, private val store: SessionStore) {
             allowVideoStreamCopy = !mostCompatible,
             allowAudioStreamCopy = !mostCompatible,
         ),
-    ).content
+    ).content }
 
     /** Whether the server lets this user download media ("Allow media downloading" in the user's settings). */
-    suspend fun canDownload(): Boolean = runCatching { api.userApi.getCurrentUser().content.policy?.enableContentDownloading }.getOrNull() ?: false
+    suspend fun canDownload(): Boolean = io { runCatching { api.userApi.getCurrentUser().content.policy?.enableContentDownloading }.getOrNull() ?: false }
 
     /** The server's HLS stream for saving a title, at [quality], with the chosen tracks; [subtitleIndex] is burned in, -1 for none. */
     suspend fun downloadInfo(
         itemId: UUID, maxBitrate: Int, maxWidth: Int?, allowHevc: Boolean, mediaSourceId: String?, audioIndex: Int?, subtitleIndex: Int,
-    ): PlaybackInfoResponse = api.mediaInfoApi.getPostedPlaybackInfo(
+    ): PlaybackInfoResponse = io { api.mediaInfoApi.getPostedPlaybackInfo(
         itemId,
         PlaybackInfoDto(
             userId = userId, maxStreamingBitrate = maxBitrate, startTimeTicks = 0L, mediaSourceId = mediaSourceId,
@@ -1489,7 +1653,7 @@ class AsterRepository(context: Context, private val store: SessionStore) {
             deviceProfile = AndroidDeviceProfile.download(maxBitrate, maxWidth, allowHevc),
             enableDirectPlay = false, enableDirectStream = false, enableTranscoding = true, autoOpenLiveStream = false,
         ),
-    ).content
+    ).content }
 
     /** What the sign-in token is, for the download manager's requests. */
     val accessToken: String? get() = session?.accessToken
@@ -1543,15 +1707,15 @@ class AsterRepository(context: Context, private val store: SessionStore) {
         ).content.items
     }.getOrDefault(emptyList())
 
-    suspend fun reportStart(info: PlaybackStartInfo) {
+    suspend fun reportStart(info: PlaybackStartInfo) = io {
         runCatching { api.sessionApi.reportPlaybackStart(info) }
     }
 
-    suspend fun reportProgress(info: PlaybackProgressInfo) {
+    suspend fun reportProgress(info: PlaybackProgressInfo) = io {
         runCatching { api.sessionApi.reportPlaybackProgress(info) }
     }
 
-    suspend fun reportStopped(info: PlaybackStopInfo) {
+    suspend fun reportStopped(info: PlaybackStopInfo) = io {
         runCatching { api.sessionApi.reportPlaybackStopped(info) }
     }
 }

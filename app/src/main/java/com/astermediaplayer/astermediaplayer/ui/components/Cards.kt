@@ -50,6 +50,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.runtime.LaunchedEffect
+import com.astermediaplayer.astermediaplayer.data.AsterRepository
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
@@ -145,7 +147,7 @@ private fun CardLabel(title: String, subtitle: String?, width: Dp) {
 
 @Composable
 fun PosterCard(item: BaseItemDto, onClick: () -> Unit, modifier: Modifier = Modifier) = CardWithActions(item, modifier) { item, onLongClick ->
-    val url = repo().imageUrl(item, ImageType.PRIMARY, 400)
+    val url = posterUrl(repo(), item)
     Column(Modifier.width(Lockup.posterWidth).tvFocus(Lockup.cornerRadius, lift = 1.08f, ring = false, pictureAspect = Lockup.POSTER_ASPECT).cardClickable(onClick, onLongClick), verticalArrangement = Arrangement.spacedBy(Lockup.cardLabelSpacing)) {
         Box(Modifier.fillMaxWidth().aspectRatio(Lockup.POSTER_ASPECT).clip(RoundedCornerShape(Lockup.cornerRadius))) {
             AsyncImage(model = url, contentDescription = item.name, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
@@ -166,11 +168,7 @@ fun LandscapeCard(
     menu: CardMenu? = null,
 ) = CardWithActions(item, modifier, menu) { item, onLongClick ->
     val repo = repo()
-    val url = if (item.type == BaseItemKind.EPISODE && item.imageTags?.containsKey(ImageType.PRIMARY) == true) {
-        repo.imageUrl(item, ImageType.PRIMARY, 600)
-    } else {
-        repo.imageUrl(item, ImageType.BACKDROP, 600) ?: repo.imageUrl(item, ImageType.PRIMARY, 600)
-    }
+    val url = landscapeUrl(repo, item)
     Column(Modifier.width(Lockup.landscapeWidth).tvFocus(Lockup.cornerRadius, lift = 1.08f, ring = false, pictureAspect = Lockup.LANDSCAPE_ASPECT).cardClickable(onClick, onLongClick), verticalArrangement = Arrangement.spacedBy(Lockup.cardLabelSpacing)) {
         Box(Modifier.fillMaxWidth().aspectRatio(Lockup.LANDSCAPE_ASPECT).clip(RoundedCornerShape(Lockup.cornerRadius))) {
             AsyncImage(model = url, contentDescription = item.name, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
@@ -182,6 +180,17 @@ fun LandscapeCard(
         CardLabel(item.cardTitle(showSeriesTitle), item.cardSubtitle(showSeriesTitle), Lockup.landscapeWidth)
     }
 }
+
+/** A poster card's picture: what [PosterCard] shows, and what a shelf warms ahead. */
+internal fun posterUrl(repo: AsterRepository, item: BaseItemDto): String? = repo.imageUrl(item, ImageType.PRIMARY, 400)
+
+/** A landscape card's picture: the episode's still, else the backdrop. */
+internal fun landscapeUrl(repo: AsterRepository, item: BaseItemDto): String? =
+    if (item.type == BaseItemKind.EPISODE && item.imageTags?.containsKey(ImageType.PRIMARY) == true) {
+        repo.imageUrl(item, ImageType.PRIMARY, 600)
+    } else {
+        repo.imageUrl(item, ImageType.BACKDROP, 600) ?: repo.imageUrl(item, ImageType.PRIMARY, 600)
+    }
 
 /** A titled row of cards, as the Apple apps' `Shelf`. Every row has the same title size, gaps and padding. */
 @Composable
@@ -198,6 +207,12 @@ fun Shelf(
     onItem: (BaseItemDto) -> Unit,
 ) {
     if (items.isEmpty()) return
+    // The cards past the edge, into the disk cache before they're scrolled to (as the Apple apps warm a page's posters).
+    val context = LocalContext.current
+    LaunchedEffect(items, landscape) {
+        val repo = (context.applicationContext as AsterApp).repository
+        ImageWarmer.warm(context, items.drop(4).mapNotNull { if (landscape) landscapeUrl(repo, it) else posterUrl(repo, it) })
+    }
     // Each shelf is its own layer, so a focus ring moving in one redraws that shelf and not the whole page.
     Column(modifier.graphicsLayer(), verticalArrangement = Arrangement.spacedBy(Lockup.shelfTitleSpacing)) {
         Text(title, style = Type.title3, modifier = Modifier.padding(horizontal = Lockup.screenPadding))

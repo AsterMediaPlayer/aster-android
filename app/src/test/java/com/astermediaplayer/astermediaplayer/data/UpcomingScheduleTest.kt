@@ -47,6 +47,14 @@ class UpcomingScheduleTest {
         assertEquals(listOf(uuid("c"), uuid("d")), days[1].second.map { it.id })
     }
 
+    @Test fun midnightUtcIsTheDayAsWrittenNotTheEveningBefore() {
+        val items = listOf(
+            episode("a", "MobLand", 2, 8, "We Don't Talk Anymore", "2026-11-06T00:00:00"),
+            episode("b", "Blue Box", 2, 6, "Episode 6", "2026-11-08T00:00:00"),
+        )
+        assertEquals(listOf(day("2026-11-06"), day("2026-11-08")), UpcomingSchedule.days(items, chicago).map { it.first })
+    }
+
     @Test fun countdownWording() {
         val now = day("2026-10-13").atStartOfDay(chicago).toInstant().plusSeconds(10 * 3600)
         fun c(text: String) = UpcomingSchedule.countdown(day(text), now, chicago)

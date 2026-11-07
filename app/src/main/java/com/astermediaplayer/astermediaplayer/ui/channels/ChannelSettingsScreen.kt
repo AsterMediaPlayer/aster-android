@@ -290,7 +290,7 @@ fun ChannelSettingsScreen(viewModel: ChannelSettingsViewModel, only: String?, mo
         verticalArrangement = Arrangement.spacedBy((6f * u).dp),
     ) {
         Text(
-            if (only != null) shownChannels.firstOrNull()?.let { it.second.name ?: it.first.name } ?: "Channel" else "Channels (Beta)",
+            if (only != null) shownChannels.firstOrNull()?.let { it.second.name ?: it.first.name } ?: "Channel" else "Channels",
             style = Type.pageTitle.copy(fontSize = (76f * u).sp, lineHeight = (90f * u).sp), modifier = Modifier.padding(bottom = (12f * u).dp),
         )
         when {

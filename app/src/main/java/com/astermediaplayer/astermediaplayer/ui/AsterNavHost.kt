@@ -218,6 +218,11 @@ private object Routes {
     const val ARTIST = "artist/{id}"
     const val SHELF = "audiobookshelf/{id}"
     const val THEME = "theme?path={path}&title={title}&subtitle={subtitle}"
+    /** A title from Seerr to request, and a genre's, studio's or network's grid (kept by [DiscoverRoutes]). */
+    const val SEERR_TITLE = "seerrtitle/{key}"
+    const val SEERR_BROWSE = "seerrbrowse/{key}"
+    fun seerrTitle(key: String) = "seerrtitle/${android.net.Uri.encode(key)}"
+    fun seerrBrowse(key: String) = "seerrbrowse/${android.net.Uri.encode(key)}"
     fun library(id: UUID, name: String) = "library/$id/${android.net.Uri.encode(name)}"
     fun detail(id: UUID) = "detail/$id"
     fun person(id: UUID) = "person/$id"
@@ -256,7 +261,7 @@ fun AsterNavHost(signedIn: Boolean) {
     }
     val scope = rememberCoroutineScope()
 
-    fun open(item: BaseItemDto) = when (item.type) {
+    fun open(item: BaseItemDto) = when (item.type.also { repo.noteSeen(item) }) {
         BaseItemKind.COLLECTION_FOLDER, BaseItemKind.USER_VIEW -> nav.navigate(Routes.library(item.id, item.name.orEmpty()))
         BaseItemKind.PERSON -> nav.navigate(Routes.person(item.id))
         // A music playlist opens as an album does; any other is a playlist of movies and episodes.
@@ -324,6 +329,15 @@ fun AsterNavHost(signedIn: Boolean) {
         androidx.compose.runtime.CompositionLocalProvider(
             com.astermediaplayer.astermediaplayer.ui.detail.LocalPageFocus provides pageFocus,
             com.astermediaplayer.astermediaplayer.ui.components.LocalItemActions provides itemActions,
+            com.astermediaplayer.astermediaplayer.ui.discover.LocalDiscoverNav provides remember(nav) {
+                com.astermediaplayer.astermediaplayer.ui.discover.DiscoverNav(
+                    openItem = { open(it) },
+                    openTitle = { nav.navigate(Routes.seerrTitle(com.astermediaplayer.astermediaplayer.ui.discover.DiscoverRoutes.put(it))) },
+                    openCard = { title, item -> nav.navigate(Routes.seerrTitle(com.astermediaplayer.astermediaplayer.ui.discover.DiscoverRoutes.put(title, item))) },
+                    openBrowse = { nav.navigate(Routes.seerrBrowse(com.astermediaplayer.astermediaplayer.ui.discover.DiscoverRoutes.put(it))) },
+                    play = { nav.navigate(Routes.player(it)) },
+                )
+            },
         ) {
         NavHost(nav, startDestination = if (signedIn) Routes.MAIN else Routes.AUTH, modifier = Modifier.fillMaxSize().focusRequester(pageFocus).focusRestorer()) {
             composable(Routes.AUTH) {
@@ -358,6 +372,26 @@ fun AsterNavHost(signedIn: Boolean) {
                         }
                     },
                 )
+            }
+            composable(Routes.SEERR_TITLE, arguments = listOf(navArgument("key") { type = NavType.StringType })) { entry ->
+                val key = entry.arguments?.getString("key").orEmpty()
+                val title = com.astermediaplayer.astermediaplayer.ui.discover.DiscoverRoutes.title(key)
+                val card = com.astermediaplayer.astermediaplayer.ui.discover.DiscoverRoutes.item(key)
+                if (title == null) { LaunchedEffect(Unit) { nav.popBackStack() }; return@composable }
+                val vm: com.astermediaplayer.astermediaplayer.ui.discover.SeerrTitleViewModel = viewModel(factory = viewModelFactory { initializer { com.astermediaplayer.astermediaplayer.ui.discover.SeerrTitleViewModel(repo, title, card) } })
+                Box(Modifier.fillMaxSize()) {
+                    com.astermediaplayer.astermediaplayer.ui.discover.SeerrTitlePage(vm)
+                    Box(Modifier.statusBarsPadding()) { BackButton { nav.popBackStack() } }
+                }
+            }
+            composable(Routes.SEERR_BROWSE, arguments = listOf(navArgument("key") { type = NavType.StringType })) { entry ->
+                val browse = com.astermediaplayer.astermediaplayer.ui.discover.DiscoverRoutes.browse(entry.arguments?.getString("key").orEmpty())
+                if (browse == null) { LaunchedEffect(Unit) { nav.popBackStack() }; return@composable }
+                val vm: com.astermediaplayer.astermediaplayer.ui.discover.SeerrBrowseViewModel = viewModel(factory = viewModelFactory { initializer { com.astermediaplayer.astermediaplayer.ui.discover.SeerrBrowseViewModel(repo, browse) } })
+                Box(Modifier.fillMaxSize().statusBarsPadding()) {
+                    com.astermediaplayer.astermediaplayer.ui.discover.SeerrBrowsePage(vm)
+                    BackButton { nav.popBackStack() }
+                }
             }
             composable(Routes.PERSON, arguments = listOf(navArgument("id") { type = NavType.StringType })) { entry ->
                 val id = parseId(entry.arguments!!.getString("id").orEmpty())
@@ -777,8 +811,9 @@ private fun MainTabs(
     val hasBooks = libraries.any { it.collectionType == CollectionType.BOOKS }
     val hasLiveTv = libraries.any { it.collectionType == CollectionType.LIVETV }
     fun listed(d: MoreDestination) = when (d) {
-        MoreDestination.Upcoming -> hasUpcoming
-        MoreDestination.Discover -> hasDiscover
+        // Upcoming is a section of Discover now, as on the Apple apps.
+        MoreDestination.Upcoming -> false
+        MoreDestination.Discover -> hasDiscover || hasUpcoming || discover.sections.isNotEmpty()
         MoreDestination.Channels -> hasChannels
         MoreDestination.Music -> hasMusic
         MoreDestination.Audiobooks -> hasBooks
@@ -870,7 +905,7 @@ private fun MainTabs(
             Tab.Anime -> AnimeScreen(anime, onItem = onItem, onPlay = onPlay, modifier = modifier)
             Tab.More -> when (more) {
                 MoreDestination.Discover -> Box(modifier) {
-                    com.astermediaplayer.astermediaplayer.ui.discover.DiscoverScreen(discover, onItem = onItem, onPlay = onPlay, modifier = Modifier.fillMaxSize().statusBarsPadding(), topInset = 56.dp)
+                    com.astermediaplayer.astermediaplayer.ui.discover.DiscoverScreen(discover, modifier = Modifier.fillMaxSize().statusBarsPadding(), topInset = if (isTv) 56.dp else 48.dp)
                     BackButton { back() }
                 }
                 MoreDestination.Music -> Box(modifier) {
@@ -1028,7 +1063,7 @@ internal fun TvMenu(items: List<BarItem>, isSelected: (BarItem) -> Boolean, onPi
             items.forEach { item ->
                 var focused by remember { mutableStateOf(false) }
                 val tint = if (focused) Color.Black else Color.White
-                val label = if (item.destination == MoreDestination.Channels) "Channels (Beta)" else item.label
+                val label = item.label
                 Row(
                     Modifier.fillMaxWidth().height(pt(75f)).then(if (isSelected(item)) Modifier.focusRequester(current) else Modifier)
                         .onFocusChanged {

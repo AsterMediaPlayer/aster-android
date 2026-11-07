@@ -24,7 +24,18 @@ object UpcomingSchedule {
      */
     fun airDate(episode: BaseItemDto): Instant? = episode.premiereDate?.toInstant(ZoneOffset.UTC)
 
-    /** Episodes in airing order, gathered by the local day they air. */
+    /**
+     * The day an episode airs. A date with no time to it (midnight UTC, as Jellyfin writes most air dates: "2026-11-06T00:00")
+     * is that day wherever the viewer is; read in their time zone it would fall the evening before, a day early west of
+     * Greenwich. Anything else is a moment (05:00Z, the viewer's own midnight in UTC), and its day is the viewer's.
+     */
+    fun airDay(episode: BaseItemDto, zone: ZoneId = ZoneId.systemDefault()): LocalDate? {
+        val written = episode.premiereDate ?: return null
+        return if (written.toLocalTime() == java.time.LocalTime.MIDNIGHT) written.toLocalDate()
+        else written.toInstant(ZoneOffset.UTC).atZone(zone).toLocalDate()
+    }
+
+    /** Episodes in airing order, gathered by the day they air. */
     fun days(episodes: List<BaseItemDto>, zone: ZoneId = ZoneId.systemDefault()): List<Pair<LocalDate, List<BaseItemDto>>> {
         val dated = episodes.mapNotNull { e -> airDate(e)?.let { it to e } }
             .sortedWith(
@@ -32,7 +43,7 @@ object UpcomingSchedule {
             )
         val days = mutableListOf<Pair<LocalDate, MutableList<BaseItemDto>>>()
         for ((instant, episode) in dated) {
-            val day = instant.atZone(zone).toLocalDate()
+            val day = airDay(episode, zone) ?: instant.atZone(zone).toLocalDate()
             if (days.isNotEmpty() && days.last().first == day) days.last().second += episode else days += day to mutableListOf(episode)
         }
         return days

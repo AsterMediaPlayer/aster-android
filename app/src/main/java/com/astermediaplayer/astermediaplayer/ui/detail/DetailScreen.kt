@@ -65,6 +65,8 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.filled.MusicVideo
 import androidx.compose.material.icons.automirrored.filled.PlaylistAdd
+import androidx.compose.material.icons.filled.BookmarkAdd
+import androidx.compose.material.icons.filled.BookmarkAdded
 import androidx.compose.material.icons.automirrored.filled.QueueMusic
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DropdownMenu
@@ -104,6 +106,7 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilledTonalIconToggleButton
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -193,17 +196,25 @@ data class DetailContent(
     val watchEnding: OpeningEnding? = null,
     /** The item whose disc menu the Disc Menu button opens (the page's own, or for a show the selected season's); null when there is none. */
     val discMenuId: UUID? = null,
+    /** Only what the card it was opened from knew: the art, title and description show while the rest loads; no buttons yet. */
+    val preview: Boolean = false,
 )
 
 class DetailViewModel(private val repo: AsterRepository, private val itemId: UUID) : ViewModel() {
     private val _state = MutableStateFlow<Load<DetailContent>>(Load.Loading)
     val state: StateFlow<Load<DetailContent>> = _state.asStateFlow()
+    /** Its place on the person's linked watchlist (Simkl's Plan to Watch), for a film or show. */
+    val watchlist = com.astermediaplayer.astermediaplayer.ui.discover.WatchlistModel(repo, viewModelScope)
 
-    init { load() }
+    init {
+        // The card's item at once, as the Apple apps open a title from what the list already had; the page fills in after.
+        repo.seen(itemId)?.let { _state.value = Load.Ready(DetailContent(it, preview = true)) }
+        load()
+    }
 
     fun load() {
         viewModelScope.launch {
-            _state.value = Load.Loading
+            if ((_state.value as? Load.Ready)?.value?.preview != true) _state.value = Load.Loading
             val ready = try {
                 loadContent()
             } catch (e: Exception) {
@@ -218,6 +229,12 @@ class DetailViewModel(private val repo: AsterRepository, private val itemId: UUI
                 launch { val extras = repo.specialFeatures(itemId); update { it.copy(extras = extras) } }
             }
             launch { loadThemes(item) }
+            if (item.type == BaseItemKind.MOVIE || item.type == BaseItemKind.SERIES) launch {
+                watchlist.load(com.astermediaplayer.astermediaplayer.ui.discover.WatchlistModel.Title(
+                    if (item.type == BaseItemKind.MOVIE) "movie" else "tv", item.type == BaseItemKind.SERIES && runCatching { repo.isAnimeTitle(item) }.getOrDefault(false),
+                    com.astermediaplayer.astermediaplayer.ui.discover.WatchlistModel.ids(item.providerIds), item.name, item.productionYear,
+                ))
+            }
         }
     }
 
@@ -237,11 +254,18 @@ class DetailViewModel(private val repo: AsterRepository, private val itemId: UUI
     }
 
     private suspend fun loadContent(): Load.Ready<DetailContent> = coroutineScope {
+        // Side by side: the item, its own disc menu, and for a show its seasons and next episode, none waiting on another.
+        val ownMenu = async { runCatching { repo.discMenu(itemId) != null }.getOrDefault(false) }
+        val previewType = repo.seen(itemId)?.type
+        val earlySeasons = if (previewType == BaseItemKind.SERIES) async { repo.seasons(itemId) } else null
+        val earlyNext = if (previewType == BaseItemKind.SERIES) async { runCatching { repo.nextUp(1, itemId).firstOrNull() }.getOrNull() } else null
         val item = repo.item(itemId)
         val content = when (item.type) {
             BaseItemKind.SERIES -> {
-                val seasons = repo.seasons(itemId)
-                val next = runCatching { repo.nextUp(1, itemId).firstOrNull() }.getOrNull()
+                val seasonsAsk = earlySeasons ?: async { repo.seasons(itemId) }
+                val nextAsk = earlyNext ?: async { runCatching { repo.nextUp(1, itemId).firstOrNull() }.getOrNull() }
+                val seasons = seasonsAsk.await()
+                val next = nextAsk.await()
                 // The season with the next episode, else the first real one (specials come first as season 0).
                 val season = next?.seasonId?.takeIf { id -> seasons.any { it.id == id } }
                     ?: seasons.firstOrNull { (it.indexNumber ?: 0) > 0 }?.id ?: seasons.firstOrNull()?.id
@@ -262,16 +286,16 @@ class DetailViewModel(private val repo: AsterRepository, private val itemId: UUI
             }
             else -> DetailContent(item, playTarget = item)
         }
-        Load.Ready(content.copy(discMenuId = discMenuFor(item, content.selectedSeason)))
+        Load.Ready(content.copy(discMenuId = discMenuFor(item, content.selectedSeason, ownMenu.await())))
     }
 
     /**
      * The page's disc menu: its own (a movie's, show's or season's), or for a show without one, the menu of the season it's
      * showing, which is where a one-season show's menu is often bound.
      */
-    private suspend fun discMenuFor(item: BaseItemDto, season: UUID?): UUID? {
+    private suspend fun discMenuFor(item: BaseItemDto, season: UUID?, hasOwn: Boolean): UUID? {
         if (item.type != BaseItemKind.MOVIE && item.type != BaseItemKind.SERIES && item.type != BaseItemKind.SEASON) return null
-        if (repo.discMenu(item.id) != null) return item.id
+        if (hasOwn) return item.id
         if (item.type == BaseItemKind.SERIES && season != null && repo.discMenu(season) != null) return season
         return null
     }
@@ -399,7 +423,7 @@ class DetailViewModel(private val repo: AsterRepository, private val itemId: UUI
             _state.update { s -> (s as? Load.Ready)?.let { Load.Ready(it.value.copy(episodes = episodes)) } ?: s }
             // A show's menu can be its season's: follow the season picked.
             if (current.item.type == BaseItemKind.SERIES && current.discMenuId != itemId) {
-                val menu = discMenuFor(current.item, seasonId)
+                val menu = discMenuFor(current.item, seasonId, runCatching { repo.discMenu(current.item.id) != null }.getOrDefault(false))
                 _state.update { s -> (s as? Load.Ready)?.let { Load.Ready(it.value.copy(discMenuId = menu)) } ?: s }
             }
             val updated = (_state.value as? Load.Ready)?.value ?: return@launch
@@ -519,7 +543,7 @@ private fun DetailBody(
     val isTv = LocalIsTv.current
     // On a TV the remote starts on Play, which is on the first screen.
     val playFocus = remember { FocusRequester() }
-    if (isTv) LaunchedEffect(item.id) { runCatching { playFocus.requestFocus() } }
+    if (isTv && !content.preview) LaunchedEffect(item.id) { runCatching { playFocus.requestFocus() } }
     // A tab picked from a remote takes focus down into what it shows, its first card (the Apple TV's section lead), once laid out.
     val sectionLead = remember { FocusRequester() }
     var enterSection by remember { mutableIntStateOf(0) }
@@ -584,6 +608,8 @@ private fun DetailBody(
                     DetailInfo(content, viewModel, onPlay, onPlayFromBeginning, onDiscMenu, onGoToSeries, onPlayTheme, showTitle = true, playFocus = playFocus, onPlayFocused = { playFocused = it }) { playCenterPx = it }
                 }
             }
+            // The card's item alone: the tabs and shelves come with the rest of the page.
+            if (content.preview) return@BoxWithConstraints
             // On a TV the sections sit straight on the shaded backdrop, 36 points apart, as on the Apple TV.
             val sectionGap = if (isTv) (36f * Lockup.tvUnit).dp else DetailMetrics.sectionSpacing
             Column(
@@ -705,6 +731,13 @@ private fun DetailInfo(
             val next = content.nextEpisode
             Text("Up next: " + listOfNotNull(next.episodeCode(), next.name).joinToString(" · "), style = Type.callout, color = SecondaryText)
         }
+        // The card's item alone: the buttons wait for the page, so the remote never lands on one that moves.
+        if (content.preview) {
+            Box(Modifier.padding(top = if (tv) (8f * u).dp else 8.dp).height(if (tv) (66f * u).dp else 44.dp), contentAlignment = Alignment.CenterStart) {
+                CircularProgressIndicator(Modifier.size(if (tv) (36f * u).dp else 24.dp), color = Color.White, strokeWidth = 3.dp)
+            }
+            return
+        }
         Column(Modifier.padding(top = if (tv) (8f * u).dp else 8.dp), verticalArrangement = Arrangement.spacedBy(DetailMetrics.actionRowSpacing)) {
             // A phone can't fit every action across, so the row scrolls sideways; a TV's fits, and its buttons lift past the row's edge.
             ActionRow(tv, u) {
@@ -721,6 +754,17 @@ private fun DetailInfo(
                 }
                 if (menuId != null) ActionButton("Disc Menu", Icons.Default.Album) { onDiscMenu(menuId) }
                 IconActionButton(if (item.userData?.isFavorite == true) Icons.Default.Favorite else Icons.Default.FavoriteBorder, "Favorite") { viewModel.toggleFavorite() }
+                val watchlist = viewModel.watchlist
+                if (watchlist.state != null && (item.type == BaseItemKind.MOVIE || item.type == BaseItemKind.SERIES)) {
+                    IconActionButton(
+                        if (watchlist.on) Icons.Default.BookmarkAdded else Icons.Default.BookmarkAdd,
+                        if (watchlist.on) "On Watchlist" else "Add to Watchlist",
+                    ) { watchlist.toggle() }
+                    val context = LocalContext.current
+                    LaunchedEffect(watchlist.problem) {
+                        watchlist.problem?.let { android.widget.Toast.makeText(context, it, android.widget.Toast.LENGTH_LONG).show(); watchlist.problem = null }
+                    }
+                }
                 if (!isSeries && item.type != BaseItemKind.SEASON) {
                     IconActionButton(if (item.userData?.played == true) Icons.Default.CheckCircle else Icons.Outlined.CheckCircle, "Watched") { viewModel.togglePlayed() }
                 }

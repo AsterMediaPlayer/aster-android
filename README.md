@@ -19,7 +19,7 @@ Taken on an Android TV box (an onn. 4K Pro), against a demo server of open-licen
 | ![Title page](docs/screenshots/detail.jpg) | ![Disc menu](docs/screenshots/disc-menu.jpg) |
 | **Title page**: full-bleed art and logo, extras, and a button for the disc menu | **Disc menus**: Aster Disc menus drawn full screen, here Big Buck Bunny's |
 | ![Music](docs/screenshots/music.jpg) | ![Channels](docs/screenshots/channels.jpg) |
-| **Music**: Now Playing, with what's up next | **Channels (Beta)**: playlists as TV channels in a guide, with music still playing below |
+| **Music**: Now Playing, with what's up next | **Channels**: playlists as TV channels in a guide, with music still playing below |
 | ![Channel row](docs/screenshots/channel-row.jpg) | ![Player](docs/screenshots/player.jpg) |
 | **Channel row**: press Up while watching to flick through channels, or Go to Movie | **Player**: scrub bar, chapters, subtitles, quality and speed |
 | ![Welcome](docs/screenshots/welcome.jpg) | |

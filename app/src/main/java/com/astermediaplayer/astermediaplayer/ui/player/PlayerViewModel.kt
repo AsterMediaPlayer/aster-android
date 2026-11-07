@@ -188,7 +188,8 @@ class PlayerViewModel(
         renderersFactory(context).let { if (assHandler != null) AssRenderersFactory(assHandler, it) else it },
     )
         .setMediaSourceFactory(mediaSourceFactory)
-        .setLoadControl(DefaultLoadControl.Builder().setBufferDurationsMs(30_000, 90_000, 2_500, 5_000).build())
+        // Playing once a second and a half is in, not two and a half: the picture comes sooner, and a stall still refills to five.
+        .setLoadControl(DefaultLoadControl.Builder().setBufferDurationsMs(30_000, 90_000, 1_500, 5_000).build())
         .setAudioAttributes(
             androidx.media3.common.AudioAttributes.Builder()
                 .setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(),
@@ -551,8 +552,15 @@ class PlayerViewModel(
                 startTiming?.mark("item")
                 val isLive = dto.type == BaseItemKind.TV_CHANNEL
                 val resumeMs = positionMs ?: clip?.startMs ?: scheduledStartMs ?: if (fromBeginning || isLive) 0L else ((dto.userData?.playbackPositionTicks ?: 0L) / TICKS_PER_MS)
-                if (!readOnly && !isLive && item != null && segments.isEmpty()) segments = repo.segments(itemId)
-                if (!readOnly && !isLive && nextEpisodeId == null) nextEpisodeId = if (followedBy != null) followedBy.firstOrNull() else findNextEpisode(dto)
+                // Skip markers and the next episode aren't needed in the first seconds, so they don't hold up the stream
+                // (as the Apple apps load them after play): each is asked for alongside the server's playback answer.
+                if (!readOnly && !isLive && item != null && segments.isEmpty()) viewModelScope.launch {
+                    runCatching { repo.segments(itemId) }.getOrNull()?.let { if (segments.isEmpty()) segments = it }
+                }
+                if (!readOnly && !isLive && nextEpisodeId == null) {
+                    if (followedBy != null) nextEpisodeId = followedBy.firstOrNull()
+                    else viewModelScope.launch { runCatching { findNextEpisode(dto) }.getOrNull()?.let { if (nextEpisodeId == null) nextEpisodeId = it } }
+                }
 
                 // A failed direct play usually means the device can't decode the source (4K, Dolby Vision, ...),
                 // so the fallback transcode is capped to something every phone can handle.

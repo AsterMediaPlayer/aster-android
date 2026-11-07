@@ -57,9 +57,15 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
             navigationBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
         )
         val repo = (application as AsterApp).repository
-        com.astermediaplayer.astermediaplayer.ui.player.AudioCapabilities.log(this)
-        com.astermediaplayer.astermediaplayer.data.DeviceCapabilities.log()
-        com.astermediaplayer.astermediaplayer.data.diagnostics.InputLog.noteDevices(com.astermediaplayer.astermediaplayer.ui.theme.usesTouchLayer(this))
+        // What the device decodes and which input devices it has: asked in the background, not before the first frame (a
+        // second and more on a TV box), and the decoder lists are ready by the first video.
+        val touchLayer = com.astermediaplayer.astermediaplayer.ui.theme.usesTouchLayer(this)
+        val appContext = applicationContext
+        lifecycleScope.launch(kotlinx.coroutines.Dispatchers.Default) {
+            com.astermediaplayer.astermediaplayer.ui.player.AudioCapabilities.log(appContext)
+            com.astermediaplayer.astermediaplayer.data.DeviceCapabilities.log()
+            com.astermediaplayer.astermediaplayer.data.diagnostics.InputLog.noteDevices(touchLayer)
+        }
         if (isTelevision(this)) {
             // One Apple TV point is this many dp (text: sp) here, on this screen's own pixels.
             val metrics = resources.displayMetrics

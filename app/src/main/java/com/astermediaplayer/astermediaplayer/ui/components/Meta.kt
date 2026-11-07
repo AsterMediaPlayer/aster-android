@@ -90,7 +90,9 @@ fun remainingText(item: BaseItemDto): String? {
 
 /** "4K" or "HD" from the video stream's width. */
 fun videoBadge(item: BaseItemDto): String? {
-    val width = item.mediaSources?.firstOrNull()?.mediaStreams?.firstOrNull { it.type == MediaStreamType.VIDEO }?.width ?: return null
+    // A list's items carry the video's width; a title page's, its streams in its media sources.
+    val streams = item.mediaStreams?.takeIf { it.isNotEmpty() } ?: item.mediaSources?.firstOrNull()?.mediaStreams
+    val width = item.width?.takeIf { it > 0 } ?: streams?.firstOrNull { it.type == MediaStreamType.VIDEO }?.width ?: return null
     return when {
         width >= 3800 -> "4K"
         width >= 1280 -> "HD"

@@ -90,6 +90,11 @@ class AsterApp : Application(), SingletonImageLoader.Factory {
         // A fade on every image is a lot of frames for a TV's CPU, which has a screen of them arriving at once.
         .crossfade(!isTelevision(context))
         .memoryCache { MemoryCache.Builder().maxSizePercent(context, 0.20).build() }
-        .diskCache { DiskCache.Builder().directory(cacheDir.resolve("images")).maxSizeBytes(250L * 1024 * 1024).build() }
+        // The server's image addresses carry the picture's tag, so a cached one is good until the picture changes (the Apple apps keep 512 MB).
+        .diskCache { DiskCache.Builder().directory(cacheDir.resolve("images")).maxSizeBytes(512L * 1024 * 1024).build() }
+        // Twelve pictures at once from a server, not OkHttp's five: a screen of posters arrives two to four times as fast (as the Apple apps measured).
+        .components {
+            add(coil3.network.okhttp.OkHttpNetworkFetcherFactory(callFactory = { com.astermediaplayer.astermediaplayer.data.sharedHttp }))
+        }
         .build()
 }

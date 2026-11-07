@@ -16,6 +16,8 @@ data class TrackingFeatures(
     val seerrProxy: String?,
     /** What people can link on this server: "simkl", "anilist", … */
     val services: List<String>,
+    /** The services whose watchlist the apps can add to (`/AsterTracking/Watchlist`): "simkl"; empty on an older plugin. */
+    val watchlist: List<String> = emptyList(),
 ) {
     companion object {
         fun parse(json: String): TrackingFeatures {
@@ -25,6 +27,7 @@ data class TrackingFeatures(
                 seerrEnabled = (seerr?.ci("Enabled") as? Boolean) == true,
                 seerrProxy = (seerr?.ci("Proxy") as? String)?.ifEmpty { null },
                 services = (root.ci("Services") as? JSONArray).strings(),
+                watchlist = (root.ci("Watchlist") as? JSONArray).strings(),
             )
         }
     }
@@ -55,12 +58,7 @@ data class DiscoverItem(
     val subtitle: String?
         get() = progress?.ifEmpty { null } ?: listOfNotNull(
             year?.toString(),
-            when {
-                anime -> "Anime"
-                mediaType.equals("movie", ignoreCase = true) -> "Film"
-                mediaType.equals("tv", ignoreCase = true) -> "Series"
-                else -> null
-            },
+            if (mediaType.equals("movie", ignoreCase = true)) "Film" else "Series",
         ).joinToString(" · ").ifEmpty { null }
 
     /** A stable key within its row. */
@@ -131,3 +129,56 @@ internal fun JSONObject.ci(name: String): Any? {
 private fun JSONArray?.objects(): List<JSONObject> = if (this == null) emptyList() else (0 until length()).mapNotNull { optJSONObject(it) }
 
 private fun JSONArray?.strings(): List<String> = if (this == null) emptyList() else (0 until length()).mapNotNull { opt(it) as? String }
+
+/** One row of Discover, whichever it comes from. */
+sealed interface DiscoverEntry {
+    val key: String
+    data class Tracked(val row: DiscoverRow) : DiscoverEntry { override val key get() = "tracked-${row.id}" }
+    data class Slider(val slider: com.astermediaplayer.astermediaplayer.data.seerr.SeerrSlider) : DiscoverEntry { override val key get() = "slider-${slider.stableId}" }
+    data object InTheaters : DiscoverEntry { override val key get() = "theaters" }
+}
+
+object DiscoverOrder {
+    /**
+     * The page in the contract's order, as the Apple and Linux apps do it. The server's own rows `continue`, `recommended`,
+     * `because`, `library` and `watchlist` come first (then any of a kind not known yet); then Seerr's sliders in their admin's
+     * order, less its Watchlist (type 3, Plex's only) when the server has its own; and the server's `trending` and `season` in
+     * the place of Seerr's Trending (type 4), followed by In Theaters. Seerr's Trending stays when the server has none. With no
+     * Seerr, only the server's rows, in the order given.
+     */
+    fun order(rows: List<DiscoverRow>, sliders: List<com.astermediaplayer.astermediaplayer.data.seerr.SeerrSlider>?, theaters: Boolean): List<DiscoverEntry> {
+        val shown = rows.filter { it.items.isNotEmpty() }
+        if (sliders == null) return shown.map(DiscoverEntry::Tracked)
+        val leading = setOf("continue", "recommended", "because", "library", "watchlist")
+        val kept = leading + setOf("trending", "season")
+        val out = shown.filter { it.kind in leading }.map<DiscoverRow, DiscoverEntry>(DiscoverEntry::Tracked).toMutableList()
+        out += shown.filter { it.kind !in kept }.map(DiscoverEntry::Tracked)
+        val hasWatchlist = shown.any { it.kind == "watchlist" }
+        val hasTrending = shown.any { it.kind == "trending" }
+        val trending = shown.filter { it.kind == "trending" || it.kind == "season" }.map(DiscoverEntry::Tracked)
+        for (slider in sliders) {
+            if (slider.type == 3 && hasWatchlist) continue
+            if (slider.type == 4) {
+                if (hasTrending) out += trending else out += DiscoverEntry.Slider(slider)
+                if (theaters) out += DiscoverEntry.InTheaters
+                continue
+            }
+            out += DiscoverEntry.Slider(slider)
+        }
+        // No Trending among Seerr's rows: the server's go last.
+        if (sliders.none { it.type == 4 }) out += trending
+        return out
+    }
+}
+
+/** The title as Seerr knows it, by its TMDB id, for its page. */
+fun DiscoverItem.seerrTitle(): com.astermediaplayer.astermediaplayer.data.seerr.SeerrTitle? {
+    val id = tmdbId?.toIntOrNull() ?: return null
+    val movie = mediaType.equals("movie", ignoreCase = true)
+    return com.astermediaplayer.astermediaplayer.data.seerr.SeerrTitle(
+        id = id, mediaType = if (movie) "movie" else "tv",
+        title = if (movie) title else null, name = if (movie) null else title,
+        releaseDate = if (movie) year?.let { "$it-01-01" } else null, firstAirDate = if (movie) null else year?.let { "$it-01-01" },
+        overview = overview,
+    )
+}
