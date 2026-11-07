@@ -88,6 +88,9 @@ class DiscoverViewModel(private val repo: AsterRepository) : ViewModel() {
 
     init { load() }
 
+    /** Whether a remote has been put on the first card; once only, so coming back from a title keeps focus where it was. */
+    var firstFocusGiven = false
+
     /** [fresh]: pull to refresh, which has the server build the page again now. What's showing stays meanwhile. */
     fun load(fresh: Boolean = false) {
         viewModelScope.launch {
@@ -141,7 +144,9 @@ fun DiscoverScreen(viewModel: DiscoverViewModel, onItem: (BaseItemDto) -> Unit, 
                 val firstCard = remember { FocusRequester() }
                 val isTv = LocalIsTv.current
                 // A remote lands on the first card, so the page is usable at once.
-                LaunchedEffect(Unit) { if (isTv) runCatching { firstCard.requestFocus() } }
+                LaunchedEffect(Unit) {
+                    if (isTv && !viewModel.firstFocusGiven) { viewModel.firstFocusGiven = true; runCatching { firstCard.requestFocus() } }
+                }
                 Column(
                     Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(top = topInset, bottom = TabBarClearance),
                     verticalArrangement = Arrangement.spacedBy(if (isTv) Lockup.sectionSpacing else 20.dp),

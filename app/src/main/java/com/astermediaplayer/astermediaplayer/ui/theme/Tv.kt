@@ -67,6 +67,19 @@ val LocalTouchTv = androidx.compose.runtime.staticCompositionLocalOf { false }
 
 fun hasTouchscreen(context: Context): Boolean = context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_TOUCHSCREEN)
 
+/** An Amazon device (Fire TV, Echo Show). */
+fun isAmazonDevice(manufacturer: String = android.os.Build.MANUFACTURER): Boolean = manufacturer.equals("Amazon", ignoreCase = true)
+
+/**
+ * Whether to lay touch controls over the TV layout. Not on Amazon's devices: Fire OS doesn't pass touch to Appstore apps on the
+ * Echo Show ("Touch functionality is currently not supported for Appstore Apps on Echo Show devices", Amazon Developer
+ * Community, 22 July 2026). It shows its own Onscreen Remote instead, which sends the remote's keys, and buttons nobody can
+ * tap would fail review (Appstore test 2.12).
+ */
+fun usesTouchLayer(tv: Boolean, touchscreen: Boolean, amazon: Boolean): Boolean = tv && touchscreen && !amazon
+
+fun usesTouchLayer(context: Context): Boolean = usesTouchLayer(isTelevision(context), hasTouchscreen(context), isAmazonDevice())
+
 fun isTelevision(context: Context): Boolean =
     (context.getSystemService(Context.UI_MODE_SERVICE) as UiModeManager).currentModeType == Configuration.UI_MODE_TYPE_TELEVISION
 

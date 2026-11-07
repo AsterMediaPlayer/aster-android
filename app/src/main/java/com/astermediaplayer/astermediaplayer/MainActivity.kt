@@ -59,7 +59,7 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
         val repo = (application as AsterApp).repository
         com.astermediaplayer.astermediaplayer.ui.player.AudioCapabilities.log(this)
         com.astermediaplayer.astermediaplayer.data.DeviceCapabilities.log()
-        com.astermediaplayer.astermediaplayer.data.diagnostics.InputLog.noteDevices(isTelevision(this) && com.astermediaplayer.astermediaplayer.ui.theme.hasTouchscreen(this))
+        com.astermediaplayer.astermediaplayer.data.diagnostics.InputLog.noteDevices(com.astermediaplayer.astermediaplayer.ui.theme.usesTouchLayer(this))
         if (isTelevision(this)) {
             // One Apple TV point is this many dp (text: sp) here, on this screen's own pixels.
             val metrics = resources.displayMetrics
@@ -83,7 +83,7 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
             val signedIn by produceState<Boolean?>(null) { value = repo.restore() }
             val tv = isTelevision(this)
             CompositionLocalProvider(
-                LocalIsTv provides tv, com.astermediaplayer.astermediaplayer.ui.theme.LocalTouchTv provides (tv && com.astermediaplayer.astermediaplayer.ui.theme.hasTouchscreen(this)),
+                LocalIsTv provides tv, com.astermediaplayer.astermediaplayer.ui.theme.LocalTouchTv provides com.astermediaplayer.astermediaplayer.ui.theme.usesTouchLayer(this),
                 LocalBringIntoViewSpec provides if (tv) MinimalBringIntoView else LocalBringIntoViewSpec.current,
             ) {
                 AsterTheme {

@@ -22,7 +22,7 @@ object InputLog {
     /** The input devices, once as the app starts. */
     fun noteDevices(touchTv: Boolean) {
         val devices = InputDevice.getDeviceIds().toList().mapNotNull(InputDevice::getDevice)
-        DebugLog.note("Input", "Touch TV layout: $touchTv; ${devices.size} input device(s)")
+        DebugLog.note("Input", "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}; touch controls over the TV layout: $touchTv; ${devices.size} input device(s)")
         devices.forEach { d ->
             DebugLog.note("Input", "Device ${d.id} \"${d.name}\": ${sources(d.sources)}${if (d.isVirtual) ", virtual" else ""}")
         }
