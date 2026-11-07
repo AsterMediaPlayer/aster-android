@@ -981,6 +981,56 @@ class AsterRepository(context: Context, private val store: SessionStore) {
         }
     }
 
+    // MARK: Discover and tracking (the Aster Discovery and Tracking plugin, at /AsterTracking)
+
+    /** The last `/AsterTracking/Features` this session had a 200 for, by server and user; kept through a later failure. */
+    private val trackingFeaturesByServer = java.util.concurrent.ConcurrentHashMap<String, TrackingFeatures>()
+    /** When each server was last asked, so coming back to the app after a long while asks again. */
+    private val trackingFeaturesAskedAt = java.util.concurrent.ConcurrentHashMap<String, Long>()
+
+    /**
+     * What the plugin offers on this server, or null without it: a 404, a Plex or Emby server. Anything else (another status,
+     * no answer) counts as no plugin too, unless this session had a 200 from it before, which then stands.
+     */
+    suspend fun trackingFeatures(maxAgeMs: Long = 30 * 60_000L): TrackingFeatures? {
+        if (serverKind != ServerKind.Jellyfin) return null
+        val server = currentServerId ?: return null
+        val asked = trackingFeaturesAskedAt[server]
+        if (asked != null && System.currentTimeMillis() - asked < maxAgeMs) return trackingFeaturesByServer[server]
+        return withContext(Dispatchers.IO) {
+            val answer = runCatching {
+                http.newCall(Request.Builder().url(serverUrl.trimEnd('/') + "/AsterTracking/Features").header("Authorization", authorizationHeader()).build()).execute().use { r ->
+                    when {
+                        r.isSuccessful -> Result.success(TrackingFeatures.parse(r.body.string()))
+                        r.code == 404 -> Result.success(null)
+                        else -> Result.failure(IllegalStateException("the server said ${r.code}"))
+                    }
+                }
+            }.getOrElse { Result.failure(it) }
+            trackingFeaturesAskedAt[server] = System.currentTimeMillis()
+            answer.fold(
+                onSuccess = { features ->
+                    if (features != null) trackingFeaturesByServer[server] = features else trackingFeaturesByServer.remove(server)
+                    features
+                },
+                onFailure = {
+                    android.util.Log.w("Aster", "AsterTracking features: $it")
+                    trackingFeaturesByServer[server]
+                },
+            )
+        }
+    }
+
+    /** The signed-in person's Discover page, built by the server; [fresh] has it built again now (pull to refresh). */
+    suspend fun discoverHome(fresh: Boolean = false): DiscoverPage =
+        DiscoverPage.parse(serverRequest("GET", "/AsterTracking/Discover/Home" + if (fresh) "?fresh=true" else ""))
+
+    /** A Discover poster's address: a web one as it is, a path on the server with the sign-in on it (pictures can't send headers). */
+    fun discoverPosterUrl(poster: String?): String? {
+        val url = DiscoverPage.posterUrl(poster, serverUrl) ?: return null
+        return if (url.startsWith(serverUrl.trimEnd('/'))) withToken(url) else url
+    }
+
     // MARK: Disc menus (the Aster Disc plugin)
 
     /** The resolved disc menu for a movie, series or season; null when the server has none (a 404 is "nothing to show", never an error). */

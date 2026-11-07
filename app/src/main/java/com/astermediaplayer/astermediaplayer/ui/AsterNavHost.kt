@@ -1,5 +1,7 @@
 package com.astermediaplayer.astermediaplayer.ui
 
+import androidx.compose.material.icons.filled.Explore
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.compose.ui.focus.focusRestorer
 import com.astermediaplayer.astermediaplayer.ui.detail.ThemeNowPlayingPanel
 import androidx.navigation.compose.currentBackStackEntryAsState
@@ -670,6 +672,7 @@ internal enum class Tab(val label: String, val icon: ImageVector) {
 
 /** The More list, in the Apple apps' order; the ones built so far. */
 internal enum class MoreDestination(val label: String, val icon: ImageVector) {
+    Discover("Discover", Icons.Default.Explore),
     Music("Music", Icons.Default.MusicNote),
     Audiobooks("Audiobooks", Icons.Default.LibraryBooks),
     Upcoming("Upcoming", Icons.Default.CalendarMonth),
@@ -695,11 +698,11 @@ internal object TvMenuState {
 }
 
 /** The destinations that move into the bar from More, in the Apple apps' tab order, as far as the width allows. */
-private val PromotedOrder = listOf(MoreDestination.Music, MoreDestination.Audiobooks, MoreDestination.Upcoming)
+private val PromotedOrder = listOf(MoreDestination.Discover, MoreDestination.Music, MoreDestination.Audiobooks, MoreDestination.Upcoming)
 
 /** Google TV's side menu lists every destination in this order; Downloads is a phone's. */
 private val TvDestinations = listOf(
-    MoreDestination.Music, MoreDestination.Audiobooks, MoreDestination.Upcoming, MoreDestination.LiveTv,
+    MoreDestination.Discover, MoreDestination.Music, MoreDestination.Audiobooks, MoreDestination.Upcoming, MoreDestination.LiveTv,
     MoreDestination.Channels, MoreDestination.Library, MoreDestination.Settings, MoreDestination.Search,
 )
 
@@ -758,6 +761,16 @@ private fun MainTabs(
                 com.astermediaplayer.astermediaplayer.data.channels.ChannelTags.from(p.tags).let { it.isChannel && it.isShown(repo.session?.userName) }
             }
     }
+    // Discover is the server's (the Aster Discovery and Tracking plugin): listed while the server has it, asked again on coming back after a while.
+    var hasDiscover by remember(repo.currentServerId) { mutableStateOf(false) }
+    val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(repo.currentServerId, lifecycle) {
+        lifecycle.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.STARTED) { hasDiscover = repo.trackingFeatures() != null }
+    }
+    val discover: com.astermediaplayer.astermediaplayer.ui.discover.DiscoverViewModel = viewModel(
+        key = "discover-${repo.currentServerId}",
+        factory = viewModelFactory { initializer { com.astermediaplayer.astermediaplayer.ui.discover.DiscoverViewModel(repo) } },
+    )
     val hasUpcoming by produceState(false) { value = runCatching { repo.upcoming(1).isNotEmpty() }.getOrDefault(false) }
     // What the menu lists is what the server has, as on the Apple apps: Music, Audiobooks and Live TV need a library of their own.
     val hasMusic = libraries.any { it.collectionType == CollectionType.MUSIC }
@@ -765,6 +778,7 @@ private fun MainTabs(
     val hasLiveTv = libraries.any { it.collectionType == CollectionType.LIVETV }
     fun listed(d: MoreDestination) = when (d) {
         MoreDestination.Upcoming -> hasUpcoming
+        MoreDestination.Discover -> hasDiscover
         MoreDestination.Channels -> hasChannels
         MoreDestination.Music -> hasMusic
         MoreDestination.Audiobooks -> hasBooks
@@ -855,6 +869,10 @@ private fun MainTabs(
             Tab.Shows -> if (detectedAnime != null) TypeTab(BaseItemKind.SERIES, animeLibraries, onItem, onPlay, modifier)
             Tab.Anime -> AnimeScreen(anime, onItem = onItem, onPlay = onPlay, modifier = modifier)
             Tab.More -> when (more) {
+                MoreDestination.Discover -> Box(modifier) {
+                    com.astermediaplayer.astermediaplayer.ui.discover.DiscoverScreen(discover, onItem = onItem, onPlay = onPlay, modifier = Modifier.fillMaxSize().statusBarsPadding(), topInset = 56.dp)
+                    BackButton { back() }
+                }
                 MoreDestination.Music -> Box(modifier) {
                     MusicScreen(onAlbum = onAlbum, onArtist = onArtist, modifier = Modifier.fillMaxSize(), topInset = 56.dp)
                     BackButton { back() }
