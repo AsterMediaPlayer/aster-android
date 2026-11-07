@@ -294,8 +294,17 @@ class PlayerViewModel(
     private var reported = false
     private var stopped = false
 
+    /** How long this start is taking, step by step, for a debug report. Null once it has been told. */
+    private var startTiming: com.astermediaplayer.astermediaplayer.data.diagnostics.StartTiming? = null
+
     private val listener = object : Player.Listener {
+        override fun onRenderedFirstFrame() {
+            startTiming?.let { it.mark("first picture"); com.astermediaplayer.astermediaplayer.data.diagnostics.DebugLog.note("Playback", it.summary()) }
+            startTiming = null
+        }
+
         override fun onPlaybackStateChanged(playbackState: Int) {
+            if (playbackState == Player.STATE_READY) startTiming?.mark("stream ready", once = true)
             if (playbackState == Player.STATE_READY) { hasStarted = true; seeking = false; _state.update { it.copy(loading = false) } }
             if (playbackState == Player.STATE_BUFFERING && player.currentPosition == 0L) _state.update { it.copy(loading = true) }
             if (playbackState == Player.STATE_ENDED) onEnded()
@@ -323,6 +332,8 @@ class PlayerViewModel(
         }
 
         override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+            startTiming?.let { it.mark("error"); com.astermediaplayer.astermediaplayer.data.diagnostics.DebugLog.note("Playback", it.summary()) }
+            startTiming = null
             com.astermediaplayer.astermediaplayer.data.diagnostics.DebugLog.lastPlayback += ("error" to error.errorCodeName)
             com.astermediaplayer.astermediaplayer.data.diagnostics.DebugLog.note(
                 "Playback",
@@ -510,6 +521,7 @@ class PlayerViewModel(
         viewModelScope.launch {
             hasStarted = false
             audioApplied = false
+            startTiming = com.astermediaplayer.astermediaplayer.data.diagnostics.StartTiming()
             _state.update { it.copy(loading = true, error = null, qualityOffer = null) }
             try {
                 if (direct != null) {
@@ -536,6 +548,7 @@ class PlayerViewModel(
                 }
                 offline = null
                 val dto = item ?: repo.item(itemId).also { item = it }
+                startTiming?.mark("item")
                 val isLive = dto.type == BaseItemKind.TV_CHANNEL
                 val resumeMs = positionMs ?: clip?.startMs ?: scheduledStartMs ?: if (fromBeginning || isLive) 0L else ((dto.userData?.playbackPositionTicks ?: 0L) / TICKS_PER_MS)
                 if (!readOnly && !isLive && item != null && segments.isEmpty()) segments = repo.segments(itemId)
@@ -556,6 +569,7 @@ class PlayerViewModel(
                     mostCompatible = mostCompatible,
                     cast = casting,
                 )
+                startTiming?.mark("server's playback answer")
                 scheduledStartMs = null
                 val source = info.mediaSources.firstOrNull() ?: error("This item has no playable media")
                 mediaSourceId = source.id
@@ -572,6 +586,7 @@ class PlayerViewModel(
                     else -> error("The server can't stream this item to this device")
                 }.let { if (casting) repo.withApiKey(it) else it }
                 playMethod = if (direct) PlayMethod.DIRECT_PLAY else PlayMethod.TRANSCODE
+                startTiming?.method = if (direct) "direct play" else "transcode"
                 com.astermediaplayer.astermediaplayer.data.diagnostics.DebugLog.note("Playback", playbackSummary(dto, source, url))
 
                 val externalText = source.mediaStreams.orEmpty()
@@ -618,6 +633,7 @@ class PlayerViewModel(
                     if (casting) 0L else resumeMs.coerceAtLeast(0),
                 )
                 if (casting && resumeMs > 0) seekWhenReady(resumeMs)
+                startTiming?.mark("stream asked for")
                 player.prepare()
                 player.playWhenReady = true
                 startCues()
@@ -1124,6 +1140,9 @@ class PlayerViewModel(
     }
 
     override fun onCleared() {
+        // Left before the picture came: how far the start had got, which is the story of a start that never finished.
+        startTiming?.let { com.astermediaplayer.astermediaplayer.data.diagnostics.DebugLog.note("Playback", it.summary(leftEarly = true)) }
+        startTiming = null
         scrub?.release()
         reportStopped()
         withdrawSession()

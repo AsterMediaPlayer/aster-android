@@ -33,6 +33,22 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
         com.astermediaplayer.astermediaplayer.ui.player.PictureInPicture.onUserLeaveHint(this)
     }
 
+    // What input reaches the app, for a debug report (a TV with a touchscreen whose taps did nothing): told, then handled as ever.
+    override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {
+        com.astermediaplayer.astermediaplayer.data.diagnostics.InputLog.touch(ev)
+        return super.dispatchTouchEvent(ev)
+    }
+
+    override fun dispatchGenericMotionEvent(ev: android.view.MotionEvent): Boolean {
+        com.astermediaplayer.astermediaplayer.data.diagnostics.InputLog.generic(ev)
+        return super.dispatchGenericMotionEvent(ev)
+    }
+
+    override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
+        com.astermediaplayer.astermediaplayer.data.diagnostics.InputLog.key(event)
+        return super.dispatchKeyEvent(event)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // The app is dark whatever the system theme is, so the bars always get light icons.
@@ -43,6 +59,7 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
         val repo = (application as AsterApp).repository
         com.astermediaplayer.astermediaplayer.ui.player.AudioCapabilities.log(this)
         com.astermediaplayer.astermediaplayer.data.DeviceCapabilities.log()
+        com.astermediaplayer.astermediaplayer.data.diagnostics.InputLog.noteDevices(isTelevision(this) && com.astermediaplayer.astermediaplayer.ui.theme.hasTouchscreen(this))
         if (isTelevision(this)) {
             // One Apple TV point is this many dp (text: sp) here, on this screen's own pixels.
             val metrics = resources.displayMetrics
