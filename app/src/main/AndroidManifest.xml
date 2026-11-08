@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <!-- One build for phones and Android TV: a TV has no touchscreen, and the leanback UI is ours, not the library's. -->
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
@@ -31,6 +32,11 @@
             android:name="com.google.android.gms.cast.framework.OPTIONS_PROVIDER_CLASS_NAME"
             android:value="com.astermediaplayer.astermediaplayer.ui.player.CastOptionsProvider" />
 
+        <!-- Android Auto: music and audiobooks, browsed through PlaybackService's library. -->
+        <meta-data
+            android:name="com.google.android.gms.car.application"
+            android:resource="@xml/automotive_app_desc" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -56,9 +62,22 @@
             android:exported="true"
             android:foregroundServiceType="mediaPlayback">
             <intent-filter>
+                <action android:name="androidx.media3.session.MediaLibraryService" />
                 <action android:name="androidx.media3.session.MediaSessionService" />
+                <action android:name="android.media.browse.MediaBrowserService" />
             </intent-filter>
+            <!-- Android Automotive: list Aster in the car's media app, though it also has a screen of its own. -->
+            <meta-data
+                android:name="androidx.car.app.launchable"
+                android:value="true" />
         </service>
+
+        <!-- Covers for Android Auto's lists, which read pictures only from content addresses (see ArtworkProvider). -->
+        <provider
+            android:name=".data.ArtworkProvider"
+            android:authorities="${applicationId}.artwork"
+            android:exported="true"
+            tools:ignore="ExportedContentProvider" />
 
         <service
             android:name=".data.downloads.AsterDownloadService"

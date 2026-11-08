@@ -3,7 +3,6 @@ package com.astermediaplayer.astermediaplayer.ui.player
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
-import androidx.core.content.ContextCompat
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
@@ -170,20 +169,28 @@ class AudiobookPlayer(private val context: Context, private val repo: AsterRepos
 
     // MARK: Starting
 
-    /** Plays [book]: from [chapter] when given, else from where listening left off. The book already playing carries on. */
-    fun play(book: Audiobook, chapter: AudiobookChapter? = null) {
+    /**
+     * Plays [book]: from [chapter] when given, else from where listening left off. The book already playing carries on.
+     * With [playWhenReady] false it's only loaded, paused (for a car to show before anything is pressed).
+     */
+    fun play(book: Audiobook, chapter: AudiobookChapter? = null, playWhenReady: Boolean = true) {
         _presented.value = true
         val current = _state.value.book
         if (current?.id == book.id) {
             if (chapter != null) jump(chapter)
-            if (player?.isPlaying != true) player?.play()
+            if (playWhenReady && player?.isPlaying != true) player?.play()
             return
         }
         onStart?.invoke()
         reportStopped()
         val exo = ensurePlayer()
-        // The service that publishes the session (and the notification) starts with the first book.
-        ContextCompat.startForegroundService(context, Intent(context, PlaybackService::class.java))
+        // The service that publishes the session (and the notification) starts with the first book: started plainly,
+        // as the session puts it in the foreground itself once the book plays. A foreground start here would be a
+        // promise to do that within seconds, and a slow start or a car already bound to the service breaks it (Android
+        // then closes the app as not responding). Android may refuse even this from the background; the car's own
+        // connection keeps the service running then.
+        runCatching { context.startService(Intent(context, PlaybackService::class.java)) }
+            .onFailure { android.util.Log.w("Aster", "Audiobook service not started", it) }
 
         val items = book.parts.map { part ->
             MediaItem.Builder()
@@ -205,9 +212,9 @@ class AudiobookPlayer(private val context: Context, private val repo: AsterRepos
         exo.setMediaItems(items, start.first, (start.second * 1000).toLong())
         exo.playbackParameters = PlaybackParameters(rate, 1f)
         exo.prepare()
-        exo.playWhenReady = true
+        exo.playWhenReady = playWhenReady
         startTicking()
-        report(paused = false, start = true)
+        report(paused = !playWhenReady, start = true)
         keepAhead()
     }
 

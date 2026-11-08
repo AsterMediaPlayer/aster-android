@@ -3,7 +3,6 @@ package com.astermediaplayer.astermediaplayer.ui.player
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
-import androidx.core.content.ContextCompat
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
@@ -88,6 +87,9 @@ class MusicPlayer(private val context: Context, private val repo: AsterRepositor
     private var reportedId: UUID? = null
     private var lastReport = 0L
 
+    /** The player for the media session to show, made now if need be; null before there's a sign-in to stream with. */
+    fun sessionPlayer(): ExoPlayer? = player ?: if (repo.session != null) ensurePlayer() else null
+
     private fun ensurePlayer(): ExoPlayer = player ?: ExoPlayer.Builder(context)
         .setMediaSourceFactory(
             DefaultMediaSourceFactory(
@@ -150,28 +152,32 @@ class MusicPlayer(private val context: Context, private val repo: AsterRepositor
 
     // MARK: Starting
 
-    /** Plays a list of songs from one of them, optionally shuffled (the chosen song still goes first). */
-    fun play(tracks: List<BaseItemDto>, startingAt: Int = 0, shuffled: Boolean = false) {
+    /**
+     * Plays a list of songs from one of them, optionally shuffled (the chosen song still goes first). [positionMs] starts
+     * part way into that song, and with [playWhenReady] false it's only loaded, paused (picking up where listening left
+     * off, for a car to show before anything is pressed).
+     */
+    fun play(tracks: List<BaseItemDto>, startingAt: Int = 0, shuffled: Boolean = false, positionMs: Long = 0, playWhenReady: Boolean = true) {
         val songs = tracks.filter { it.type == BaseItemKind.AUDIO }
         if (songs.isEmpty()) return
         onStart?.invoke()
         reportStopped()
         val exo = ensurePlayer()
-        ContextCompat.startForegroundService(context, Intent(context, PlaybackService::class.java))
+        startService()
         originalOrder = songs
         val start = startingAt.coerceIn(0, songs.size - 1)
         val queue = if (shuffled) listOf(songs[start]) + (songs - songs[start]).shuffled() else songs
         val index = if (shuffled) 0 else start
         _state.value = MusicState(queue = queue, index = index, shuffled = shuffled, repeat = _state.value.repeat)
         exo.repeatMode = _state.value.repeat.toExo()
-        exo.setMediaItems(queue.map(::mediaItem), index, 0)
+        exo.setMediaItems(queue.map(::mediaItem), index, positionMs.coerceAtLeast(0))
         exo.prepare()
-        exo.playWhenReady = true
+        exo.playWhenReady = playWhenReady
         _presented.value = true
         playSessionId = UUID.randomUUID().toString()
         reportedId = null
         startTicking()
-        report(paused = false, start = true)
+        report(paused = !playWhenReady, start = true)
         fetchLyrics(queue[index])
     }
 
@@ -239,6 +245,17 @@ class MusicPlayer(private val context: Context, private val repo: AsterRepositor
     }
 
     private fun RepeatKind.toExo() = when (this) { RepeatKind.Off -> Player.REPEAT_MODE_OFF; RepeatKind.All -> Player.REPEAT_MODE_ALL; RepeatKind.One -> Player.REPEAT_MODE_ONE }
+
+    /**
+     * Starts the service that publishes the session: plainly, as the session puts it in the foreground itself once the
+     * song plays. A foreground start here would be a promise to do that within seconds, and a slow start or a car
+     * already bound to the service breaks it (Android then closes the app as not responding). Android may refuse even
+     * this from the background; the car's own connection keeps the service running then.
+     */
+    private fun startService() {
+        runCatching { context.startService(Intent(context, PlaybackService::class.java)) }
+            .onFailure { android.util.Log.w("Aster", "Music service not started", it) }
+    }
 
     /** Stops and clears the queue. */
     fun stop() {

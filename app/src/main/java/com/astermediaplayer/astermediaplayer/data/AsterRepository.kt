@@ -970,6 +970,14 @@ class AsterRepository(val context: Context, private val store: SessionStore) {
         }.awaitAll().flatten()
     } }
 
+    /** Items by id, in the order asked for (any the server no longer has are left out). */
+    suspend fun items(ids: List<UUID>): List<BaseItemDto> {
+        if (ids.isEmpty()) return emptyList()
+        val found = ids.chunked(100).flatMap { chunk -> io { api.libraryApi.getItems(GetItemsRequest(userId = userId, ids = chunk)).content.items } }
+        val byId = found.associateBy { it.id }
+        return ids.mapNotNull { byId[it] }
+    }
+
     /** The parts' listening state, fresh from the server. */
     suspend fun audiobookParts(ids: List<UUID>): List<BaseItemDto> =
         io { api.libraryApi.getItems(GetItemsRequest(userId = userId, ids = ids, fields = Audiobook.Fields)).content.items }
