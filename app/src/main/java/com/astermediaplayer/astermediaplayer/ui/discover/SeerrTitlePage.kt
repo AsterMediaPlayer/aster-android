@@ -294,10 +294,12 @@ private fun Header(viewModel: SeerrTitleViewModel, postersOnly: Boolean, poster:
                 }
                 if (details?.trailerYouTubeId != null || details?.trailerUrl != null) Chip("Trailer", false, lead(), icon = Icons.Default.PlayCircle) { onTrailer() }
                 val watchlist = viewModel.watchlist
-                if (watchlist.state != null) Chip(
-                    if (watchlist.on) "On Watchlist" else "Add to Watchlist", false, lead(),
-                    icon = if (watchlist.on) Icons.Default.BookmarkAdded else Icons.Default.BookmarkAdd, enabled = !watchlist.working,
-                ) { watchlist.toggle() }
+                WatchlistButton(watchlist) { press ->
+                    Chip(
+                        watchlist.label, false, lead(),
+                        icon = if (watchlist.on) Icons.Default.BookmarkAdded else Icons.Default.BookmarkAdd, enabled = !watchlist.working, onClick = press,
+                    )
+                }
                 if (viewModel.working) CircularProgressIndicator(Modifier.size(24.dp))
             }
             (viewModel.watchlist.problem ?: viewModel.problem)?.let { Text(it, style = Type.callout, color = Color(0xFFFF6961)) }

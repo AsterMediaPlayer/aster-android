@@ -13,6 +13,7 @@ libass = "0.5.1"
 jellyfinSdk = "1.9.2"
 coil = "3.6.3"
 okhttp = "5.5.0"
+zxing = "3.5.3"
 datastore = "1.3.0"
 coroutines = "1.11.0"
 serialization = "1.11.0"
@@ -50,6 +51,7 @@ jellyfin-core ={ group = "org.jellyfin.sdk", name = "jellyfin-core", version.ref
 coil-compose = { group = "io.coil-kt.coil3", name = "coil-compose", version.ref = "coil" }
 coil-network-okhttp = { group = "io.coil-kt.coil3", name = "coil-network-okhttp", version.ref = "coil" }
 okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhttp" }
+zxing-core = { group = "com.google.zxing", name = "core", version.ref = "zxing" }
 kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
 kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "serialization" }
 slf4j-android = { group = "org.slf4j", name = "slf4j-android", version.ref = "slf4j" }

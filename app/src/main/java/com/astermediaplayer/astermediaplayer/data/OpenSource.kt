@@ -110,6 +110,10 @@ data class OpenSourceComponent(
                     "Apache-2.0", "https://github.com/Kotlin/kotlinx.serialization", listOf("Apache-2.0"),
                 ),
                 OpenSourceComponent(
+                    "ZXing", "Draws the QR code for linking a tracking account from Settings.",
+                    "Apache-2.0", "https://github.com/zxing/zxing", listOf("Apache-2.0"),
+                ),
+                OpenSourceComponent(
                     "Guava", "Helpers Media3 and the casting libraries use.",
                     "Apache-2.0", "https://github.com/google/guava", listOf("Apache-2.0"),
                 ),

@@ -203,7 +203,7 @@ data class DetailContent(
 class DetailViewModel(private val repo: AsterRepository, private val itemId: UUID) : ViewModel() {
     private val _state = MutableStateFlow<Load<DetailContent>>(Load.Loading)
     val state: StateFlow<Load<DetailContent>> = _state.asStateFlow()
-    /** Its place on the person's linked watchlist (Simkl's Plan to Watch), for a film or show. */
+    /** Its place on the person's linked watchlists (Simkl; AniList and MyAnimeList for anime), for a film or show. */
     val watchlist = com.astermediaplayer.astermediaplayer.ui.discover.WatchlistModel(repo, viewModelScope)
 
     init {
@@ -755,11 +755,10 @@ private fun DetailInfo(
                 if (menuId != null) ActionButton("Disc Menu", Icons.Default.Album) { onDiscMenu(menuId) }
                 IconActionButton(if (item.userData?.isFavorite == true) Icons.Default.Favorite else Icons.Default.FavoriteBorder, "Favorite") { viewModel.toggleFavorite() }
                 val watchlist = viewModel.watchlist
-                if (watchlist.state != null && (item.type == BaseItemKind.MOVIE || item.type == BaseItemKind.SERIES)) {
-                    IconActionButton(
-                        if (watchlist.on) Icons.Default.BookmarkAdded else Icons.Default.BookmarkAdd,
-                        if (watchlist.on) "On Watchlist" else "Add to Watchlist",
-                    ) { watchlist.toggle() }
+                if (watchlist.shown && (item.type == BaseItemKind.MOVIE || item.type == BaseItemKind.SERIES)) {
+                    com.astermediaplayer.astermediaplayer.ui.discover.WatchlistButton(watchlist) { press ->
+                        IconActionButton(if (watchlist.on) Icons.Default.BookmarkAdded else Icons.Default.BookmarkAdd, watchlist.label, onClick = press)
+                    }
                     val context = LocalContext.current
                     LaunchedEffect(watchlist.problem) {
                         watchlist.problem?.let { android.widget.Toast.makeText(context, it, android.widget.Toast.LENGTH_LONG).show(); watchlist.problem = null }

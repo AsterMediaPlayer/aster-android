@@ -38,6 +38,7 @@ import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Checklist
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material3.DropdownMenu
@@ -100,6 +101,7 @@ private sealed interface SettingsPage {
     data object Subtitles : SettingsPage
     data object DiscMenus : SettingsPage
     data object TitlePages : SettingsPage
+    data object Tracking : SettingsPage
     data object ServerPlugins : SettingsPage
     data object Downloads : SettingsPage
     data object Account : SettingsPage
@@ -129,11 +131,12 @@ fun SettingsScreen(session: Session?, store: SettingsStore, servers: ServerActio
 
     SettingsFrame(page, modifier) {
         when (page) {
-            SettingsPage.Root -> RootPage(session, servers.onOpenChannels, ::open)
+            SettingsPage.Root -> RootPage(session, servers.repo, servers.onOpenChannels, ::open)
             SettingsPage.Playback -> PlaybackPage(settings, store, scope)
             SettingsPage.Subtitles -> SubtitlesPage(settings, store, scope, servers.repo)
             SettingsPage.DiscMenus -> DiscMenusPage(settings, store, scope)
             SettingsPage.TitlePages -> TitlePagesPage(settings, store, scope, servers.repo)
+            SettingsPage.Tracking -> TrackingPage(servers.repo)
             SettingsPage.ServerPlugins -> ServerPluginsPage(servers.repo, store)
             SettingsPage.Downloads -> DownloadsPage(settings, store, scope)
             SettingsPage.Account -> AccountPage(session, servers, onSignOut, ::open)
@@ -152,6 +155,7 @@ private fun SettingsPage.title(servers: List<SavedServer>) = when (this) {
     SettingsPage.Subtitles -> "Audio & Subtitles"
     SettingsPage.DiscMenus -> "Disc Menus"
     SettingsPage.TitlePages -> "Title Pages"
+    SettingsPage.Tracking -> "Tracking"
     SettingsPage.ServerPlugins -> "Server Plugins"
     SettingsPage.Downloads -> "Downloads"
     SettingsPage.Account -> "Account"
@@ -234,9 +238,9 @@ internal fun SNote(text: String) {
 @Composable
 internal fun SRow(
     title: String, value: String? = null, icon: ImageVector? = null, chevron: Boolean = false, enabled: Boolean = true,
-    destructive: Boolean = false, onClick: (() -> Unit)? = null,
+    destructive: Boolean = false, subtitle: String? = null, onClick: (() -> Unit)? = null,
 ) {
-    if (LocalIsTv.current) { TvRow(title, value, enabled = enabled, destructive = destructive, modifier = firstFocusModifier(onClick != null && enabled), icon = icon, chevron = chevron, onClick = onClick); return }
+    if (LocalIsTv.current) { TvRow(title, value, enabled = enabled, destructive = destructive, modifier = firstFocusModifier(onClick != null && enabled), icon = icon, chevron = chevron, subtitle = subtitle, onClick = onClick); return }
     val tint = if (destructive) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
     Row(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f))
@@ -244,7 +248,11 @@ internal fun SRow(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (icon != null) Icon(icon, null, tint = tint, modifier = Modifier.padding(end = 14.dp).size(24.dp))
-        Text(title, Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge, color = if (enabled) tint else MaterialTheme.colorScheme.onSurfaceVariant)
+        val titleColor = if (enabled) tint else MaterialTheme.colorScheme.onSurfaceVariant
+        if (subtitle != null) Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyLarge, color = titleColor)
+            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        } else Text(title, Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge, color = titleColor)
         if (value != null) Text(value, Modifier.padding(start = 12.dp).widthIn(max = 220.dp), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
         if (chevron) Icon(Icons.Default.ChevronRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 4.dp))
     }
@@ -277,13 +285,18 @@ internal fun SChoice(title: String, options: List<String>, selected: Int, onPick
 // --- The pages ---
 
 @Composable
-private fun RootPage(session: Session?, openChannels: () -> Unit, open: (SettingsPage) -> Unit) {
+private fun RootPage(session: Session?, repo: com.astermediaplayer.astermediaplayer.data.AsterRepository, openChannels: () -> Unit, open: (SettingsPage) -> Unit) {
     val tv = LocalIsTv.current
+    // Tracking accounts are linked on the server, through its plugin: shown where it offers any.
+    val tracks by produceState(false, session?.serverUrl, session?.userId) {
+        value = session?.kind == com.astermediaplayer.astermediaplayer.data.emby.ServerKind.Jellyfin && repo.trackingFeatures()?.services.orEmpty().isNotEmpty()
+    }
     SRow("Playback", icon = Icons.Default.PlayCircle, chevron = true) { open(SettingsPage.Playback) }
     SRow("Audio & Subtitles", icon = Icons.Default.ClosedCaption, chevron = true) { open(SettingsPage.Subtitles) }
     // Disc menus come from a Jellyfin plugin.
     if (session?.kind == com.astermediaplayer.astermediaplayer.data.emby.ServerKind.Jellyfin) SRow("Disc Menus", icon = Icons.Default.Album, chevron = true) { open(SettingsPage.DiscMenus) }
     SRow("Title Pages", icon = Icons.Default.MusicNote, chevron = true) { open(SettingsPage.TitlePages) }
+    if (tracks) SRow("Tracking", icon = Icons.Default.Checklist, chevron = true) { open(SettingsPage.Tracking) }
     // Channels are playlist tags on every server (Plex keeps them in a playlist's description); the plugins are Jellyfin's.
     if (session != null)
         SRow("Channels", icon = Icons.Default.Tv, chevron = true, onClick = openChannels)

@@ -1119,8 +1119,23 @@ class AsterRepository(val context: Context, private val store: SessionStore) {
         }
     }
 
-    /** Where a title stands on one of the person's watchlists: [on] is null when it couldn't be told. */
-    data class WatchlistState(val service: String, val linked: Boolean, val on: Boolean?)
+    /**
+     * Where a title stands on one of the person's watchlists: [on] is null when it couldn't be told. [fits] is whether the
+     * service can hold the title at all (AniList and MyAnimeList only anime); null from a plugin before 0.9.9, Simkl only.
+     */
+    data class WatchlistState(val service: String, val linked: Boolean, val on: Boolean?, val fits: Boolean? = null) {
+        /** The service's own name: Simkl, AniList, MyAnimeList. */
+        val name: String get() = nameOf(service)
+
+        companion object {
+            fun nameOf(service: String): String = when (service.lowercase()) {
+                "simkl" -> "Simkl"
+                "anilist" -> "AniList"
+                "myanimelist" -> "MyAnimeList"
+                else -> service.replaceFirstChar { it.uppercase() }
+            }
+        }
+    }
 
     /**
      * Where a title stands on the watchlists the server can add to (the plugin's `/AsterTracking/Watchlist`), linked ones
@@ -1135,10 +1150,13 @@ class AsterRepository(val context: Context, private val store: SessionStore) {
             val reply = JSONObject(serverRequest("GET", "/AsterTracking/Watchlist?$query"))
             val list = reply.ci("Services") as? org.json.JSONArray ?: return@runCatching emptyList()
             (0 until list.length()).mapNotNull { list.optJSONObject(it) }.map { o ->
-                WatchlistState((o.ci("Service") as? String).orEmpty(), o.ci("Linked") == true, o.ci("On") as? Boolean)
-            }.filter { it.service in features.watchlist }
+                WatchlistState((o.ci("Service") as? String).orEmpty(), o.ci("Linked") == true, o.ci("On") as? Boolean, o.ci("Fits") as? Boolean)
+            }.filter { state -> features.watchlist.any { it.equals(state.service, ignoreCase = true) } }
         }.onFailure { android.util.Log.w("Aster", "Watchlist state: $it") }.getOrDefault(emptyList())
     }
+
+    /** A service's watchlist can't hold the title after all (400, 404): it's no longer offered for it. */
+    class WatchlistUnsupported : Exception()
 
     /** Puts a title on a service's watchlist ([on]) or takes it off; whether it's on it now. Throws with words to show. */
     suspend fun setWatchlist(service: String, on: Boolean, mediaType: String, anime: Boolean, ids: Map<String, String>, title: String?, year: Int?): Boolean =
@@ -1154,9 +1172,14 @@ class AsterRepository(val context: Context, private val store: SessionStore) {
             http.newCall(request).execute().use { r ->
                 val text = r.body.string()
                 if (r.isSuccessful) return@use runCatching { JSONObject(text).ci("On") as? Boolean }.getOrNull() ?: on
-                val name = service.replaceFirstChar { it.uppercase() }
+                // 400 or 404: nothing the service can do for this title, so it isn't offered.
+                if (r.code == 400 || r.code == 404) throw WatchlistUnsupported()
+                // The plugin's problems carry their reason in `detail` ("It's on your AniList as Watching already.").
+                val detail = runCatching { JSONObject(text).ci("detail") as? String }.getOrNull()?.takeIf { it.isNotBlank() }
+                if (detail != null) error(detail)
+                val name = WatchlistState.nameOf(service)
                 error(when (r.code) {
-                    409 -> "Link $name first, in Settings ▸ Tracking."
+                    409 -> "Link $name to your account first."
                     410 -> "$name needs linking again."
                     422 -> "$name doesn't know this title."
                     502 -> "$name couldn't be reached. Try again."
@@ -1164,6 +1187,57 @@ class AsterRepository(val context: Context, private val store: SessionStore) {
                 })
             }
         }
+
+    /** One call on the plugin's tracking accounts: the status and the body, whatever the status. */
+    private suspend fun trackingSend(method: String, path: String, body: JSONObject? = null): Pair<Int, String> = withContext(Dispatchers.IO) {
+        val builder = Request.Builder().url(serverUrl.trimEnd('/') + "/AsterTracking/Accounts" + path).header("Authorization", authorizationHeader())
+        if (method == "GET") builder.get()
+        else builder.method(method, (body ?: JSONObject()).toString().toRequestBody("application/json".toMediaType()))
+        http.newCall(builder.build()).execute().use { r -> r.code to r.body.string() }
+    }
+
+    /** What the person has linked through the plugin, and its last sends. */
+    suspend fun trackedAccounts(): TrackedAccounts {
+        val (status, text) = trackingSend("GET", "")
+        if (status != 200) throw TrackingException.status(status)
+        return TrackedAccounts.parse(text)
+    }
+
+    /** Starts linking [service]: where to go, and the code to enter there (or that a code is to be pasted back). */
+    suspend fun startTrackingLink(service: TrackedService): TrackedLink {
+        val (status, text) = trackingSend("POST", "/${service.id}/Link")
+        return when (status) {
+            200 -> TrackedLink.parse(text)
+            409 -> throw TrackingException.noApp(service)
+            502 -> throw TrackingException.unreachable(service)
+            else -> throw TrackingException.status(status)
+        }
+    }
+
+    /** Asks whether the code's been entered or Aster approved, or hands over what was [pasted]. */
+    suspend fun completeTrackingLink(service: TrackedService, pasted: String? = null): TrackedLinkResult {
+        val (status, _) = trackingSend("POST", "/${service.id}/Link/Complete", pasted?.let { JSONObject().put("Code", it) })
+        return when (status) {
+            200 -> TrackedLinkResult.Linked
+            202 -> TrackedLinkResult.Waiting
+            400 -> TrackedLinkResult.Failed("Paste the code the sign-in page showed.")
+            409 -> TrackedLinkResult.Failed(TrackingException.noApp(service).message.orEmpty())
+            410 -> TrackedLinkResult.Expired
+            502 -> TrackedLinkResult.Failed(TrackingException.unreachable(service).message.orEmpty())
+            else -> TrackedLinkResult.Failed(TrackingException.status(status).message.orEmpty())
+        }
+    }
+
+    /** Whether the server sends what the person watches or listens to, to [service]. */
+    suspend fun setTrackingScrobble(service: TrackedService, on: Boolean) {
+        val (status, _) = trackingSend("PUT", "/${service.id}/Settings", JSONObject().put("Scrobble", on))
+        if (status !in 200..299) throw TrackingException.status(status)
+    }
+
+    suspend fun unlinkTracking(service: TrackedService) {
+        val (status, _) = trackingSend("DELETE", "/${service.id}")
+        if (status !in 200..299) throw TrackingException.status(status)
+    }
 
     /** "{server}/AsterTracking/Seerr": where Seerr's `/api/v1/…` paths go on. */
     private fun seerrBase(proxy: String?): String {
