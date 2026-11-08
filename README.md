@@ -79,6 +79,7 @@ Aster is developed against Jellyfin 12 and Emby 4.11. Emby support goes through 
 ### Music and audiobooks
 - Albums, artists, playlists and songs, with a now-playing bar and a full-screen player with shuffle, repeat, Up Next and lyrics.
 - Audiobooks with a shelf per library and progress reported back to the server.
+- **Android Auto and cars with Android built in**: music (recently played albums, Recent, Albums, Artists, Playlists, with Shuffle and an artist's Instant Mix) and audiobooks (Continue Listening, Series, Recently Added, Authors, and each book's chapters) in the car. Now Playing has a heart, shuffle and repeat for music, and back 15, ahead 30, speed and chapters for books. What played last is waiting, paused, when the car connects.
 
 ### Live TV and Channels
 - A TV guide with programme details, recordings, and series recording rules.
@@ -86,7 +87,8 @@ Aster is developed against Jellyfin 12 and Emby 4.11. Emby support goes through 
 
 ### Accounts and servers
 - Several servers and users stay signed in, with an optional password to switch to one and a lock after time away from the app.
-- Settings follow the Apple apps' layout: Playback, Audio & Subtitles, Disc Menus, Title Pages, Channels, Server Plugins, Account and About.
+- Settings follow the Apple apps' layout: Playback, Audio & Subtitles, Disc Menus, Title Pages, Tracking, Channels, Server Plugins, Account and About.
+- **Tracking**: with the Aster Discovery and Tracking plugin, link Simkl, AniList, MyAnimeList, Last.fm, ListenBrainz and Hardcover once on the server, for every app; the server sends what you watch and listen to. **Add to Watchlist** puts a film or show on Simkl's Plan to Watch, and anime on AniList's Planning or MyAnimeList's Plan to Watch.
 - **Welcome screen**: shown once for each Jellyfin server you sign in to, with what Aster does and what its companion plugins add; an administrator can switch the plugins on from it. Settings ▸ Server Plugins brings it back.
 - **Server Plugins** shows which of Aster's companion plugins are on your server, and for an administrator installs them, turns them on or off, and restarts the server.
 

@@ -16,8 +16,8 @@ android {
         applicationId = "com.astermediaplayer.app" + ((findProperty("appIdSuffix") as String?) ?: "")
         minSdk = 26
         targetSdk = 37
-        versionCode = 10
-        versionName = "0.10.8"
+        versionCode = 11
+        versionName = "0.10.9"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
