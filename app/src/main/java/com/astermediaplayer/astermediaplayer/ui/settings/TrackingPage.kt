@@ -4,6 +4,7 @@ import android.content.Intent
 import android.graphics.Bitmap
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -233,26 +234,24 @@ private fun TrackingLinkDialog(repo: AsterRepository, service: TrackedService, o
                         OutlinedTextField(pasted, { pasted = it }, label = { Text("Paste the code") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                     }
                     current.code != null -> {
-                        Row(horizontalArrangement = Arrangement.spacedBy(20.dp), verticalAlignment = Alignment.CenterVertically) {
-                            QrCode(current.completeUrl ?: current.url)
-                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                Text("On a phone or computer, go to", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                Address(current.url) { open(current.url) }
-                                Text("and enter", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                SelectionContainer { Text(current.code, fontSize = 30.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace) }
+                        WithQrCode(current.completeUrl ?: current.url) {
+                            Text("On a phone or computer, go to", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Address(current.url) { open(current.url) }
+                            Text("and enter", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            // One line, whatever its length: a code broken over two reads wrong.
+                            SelectionContainer {
+                                Text(current.code, fontSize = 30.sp, lineHeight = 38.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace, maxLines = 1, softWrap = false,
+                                    color = MaterialTheme.colorScheme.onSurface)
                             }
                         }
                         if (!expired) Waiting(service)
                     }
                     else -> {
                         // Last.fm: approve Aster on its page.
-                        Row(horizontalArrangement = Arrangement.spacedBy(20.dp), verticalAlignment = Alignment.CenterVertically) {
-                            QrCode(current.url)
-                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                Text("Open ${service.title} and approve Aster.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                Address(current.url) { open(current.url) }
-                                Text("${service.title} may show an error page afterwards. Ignore it and come back here.", style = MaterialTheme.typography.bodySmall)
-                            }
+                        WithQrCode(current.url) {
+                            Text("Open ${service.title} and approve Aster.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Address(current.url) { open(current.url) }
+                            Text("${service.title} may show an error page afterwards. Ignore it and come back here.", style = MaterialTheme.typography.bodySmall)
                         }
                         if (!expired) Waiting(service)
                     }
@@ -285,6 +284,26 @@ private fun Waiting(service: TrackedService) {
     Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
         CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
         Text("Waiting for ${service.title}…", color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+/**
+ * The instructions with the address's QR code: beside them on a TV, which has the room; under them on a phone, where a
+ * dialog's narrow column beside it broke the code over two lines.
+ */
+@Composable
+private fun WithQrCode(address: String, instructions: @Composable () -> Unit) {
+    if (LocalIsTv.current) {
+        Row(horizontalArrangement = Arrangement.spacedBy(20.dp), verticalAlignment = Alignment.CenterVertically) {
+            QrCode(address)
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) { instructions() }
+        }
+    } else {
+        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            instructions()
+            Text("or scan this with a phone's camera", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { QrCode(address) }
+        }
     }
 }
 
