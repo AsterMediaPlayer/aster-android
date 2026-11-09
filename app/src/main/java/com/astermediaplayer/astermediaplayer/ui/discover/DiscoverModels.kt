@@ -98,7 +98,7 @@ class DiscoverViewModel(val repo: AsterRepository) : ViewModel() {
             // for the moment the plugin's known to be there.
             val account = async { repo.seerr() }
             val upcoming = async { runCatching { repo.upcoming(1).isNotEmpty() }.getOrDefault(false) }
-            pluginPresent = repo.trackingFeatures() != null
+            pluginPresent = repo.trackingFeatures()?.discover == true
             rows.load(account = account)
             seerr = account.await()
             answered = true

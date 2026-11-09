@@ -289,7 +289,7 @@ private fun RootPage(session: Session?, repo: com.astermediaplayer.astermediapla
     val tv = LocalIsTv.current
     // Tracking accounts are linked on the server, through its plugin: shown where it offers any.
     val tracks by produceState(false, session?.serverUrl, session?.userId) {
-        value = session?.kind == com.astermediaplayer.astermediaplayer.data.emby.ServerKind.Jellyfin && repo.trackingFeatures()?.services.orEmpty().isNotEmpty()
+        value = session?.kind != com.astermediaplayer.astermediaplayer.data.emby.ServerKind.Emby && repo.trackingFeatures()?.services.orEmpty().isNotEmpty()
     }
     SRow("Playback", icon = Icons.Default.PlayCircle, chevron = true) { open(SettingsPage.Playback) }
     SRow("Audio & Subtitles", icon = Icons.Default.ClosedCaption, chevron = true) { open(SettingsPage.Subtitles) }

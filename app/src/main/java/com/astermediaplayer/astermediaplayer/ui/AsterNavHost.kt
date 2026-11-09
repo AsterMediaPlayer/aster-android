@@ -799,7 +799,7 @@ private fun MainTabs(
     var hasDiscover by remember(repo.currentServerId) { mutableStateOf(false) }
     val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
     LaunchedEffect(repo.currentServerId, lifecycle) {
-        lifecycle.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.STARTED) { hasDiscover = repo.trackingFeatures() != null }
+        lifecycle.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.STARTED) { hasDiscover = repo.trackingFeatures()?.discover == true }
     }
     val discover: com.astermediaplayer.astermediaplayer.ui.discover.DiscoverViewModel = viewModel(
         key = "discover-${repo.currentServerId}",
