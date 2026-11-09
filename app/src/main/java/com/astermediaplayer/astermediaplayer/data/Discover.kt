@@ -18,6 +18,11 @@ data class TrackingFeatures(
     val services: List<String>,
     /** The services whose watchlist the apps can add to (`/AsterTracking/Watchlist`): "simkl"; empty on an older plugin. */
     val watchlist: List<String> = emptyList(),
+    /**
+     * Whether the server builds a Discover page (`/AsterTracking/Discover/Home`): the Jellyfin plugin does, and says
+     * nothing; Aster for Plex doesn't yet, and says `"Discover": false`.
+     */
+    val discover: Boolean = true,
 ) {
     companion object {
         fun parse(json: String): TrackingFeatures {
@@ -28,6 +33,7 @@ data class TrackingFeatures(
                 seerrProxy = (seerr?.ci("Proxy") as? String)?.ifEmpty { null },
                 services = (root.ci("Services") as? JSONArray).strings(),
                 watchlist = (root.ci("Watchlist") as? JSONArray).strings(),
+                discover = root.ci("Discover") as? Boolean ?: true,
             )
         }
     }

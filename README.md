@@ -88,7 +88,7 @@ Aster is developed against Jellyfin 12 and Emby 4.11. Emby support goes through 
 ### Accounts and servers
 - Several servers and users stay signed in, with an optional password to switch to one and a lock after time away from the app.
 - Settings follow the Apple apps' layout: Playback, Audio & Subtitles, Disc Menus, Title Pages, Tracking, Channels, Server Plugins, Account and About.
-- **Tracking**: with the Aster Discovery and Tracking plugin, link Simkl, AniList, MyAnimeList, Last.fm, ListenBrainz and Hardcover once on the server, for every app; the server sends what you watch and listen to. **Add to Watchlist** puts a film or show on Simkl's Plan to Watch, and anime on AniList's Planning or MyAnimeList's Plan to Watch.
+- **Tracking**: with the Aster Discovery and Tracking plugin, link Simkl, AniList, MyAnimeList, Last.fm, ListenBrainz and Hardcover once on the server, for every app; the server sends what you watch and listen to. **Add to Watchlist** puts a film or show on Simkl's Plan to Watch, and anime on AniList's Planning or MyAnimeList's Plan to Watch. On **Plex**, which takes no plugins, the same comes from [Aster for Plex](https://github.com/AsterMediaPlayer/aster-companion-plugins/tree/main/AsterPlex), a container beside the server: the app finds it among the server's addresses, with nothing to set up.
 - **Welcome screen**: shown once for each Jellyfin server you sign in to, with what Aster does and what its companion plugins add; an administrator can switch the plugins on from it. Settings ▸ Server Plugins brings it back.
 - **Server Plugins** shows which of Aster's companion plugins are on your server, and for an administrator installs them, turns them on or off, and restarts the server.
 

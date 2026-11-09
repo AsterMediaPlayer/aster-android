@@ -10,6 +10,7 @@ import com.astermediaplayer.astermediaplayer.data.emby.ServerKind
 import com.astermediaplayer.astermediaplayer.data.plex.OkHttpPlexTransport
 import com.astermediaplayer.astermediaplayer.data.plex.PlexAccount
 import com.astermediaplayer.astermediaplayer.data.plex.PlexApiClient
+import com.astermediaplayer.astermediaplayer.data.plex.PlexCompanion
 import kotlinx.coroutines.withTimeoutOrNull
 import com.astermediaplayer.astermediaplayer.data.plex.PlexReconnect
 import com.astermediaplayer.astermediaplayer.data.plex.PlexHomeChoice
@@ -1030,6 +1031,57 @@ class AsterRepository(val context: Context, private val store: SessionStore) {
 
     // MARK: Discover and tracking (the Aster Discovery and Tracking plugin, at /AsterTracking)
 
+    /** Where `/AsterTracking` was found for each server, or not, and when it was looked for. */
+    private val trackingBases = java.util.concurrent.ConcurrentHashMap<String, Pair<String?, Long>>()
+
+    /**
+     * Where `/AsterTracking` is: the server itself on Jellyfin, where it's the plugin; on Plex, which takes no plugins, the
+     * Aster for Plex container beside it, found among the server's addresses (see [PlexCompanion]); null on Emby, or on a
+     * Plex server without one. A Plex server's addresses are asked of plex.tv again, as the container's is added to them
+     * after sign-in; a server without one is looked at again after ten minutes.
+     */
+    private suspend fun trackingBase(): String? {
+        if (serverKind == ServerKind.Jellyfin) return serverUrl
+        if (serverKind != ServerKind.Plex) {
+            com.astermediaplayer.astermediaplayer.data.diagnostics.DebugLog.note("Tracking", "None on a $serverKind server")
+            return null
+        }
+        val server = currentServerId ?: return null
+        trackingBases[server]?.let { (found, at) -> if (found != null || System.currentTimeMillis() - at < 10 * 60_000L) return found }
+        val current = session ?: return null
+        val link = current.plex
+        if (link == null) {
+            com.astermediaplayer.astermediaplayer.data.diagnostics.DebugLog.note("Tracking", "No plex.tv link for this sign-in, so no addresses to look for Aster for Plex at")
+            trackingBases[server] = null to System.currentTimeMillis()
+            return null
+        }
+        val connections = runCatching { plexAccount.servers(link.accountToken).firstOrNull { it.clientIdentifier == link.machineId }?.connections }
+            .getOrNull()?.takeIf { it.isNotEmpty() } ?: link.connections
+        val found = runCatching { PlexCompanion.find(PlexCompanion.candidates(connections), current.accessToken, plexDevice) }.getOrNull()
+        trackingBases[server] = found to System.currentTimeMillis()
+        com.astermediaplayer.astermediaplayer.data.diagnostics.DebugLog.note("Tracking", if (found != null) "Aster for Plex at $found" else "No Aster for Plex among the server's addresses")
+        return found
+    }
+
+    /** A request to `/AsterTracking` [path] at [base], signed in as the server wants: Plex's token for the container, Jellyfin's header for the plugin. */
+    private fun trackingRequest(base: String, path: String): Request.Builder {
+        val builder = Request.Builder().url(base.trimEnd('/') + path)
+        return if (serverKind == ServerKind.Plex) builder.header("X-Plex-Token", checkNotNull(session).accessToken).header("Accept", "application/json")
+        else builder.header("Authorization", authorizationHeader())
+    }
+
+    /** A GET or other call on `/AsterTracking`; the body, or throws on anything but success. */
+    private suspend fun trackingCall(method: String, path: String, jsonBody: String? = null): String = withContext(Dispatchers.IO) {
+        val base = trackingBase() ?: error("no Aster tracking on this server")
+        val builder = trackingRequest(base, path)
+        if (method == "GET") builder.get() else builder.method(method, (jsonBody ?: "").toRequestBody("application/json".toMediaType()))
+        http.newCall(builder.build()).execute().use { r ->
+            val body = r.body.string()
+            if (!r.isSuccessful) error("the server said ${r.code}")
+            body
+        }
+    }
+
     /** The last `/AsterTracking/Features` this session had a 200 for, by server and user; kept through a later failure. */
     private val trackingFeaturesByServer = java.util.concurrent.ConcurrentHashMap<String, TrackingFeatures>()
     /** When each server was last asked, so coming back to the app after a long while asks again. */
@@ -1040,7 +1092,7 @@ class AsterRepository(val context: Context, private val store: SessionStore) {
      * no answer) counts as no plugin too, unless this session had a 200 from it before, which then stands.
      */
     suspend fun trackingFeatures(maxAgeMs: Long = 30 * 60_000L): TrackingFeatures? {
-        if (serverKind != ServerKind.Jellyfin) return null
+        if (serverKind == ServerKind.Emby) return null
         val server = currentServerId ?: return null
         val asked = trackingFeaturesAskedAt[server]
         if (asked != null && System.currentTimeMillis() - asked < maxAgeMs) return trackingFeaturesByServer[server]
@@ -1054,8 +1106,15 @@ class AsterRepository(val context: Context, private val store: SessionStore) {
         val asked = trackingFeaturesAskedAt[server]
         if (asked != null && System.currentTimeMillis() - asked < maxAgeMs) return trackingFeaturesByServer[server]
         return withContext(Dispatchers.IO) {
+            val base = trackingBase()
+            if (base == null) {
+                trackingFeaturesAskedAt[server] = System.currentTimeMillis()
+                trackingFeaturesByServer.remove(server)
+                return@withContext null
+            }
             val answer = runCatching {
-                http.newCall(Request.Builder().url(serverUrl.trimEnd('/') + "/AsterTracking/Features").header("Authorization", authorizationHeader()).build()).execute().use { r ->
+                http.newCall(trackingRequest(base, "/AsterTracking/Features").build()).execute().use { r ->
+                    com.astermediaplayer.astermediaplayer.data.diagnostics.DebugLog.note("Tracking", "Features on a $serverKind server at $base: ${r.code}")
                     when {
                         r.isSuccessful -> Result.success(TrackingFeatures.parse(r.body.string()))
                         r.code == 404 -> Result.success(null)
@@ -1079,7 +1138,7 @@ class AsterRepository(val context: Context, private val store: SessionStore) {
 
     /** The signed-in person's Discover page, built by the server; [fresh] has it built again now (pull to refresh). */
     suspend fun discoverHome(fresh: Boolean = false): DiscoverPage {
-        val text = serverRequest("GET", "/AsterTracking/Discover/Home" + if (fresh) "?fresh=true" else "")
+        val text = trackingCall("GET", "/AsterTracking/Discover/Home" + if (fresh) "?fresh=true" else "")
         return withContext(Dispatchers.Default) { DiscoverPage.parse(text) }.also { keepSnapshot("discover-home", text) }
     }
 
@@ -1147,7 +1206,7 @@ class AsterRepository(val context: Context, private val store: SessionStore) {
         val query = (listOf("mediaType" to mediaType) + ids.filterValues { it.isNotBlank() }.toList())
             .joinToString("&") { (k, v) -> "$k=${android.net.Uri.encode(v)}" }
         return runCatching {
-            val reply = JSONObject(serverRequest("GET", "/AsterTracking/Watchlist?$query"))
+            val reply = JSONObject(trackingCall("GET", "/AsterTracking/Watchlist?$query"))
             val list = reply.ci("Services") as? org.json.JSONArray ?: return@runCatching emptyList()
             (0 until list.length()).mapNotNull { list.optJSONObject(it) }.map { o ->
                 WatchlistState((o.ci("Service") as? String).orEmpty(), o.ci("Linked") == true, o.ci("On") as? Boolean, o.ci("Fits") as? Boolean)
@@ -1165,8 +1224,8 @@ class AsterRepository(val context: Context, private val store: SessionStore) {
                 .put("Ids", JSONObject(ids.filterValues { it.isNotBlank() }))
             title?.let { body.put("Title", it) }
             year?.let { body.put("Year", it) }
-            val request = Request.Builder().url(serverUrl.trimEnd('/') + "/AsterTracking/Watchlist/" + android.net.Uri.encode(service))
-                .header("Authorization", authorizationHeader())
+            val base = trackingBase() ?: error("This server has no Aster tracking.")
+            val request = trackingRequest(base, "/AsterTracking/Watchlist/" + android.net.Uri.encode(service))
                 .method(if (on) "POST" else "DELETE", body.toString().toRequestBody("application/json".toMediaType()))
                 .build()
             http.newCall(request).execute().use { r ->
@@ -1190,7 +1249,8 @@ class AsterRepository(val context: Context, private val store: SessionStore) {
 
     /** One call on the plugin's tracking accounts: the status and the body, whatever the status. */
     private suspend fun trackingSend(method: String, path: String, body: JSONObject? = null): Pair<Int, String> = withContext(Dispatchers.IO) {
-        val builder = Request.Builder().url(serverUrl.trimEnd('/') + "/AsterTracking/Accounts" + path).header("Authorization", authorizationHeader())
+        val base = trackingBase() ?: return@withContext 404 to ""
+        val builder = trackingRequest(base, "/AsterTracking/Accounts" + path)
         if (method == "GET") builder.get()
         else builder.method(method, (body ?: JSONObject()).toString().toRequestBody("application/json".toMediaType()))
         http.newCall(builder.build()).execute().use { r -> r.code to r.body.string() }
