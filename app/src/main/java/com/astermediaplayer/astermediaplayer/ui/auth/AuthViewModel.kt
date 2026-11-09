@@ -41,7 +41,12 @@ data class AuthState(
     val plexPinError: String? = null,
 )
 
-class AuthViewModel(private val repo: AsterRepository, private val onServerChanged: () -> Unit = {}) : ViewModel() {
+class AuthViewModel(
+    private val repo: AsterRepository,
+    private val onServerChanged: () -> Unit = {},
+    /** Whether Android 17 has the home network shut to the app, its permission refused. */
+    private val localNetworkBlocked: () -> Boolean = { false },
+) : ViewModel() {
     private val _state = MutableStateFlow(AuthState())
     val state: StateFlow<AuthState> = _state.asStateFlow()
     private var quickConnectJob: Job? = null
@@ -80,7 +85,7 @@ class AuthViewModel(private val repo: AsterRepository, private val onServerChang
                 val quick = repo.quickConnectAvailable()
                 _state.update { it.copy(quickConnectAvailable = quick) }
             } catch (e: Exception) {
-                _state.update { it.copy(busy = false, error = e.userMessage()) }
+                _state.update { it.copy(busy = false, error = failure(e, _state.value.serverInput)) }
             }
         }
     }
@@ -94,7 +99,7 @@ class AuthViewModel(private val repo: AsterRepository, private val onServerChang
                 onServerChanged()
                 _state.update { it.copy(signedIn = true) }
             } catch (e: Exception) {
-                _state.update { it.copy(error = e.userMessage()) }
+                _state.update { it.copy(error = failure(e, server.session.serverUrl)) }
             }
         }
     }
@@ -106,6 +111,11 @@ class AuthViewModel(private val repo: AsterRepository, private val onServerChang
         onServerChanged()
         _state.update { it.copy(asking = null, signedIn = true) }
     }
+
+    /** Why reaching [address] failed: the permission, when it's a home-network address and that's been refused, rather than a bare timeout. */
+    private fun failure(e: Exception, address: String): String =
+        if (localNetworkBlocked() && com.astermediaplayer.astermediaplayer.ui.components.LocalNetwork.isLocalAddress(address)) com.astermediaplayer.astermediaplayer.ui.components.LocalNetwork.REFUSED
+        else e.userMessage()
 
     fun dismissAsking() = _state.update { it.copy(asking = null) }
 

@@ -279,6 +279,11 @@ fun AsterNavHost(signedIn: Boolean) {
         ) notificationPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
     }
 
+    // Android 17 shuts the home network to the app until it's allowed: its server, a Plex server's local address, Aster for
+    // Plex, a Chromecast. Asked on opening the app signed in, for those updating already signed in (a new sign-in asks first).
+    val localNetwork = com.astermediaplayer.astermediaplayer.ui.components.rememberLocalNetworkAccess()
+    LaunchedEffect(Unit) { if (repo.session != null) localNetwork {} }
+
     // Switching servers starts the app afresh on the new one: the whole back stack goes, and with it every screen's loaded data.
     val servers = remember {
         ServerActions(
@@ -341,7 +346,7 @@ fun AsterNavHost(signedIn: Boolean) {
         ) {
         NavHost(nav, startDestination = if (signedIn) Routes.MAIN else Routes.AUTH, modifier = Modifier.fillMaxSize().focusRequester(pageFocus).focusRestorer()) {
             composable(Routes.AUTH) {
-                val vm: AuthViewModel = viewModel(factory = viewModelFactory { initializer { AuthViewModel(repo, app::resetForServerChange) } })
+                val vm: AuthViewModel = viewModel(factory = viewModelFactory { initializer { AuthViewModel(repo, app::resetForServerChange) { com.astermediaplayer.astermediaplayer.ui.components.LocalNetwork.blocked(app) } } })
                 AuthScreen(vm, onSignedIn = { nav.navigate(Routes.MAIN) { popUpTo(Routes.AUTH) { inclusive = true } } })
             }
             composable(Routes.MAIN) {
