@@ -66,6 +66,8 @@ fun AuthScreen(viewModel: AuthViewModel, onSignedIn: () -> Unit) {
         true
     }
     val servers by viewModel.servers.collectAsStateWithLifecycle()
+    // Android 17 asks before the app may reach the home network, where most servers are; asked just before the first try.
+    val localNetwork = com.astermediaplayer.astermediaplayer.ui.components.rememberLocalNetworkAccess()
     LaunchedEffect(state.signedIn) { if (state.signedIn) onSignedIn() }
     // Back steps back a stage, as on the Apple apps: out of Quick Connect, then to the server screen, rather than leaving the app.
     androidx.activity.compose.BackHandler(enabled = state.connectedServer != null || state.plexCode != null || state.plexServers != null || state.plexUsers != null) {
@@ -135,18 +137,18 @@ fun AuthScreen(viewModel: AuthViewModel, onSignedIn: () -> Unit) {
                     label = { Text("Server address") }, placeholder = { Text("jellyfin.example.com:8096") },
                     singleLine = true, modifier = Modifier.fillMaxWidth().then(leaves),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Go),
-                    keyboardActions = KeyboardActions(onGo = { viewModel.connect() }),
+                    keyboardActions = KeyboardActions(onGo = { localNetwork(viewModel::connect) }),
                 )
                 Button(
-                    onClick = viewModel::connect, enabled = !state.busy && state.serverInput.isNotBlank(),
+                    onClick = { localNetwork(viewModel::connect) }, enabled = !state.busy && state.serverInput.isNotBlank(),
                     modifier = Modifier.fillMaxWidth().then(ring),
                 ) { if (state.busy) CircularProgressIndicator(Modifier.padding(2.dp)) else Text("Connect") }
-                OutlinedButton(onClick = viewModel::startPlex, enabled = !state.busy, modifier = Modifier.fillMaxWidth().then(ring)) { Text("Sign in with Plex") }
+                OutlinedButton(onClick = { localNetwork(viewModel::startPlex) }, enabled = !state.busy, modifier = Modifier.fillMaxWidth().then(ring)) { Text("Sign in with Plex") }
                 // Servers already signed in to: back to one without typing it.
                 if (servers.isNotEmpty()) {
                     Text("Your Servers", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 10.dp))
                     servers.forEach { server ->
-                        OutlinedButton(onClick = { viewModel.switchTo(server) }, modifier = Modifier.fillMaxWidth().then(ring), contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp)) {
+                        OutlinedButton(onClick = { localNetwork { viewModel.switchTo(server) } }, modifier = Modifier.fillMaxWidth().then(ring), contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp)) {
                             Column(Modifier.weight(1f)) {
                                 Text(server.titleAmong(servers), style = MaterialTheme.typography.bodyLarge)
                                 Text("${server.session.kind.displayName} · ${server.session.userName}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
