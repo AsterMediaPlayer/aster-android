@@ -1043,7 +1043,7 @@ private fun MainTabs(
 
 /** Who's watching, at the top of the TV menu, as tvOS 27's sidebar header: pressing it asks. Nothing without a household. */
 @Composable
-private fun TvMenuProfile(onClose: () -> Unit) {
+private fun TvMenuProfile(onClose: () -> Unit, onFocus: (Boolean) -> Unit) {
     val app = LocalContext.current.applicationContext as AsterApp
     val household by app.households.state.collectAsStateWithLifecycle()
     val me = household.current
@@ -1052,7 +1052,7 @@ private fun TvMenuProfile(onClose: () -> Unit) {
     fun pt(points: Float) = (points * u).dp
     var focused by remember { mutableStateOf(false) }
     Row(
-        Modifier.fillMaxWidth().height(pt(86f)).padding(bottom = pt(10f)).onFocusChanged { focused = it.isFocused }
+        Modifier.fillMaxWidth().height(pt(86f)).padding(bottom = pt(10f)).onFocusChanged { if (it.isFocused != focused) onFocus(it.isFocused); focused = it.isFocused }
             .clip(CircleShape).background(if (focused) Color.White else Color.Transparent)
             .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onClose(); app.households.presentPicker() }
             .padding(start = pt(14f)),
@@ -1131,7 +1131,8 @@ internal fun TvMenu(items: List<BarItem>, isSelected: (BarItem) -> Boolean, onPi
                 },
             verticalArrangement = Arrangement.spacedBy(pt(1f)),
         ) {
-            TvMenuProfile(onClose)
+            // Counted with the menu's own rows, so focus on it isn't taken back to the page's row.
+            TvMenuProfile(onClose) { focusedItems += if (it) 1 else -1 }
             items.forEach { item ->
                 var focused by remember { mutableStateOf(false) }
                 val tint = if (focused) Color.Black else Color.White
