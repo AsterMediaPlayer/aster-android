@@ -44,8 +44,20 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
         return super.dispatchGenericMotionEvent(ev)
     }
 
+    /** Settings › Playback › Controllers, kept here as it changes so each press reads it at once. */
+    @Volatile private var swapControllerButtons = false
+
     override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
         com.astermediaplayer.astermediaplayer.data.diagnostics.InputLog.key(event)
+        // A controller's face buttons swapped: the key each stands for is sent in its place, and the button itself is taken
+        // (so the system doesn't also send its own stand-in for it).
+        val code = if (event.isFromSource(android.view.InputDevice.SOURCE_GAMEPAD)) ControllerButtons.remap(event.keyCode, swapControllerButtons) else null
+        if (code != null) {
+            super.dispatchKeyEvent(
+                android.view.KeyEvent(event.downTime, event.eventTime, event.action, code, event.repeatCount, event.metaState, event.deviceId, event.scanCode, event.flags, event.source),
+            )
+            return true
+        }
         return super.dispatchKeyEvent(event)
     }
 
@@ -57,6 +69,9 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
             navigationBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
         )
         val repo = (application as AsterApp).repository
+        lifecycleScope.launch {
+            (application as AsterApp).settings.settings.collect { swapControllerButtons = it.swapControllerButtons }
+        }
         // What the device decodes and which input devices it has: asked in the background, not before the first frame (a
         // second and more on a TV box), and the decoder lists are ready by the first video.
         val touchLayer = com.astermediaplayer.astermediaplayer.ui.theme.usesTouchLayer(this)

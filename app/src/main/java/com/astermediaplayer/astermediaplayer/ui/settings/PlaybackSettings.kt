@@ -31,4 +31,7 @@ internal fun PlaybackPage(settings: AppSettings, store: SettingsStore, scope: ko
         SChoice("Listen Ahead", choices.map { it.second }, choices.indexOfFirst { it.first == settings.listenAheadMinutes }.coerceAtLeast(0)) { scope.launch { store.setListenAheadMinutes(choices[it].first) } }
         SNote("Saves what's coming up in an audiobook as it plays, so it carries on through a spot with no signal. It's kept in the cache, and let go once heard. Downloaded books don't need it.")
     }
+    SGroup("Controllers")
+    SSwitch("Swap A/B and X/Y", settings.swapControllerButtons) { scope.launch { store.setSwapControllerButtons(it) } }
+    SNote("A game controller moves through Aster like the remote. Normally the bottom button (A) opens and the right one (B) goes back. Swapped, they follow Nintendo's layout: the right button opens and the bottom one goes back, and X and Y trade places too.")
 }
