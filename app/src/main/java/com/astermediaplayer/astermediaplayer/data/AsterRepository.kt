@@ -233,6 +233,8 @@ class AsterRepository(val context: Context, private val store: SessionStore) {
         client = connect(current.serverUrl, current.accessToken, current.kind)
         session = current
         checkLock()
+        // A profile with a PIN and a lock asks for it on opening, whether or not the app was seen leaving (a restart, a force quit).
+        if (currentServer?.locksOnOpening == true) _locked.value = true
         return true
     }
 
@@ -359,6 +361,15 @@ class AsterRepository(val context: Context, private val store: SessionStore) {
             val own = plexAccount.switchUser(link.homeUserUuid!!, password, link.homeToken!!)
             return s.copy(plex = link.copy(accountToken = own ?: link.accountToken))
         }
+        // A household profile: its PIN, checked by the plugin by switching to itself, which gives a fresh token too (the server ends
+        // the one in use on this device). The main account with a PIN: checked without switching, so its sign-in carries on.
+        if (saved.asksProfilePin) {
+            if (password.isEmpty()) throw com.astermediaplayer.astermediaplayer.data.profiles.ProfileSwitchException.PinNeeded()
+            val bonfire = com.astermediaplayer.astermediaplayer.data.profiles.BonfireClient({ m, p, b -> bonfireSend(s, m, p, b) }, s.serverUrl)
+            if (saved.isPinnedMainAccount) { bonfire.verifyPin(s.userId, password); return s }
+            val (token, userId) = bonfire.switchProfile(s.userId, password)
+            return s.copy(accessToken = token, userId = com.astermediaplayer.astermediaplayer.data.profiles.HouseholdProfile.dashedId(userId))
+        }
         val result = connect(s.serverUrl, null, s.kind).authenticationApi.authenticateUserByName(AuthenticateUserByName(s.userName, password)).content
         val token = checkNotNull(result.accessToken) { "The server didn't return an access token" }
         val user = checkNotNull(result.user) { "The server didn't return a user" }
@@ -390,8 +401,11 @@ class AsterRepository(val context: Context, private val store: SessionStore) {
     // MARK: Household profiles (Bonfire on Jellyfin, a Plex Home)
 
     /** The Bonfire plugin's requests, with the sign-in in use; a server that can't be reached throws, a refusal comes back as an answer. */
-    private suspend fun bonfireSend(method: String, path: String, body: String?): com.astermediaplayer.astermediaplayer.data.profiles.BonfireAnswer = withContext(Dispatchers.IO) {
-        val builder = Request.Builder().url(serverUrl.trimEnd('/') + com.astermediaplayer.astermediaplayer.data.profiles.Bonfire.BASE_PATH + path).header("Authorization", authorizationHeader())
+    private suspend fun bonfireSend(method: String, path: String, body: String?) = bonfireSend(checkNotNull(session), method, path, body)
+
+    /** The same with a saved sign-in, in use or not (a profile's lock is checked with its own). */
+    private suspend fun bonfireSend(s: Session, method: String, path: String, body: String?): com.astermediaplayer.astermediaplayer.data.profiles.BonfireAnswer = withContext(Dispatchers.IO) {
+        val builder = Request.Builder().url(s.serverUrl.trimEnd('/') + com.astermediaplayer.astermediaplayer.data.profiles.Bonfire.BASE_PATH + path).header("Authorization", authorizationHeader(s.accessToken))
         if (method == "GET") builder.get() else builder.method(method, (body ?: "{}").toRequestBody("application/json".toMediaType()))
         http.newCall(builder.build()).execute().use { r ->
             com.astermediaplayer.astermediaplayer.data.profiles.BonfireAnswer(r.code, r.body.string(), r.header(com.astermediaplayer.astermediaplayer.data.profiles.Bonfire.ERROR_HEADER))
@@ -411,7 +425,7 @@ class AsterRepository(val context: Context, private val store: SessionStore) {
     fun profileProvider(): com.astermediaplayer.astermediaplayer.data.profiles.ProfileProvider? {
         val s = session ?: return null
         return when (s.kind) {
-            ServerKind.Jellyfin -> com.astermediaplayer.astermediaplayer.data.profiles.BonfireProfiles(::bonfireSend, s.serverUrl, s.serverName) { id ->
+            ServerKind.Jellyfin -> com.astermediaplayer.astermediaplayer.data.profiles.BonfireProfiles({ m, p, b -> bonfireSend(m, p, b) }, s.serverUrl, s.serverName) { id ->
                 org.json.JSONObject(serverRequest("GET", "/Users/$id"))
             }
             ServerKind.Plex -> com.astermediaplayer.astermediaplayer.data.profiles.PlexHomeProfiles.of(plexHomeAccess, s)
@@ -1436,11 +1450,12 @@ class AsterRepository(val context: Context, private val store: SessionStore) {
     private val http = sharedHttp
 
     /** The `MediaBrowser` header the server's own API clients send; plugin endpoints reject a bare token. */
-    private fun authorizationHeader(): String {
-        val client = api.clientInfo
-        val device = api.deviceInfo
+    private fun authorizationHeader(token: String = checkNotNull(session).accessToken): String {
+        val base = client ?: jellyfin.createApi()
+        val client = base.clientInfo
+        val device = base.deviceInfo
         return "MediaBrowser Client=\"${client.name}\", Device=\"${device.name}\", DeviceId=\"${device.id}\", " +
-            "Version=\"${client.version}\", Token=\"${checkNotNull(session).accessToken}\""
+            "Version=\"${client.version}\", Token=\"$token\""
     }
 
     /** A GET against the OP/ED plugin; null when the plugin isn't installed, the item is unknown, or the request fails. */

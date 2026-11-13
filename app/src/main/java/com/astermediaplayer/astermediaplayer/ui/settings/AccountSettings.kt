@@ -39,9 +39,21 @@ internal fun AccountPage(session: Session?, servers: ServerActions, onSignOut: (
         val modes = com.astermediaplayer.astermediaplayer.data.profiles.ProfileGateMode.entries.filter { bonfire || it != com.astermediaplayer.astermediaplayer.data.profiles.ProfileGateMode.Server }
         SGroup("Who's Watching")
         SChoice("Ask on Opening", modes.map { it.title }, modes.indexOf(settings.profileGate).coerceAtLeast(0)) { scope.launch { app.settings.setProfileGate(modes[it]) } }
+        // A profile (or the main account) with a PIN: how long away before it's asked again, and on opening. The same lock as a
+        // server's, on the sign-in in use.
+        val current = saved.firstOrNull { it.id == repo.currentServerId }
+        if (current != null && current.asksProfilePin && current.canBeLocked)
+            SRow("Ask for PIN After", SavedServer.lockTitle(current.lockAfterMinutes), chevron = true) { open(SettingsPage.LockAfter(current.id)) }
+        val lockNote = when {
+            current == null -> ""
+            current.asksProfilePin && current.canBeLocked -> " With Ask for PIN After set, ${current.session.userName}'s PIN is asked when Aster opens, and after that long away from it."
+            // The main account without a PIN locks with its password, on the server's own page; a PIN lets it lock here instead.
+            bonfire && current.session.household?.isMaster == true -> " Give ${current.session.userName} a PIN in Manage Profiles to lock it with that, rather than the password."
+            else -> ""
+        }
         SNote(
-            if (bonfire) "Whether Aster asks who's watching as it opens. As the Server Is Set follows the household's Ask on startup setting in Bonfire, as Jellyfin's own apps do."
-            else "Whether Aster asks who's watching as it opens, like Plex's own apps.",
+            (if (bonfire) "Whether Aster asks who's watching as it opens. As the Server Is Set follows the household's Ask on startup setting in Bonfire, as Jellyfin's own apps do."
+            else "Whether Aster asks who's watching as it opens, like Plex's own apps.") + lockNote,
         )
     }
     SGroup("Servers")

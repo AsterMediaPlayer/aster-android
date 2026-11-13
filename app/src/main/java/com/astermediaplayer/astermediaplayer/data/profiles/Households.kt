@@ -91,8 +91,11 @@ data class StoredHousehold(
     val avatarColor: String? = null,
     /** Bonfire's own picture value (an avatar's id, a URL, or a stored file's name); null without one. */
     val profileImage: String? = null,
+    /** Whether the profile has a PIN, which locking asks for; read again whenever the household is. */
+    val hasPin: Boolean = false,
 ) {
     fun toJson(): JSONObject = JSONObject().put("masterUserId", masterUserId).put("isMaster", isMaster).apply {
+        if (hasPin) put("hasPin", true)
         avatarInitial?.let { put("avatarInitial", it) }
         avatarColor?.let { put("avatarColor", it) }
         profileImage?.let { put("profileImage", it) }
@@ -102,6 +105,7 @@ data class StoredHousehold(
         fun fromJson(o: JSONObject) = StoredHousehold(
             o.getString("masterUserId"), o.optBoolean("isMaster"),
             o.optString("avatarInitial").ifEmpty { null }, o.optString("avatarColor").ifEmpty { null }, o.optString("profileImage").ifEmpty { null },
+            hasPin = o.optBoolean("hasPin"),
         )
     }
 }
@@ -263,5 +267,5 @@ object ProfileGate {
     }
 }
 
-/** Why the picker is up: the app opened, or someone asked to switch. */
-enum class ProfilePickerReason { Launch, Switcher }
+/** Why the picker is up: the app opened, someone asked to switch, or someone at the lock screen is choosing another profile than the locked one. */
+enum class ProfilePickerReason { Launch, Switcher, Locked }

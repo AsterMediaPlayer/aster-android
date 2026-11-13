@@ -101,6 +101,8 @@ fun ProfilePicker(reason: ProfilePickerReason, households: HouseholdProfiles, re
     var adding by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<HouseholdProfile?>(null) }
     var managing by remember { mutableStateOf(false) }
+    // Adding and managing profiles is left off from the lock screen: whoever's there only picks their own.
+    val canManage = household.canCreateProfiles && reason != ProfilePickerReason.Locked
 
     // The tiles as last seen, at once; then the server's fresh list (a PIN can stop being asked on the home network, say).
     LaunchedEffect(Unit) {
@@ -209,7 +211,7 @@ fun ProfilePicker(reason: ProfilePickerReason, households: HouseholdProfiles, re
                             modifier = if (profile.id == focusTarget.id) Modifier.focusRequester(firstTile) else Modifier,
                         ) { press(profile) }
                     }
-                    if (household.canCreateProfiles) AddProfileTile(dimmed = switching != null, enabled = switching == null) { adding = true }
+                    if (canManage) AddProfileTile(dimmed = switching != null, enabled = switching == null) { adding = true }
                 }
             }
 
@@ -223,9 +225,11 @@ fun ProfilePicker(reason: ProfilePickerReason, households: HouseholdProfiles, re
                             ProfilePickerReason.Launch -> repo.session?.userName?.let { name ->
                                 OutlinedButton(onClick = households::dismissPicker, enabled = switching == null, modifier = ring) { Text("Continue as $name") }
                             }
-                            ProfilePickerReason.Switcher -> OutlinedButton(onClick = households::dismissPicker, enabled = switching == null, modifier = ring) { Text("Cancel") }
+                            // From the lock: back to it, as the locked profile's own tile does.
+                            ProfilePickerReason.Switcher, ProfilePickerReason.Locked ->
+                                OutlinedButton(onClick = households::dismissPicker, enabled = switching == null, modifier = ring) { Text("Cancel") }
                         }
-                        if (household.canCreateProfiles) OutlinedButton(onClick = { managing = !managing }, enabled = switching == null, modifier = ring) {
+                        if (canManage) OutlinedButton(onClick = { managing = !managing }, enabled = switching == null, modifier = ring) {
                             Text(if (managing) "Done" else "Manage Profiles")
                         }
                     }

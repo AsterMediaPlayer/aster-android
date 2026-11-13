@@ -118,7 +118,7 @@ internal fun SettingsPage.title(servers: List<SavedServer>) = when (this) {
     SettingsPage.OpenSource -> "Open Source & Licenses"
     is SettingsPage.License -> name
     is SettingsPage.Server -> servers.firstOrNull { it.id == id }?.titleAmong(servers) ?: "Server"
-    is SettingsPage.LockAfter -> "Lock After"
+    is SettingsPage.LockAfter -> if (servers.firstOrNull { it.id == id }?.asksProfilePin == true) "Ask for PIN After" else "Lock After"
 }
 
 

@@ -43,13 +43,28 @@ data class SavedServer(
      * Whether it can ask for anything: the user's password on Jellyfin and Emby, checked by the server; on Plex, the PIN of the Home
      * profile signed in as, checked by plex.tv. A Plex sign-in as a profile with no PIN (or before the Home was kept) has none to ask for.
      */
-    val canBeLocked: Boolean get() = session.kind != com.astermediaplayer.astermediaplayer.data.emby.ServerKind.Plex || session.plex?.canAskPin == true
+    val canBeLocked: Boolean get() = when {
+        session.kind == com.astermediaplayer.astermediaplayer.data.emby.ServerKind.Plex -> session.plex?.canAskPin == true
+        // A household profile without a PIN has nothing to ask for.
+        isHouseholdProfile -> session.household?.hasPin == true
+        else -> true
+    }
 
-    /** What switching and Lock After ask for: "password", or a Plex Home profile's or a Bonfire profile's "PIN". */
-    val credential: String get() = if (session.kind == com.astermediaplayer.astermediaplayer.data.emby.ServerKind.Plex || isHouseholdProfile) "PIN" else "password"
+    /** What switching and Lock After ask for: "password", or a Plex Home profile's or a Bonfire profile's "PIN" (the main account's too, when it has one). */
+    val credential: String get() = if (session.kind == com.astermediaplayer.astermediaplayer.data.emby.ServerKind.Plex || asksProfilePin) "PIN" else "password"
 
     /** Whether this is a household profile (not the main account), whose password on the server is its PIN. */
-    val isHouseholdProfile: Boolean get() = session.household?.isMaster == false
+    val isHouseholdProfile: Boolean get() = session.kind != com.astermediaplayer.astermediaplayer.data.emby.ServerKind.Plex && session.household?.isMaster == false
+
+    /** A Bonfire main account with a PIN: its lock asks for the PIN, typed on the PIN pad, rather than the account's password. */
+    val isPinnedMainAccount: Boolean get() =
+        session.kind != com.astermediaplayer.astermediaplayer.data.emby.ServerKind.Plex && session.household?.isMaster == true && session.household.hasPin
+
+    /** Whether what's asked for is a household PIN, on the PIN pad. */
+    val asksProfilePin: Boolean get() = isHouseholdProfile || isPinnedMainAccount
+
+    /** A household profile (or main account) with a PIN and a lock asks for the PIN as the app opens too, not only after time away. */
+    val locksOnOpening: Boolean get() = asksProfilePin && canBeLocked && lockAfterMinutes != null
 
     /** Whether a new Lock After lets more past the lock than the one set (never, or a longer wait): that asks for the password first. */
     fun loosens(lockAfter: Int?): Boolean {
@@ -66,10 +81,11 @@ data class SavedServer(
 
     companion object {
         /** The lock-after choices offered, in minutes. */
-        val LOCK_CHOICES = listOf(5, 15, 30, 60, 240)
+        val LOCK_CHOICES = listOf(1, 5, 15, 30, 60, 240)
         fun id(serverUrl: String, userId: String) = "$serverUrl|$userId"
         fun lockTitle(minutes: Int?) = when {
             minutes == null || minutes <= 0 -> "Never"
+            minutes == 1 -> "1 Minute"
             minutes < 60 -> "$minutes Minutes"
             minutes == 60 -> "1 Hour"
             else -> "${minutes / 60} Hours"

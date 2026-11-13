@@ -722,7 +722,11 @@ fun AsterNavHost(signedIn: Boolean) {
                                 nav.navigate(Routes.AUTH) { popUpTo(nav.graph.id) { inclusive = true } }
                             }
                         },
+                        onSwitchProfile = if (server.session.household != null) app.households::presentPickerFromLock else null,
                     )
+                    // Someone else picking their own profile, over the lock; Back, or the locked profile, returns to it.
+                    if (picker == com.astermediaplayer.astermediaplayer.data.profiles.ProfilePickerReason.Locked)
+                        com.astermediaplayer.astermediaplayer.ui.profiles.ProfilePicker(picker!!, app.households, repo, switchProfile)
                 }
             }
         }

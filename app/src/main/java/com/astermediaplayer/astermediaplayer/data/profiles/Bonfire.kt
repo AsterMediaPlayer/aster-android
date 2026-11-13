@@ -345,7 +345,7 @@ class BonfireProfiles(
                 isCurrent = plain == HouseholdProfile.plainId(currentUserId), isMaster = isMaster,
                 requiresPin = record.requiresPin ?: (record.hasPin ?: false), hasPin = record.hasPin ?: false,
                 isOtherHousehold = record.isBonfire ?: false, masterUserId = masterId,
-                storedHousehold = StoredHousehold(masterId ?: plain, isMaster, initial, color, record.profileImage),
+                storedHousehold = StoredHousehold(masterId ?: plain, isMaster, initial, color, record.profileImage, hasPin = record.hasPin ?: false),
                 maxProfiles = record.maxSubProfiles, allLibraries = record.allLibraries,
                 enabledFolders = record.enabledFolders?.map(HouseholdProfile::plainId), bypassPinOnLocalNetwork = record.bypassPinOnLocalNetwork,
             )

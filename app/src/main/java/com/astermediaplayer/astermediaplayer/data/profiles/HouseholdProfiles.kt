@@ -55,6 +55,9 @@ class HouseholdProfiles(private val repo: AsterRepository, private val settings:
 
     fun dismissPicker() { _picker.value = null }
 
+    /** Asks who's watching from the lock screen: another profile than the locked one. The lock stays until someone's switched to. */
+    fun presentPickerFromLock() { if (repo.session?.household != null) _picker.value = ProfilePickerReason.Locked }
+
     /**
      * Who's watching, before anything loads, on opening signed in: decided from what's kept here (the sign-in, the setting, the
      * household's preference as last read), so opening never waits on the server.

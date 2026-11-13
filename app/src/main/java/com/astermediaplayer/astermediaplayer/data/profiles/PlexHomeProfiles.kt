@@ -80,7 +80,7 @@ class PlexHomeProfiles private constructor(
                 id = user.uuid, rawId = user.uuid, name = user.title, imageUrl = user.thumb, initial = initial, colorHex = PLEX_COLOR,
                 isCurrent = user.uuid == currentUuid, isMaster = user.admin, requiresPin = user.hasPin, hasPin = user.hasPin,
                 isOtherHousehold = false, masterUserId = null,
-                storedHousehold = StoredHousehold(link.machineId, user.admin, initial, PLEX_COLOR, user.thumb),
+                storedHousehold = StoredHousehold(link.machineId, user.admin, initial, PLEX_COLOR, user.thumb, hasPin = user.hasPin),
             )
         }
     }
