@@ -21,6 +21,8 @@ data class Session(
     val serverName: String? = null,
     /** A Plex sign-in's plex.tv side: the account's token and the server's other addresses; null on Jellyfin and Emby. */
     val plex: com.astermediaplayer.astermediaplayer.data.plex.PlexLink? = null,
+    /** The household (Bonfire profiles, a Plex Home) this sign-in belongs to, once known; null for an ordinary sign-in. */
+    val household: com.astermediaplayer.astermediaplayer.data.profiles.StoredHousehold? = null,
 )
 
 /**
@@ -43,8 +45,11 @@ data class SavedServer(
      */
     val canBeLocked: Boolean get() = session.kind != com.astermediaplayer.astermediaplayer.data.emby.ServerKind.Plex || session.plex?.canAskPin == true
 
-    /** What switching and Lock After ask for: "password", or a Plex Home profile's "PIN". */
-    val credential: String get() = if (session.kind == com.astermediaplayer.astermediaplayer.data.emby.ServerKind.Plex) "PIN" else "password"
+    /** What switching and Lock After ask for: "password", or a Plex Home profile's or a Bonfire profile's "PIN". */
+    val credential: String get() = if (session.kind == com.astermediaplayer.astermediaplayer.data.emby.ServerKind.Plex || isHouseholdProfile) "PIN" else "password"
+
+    /** Whether this is a household profile (not the main account), whose password on the server is its PIN. */
+    val isHouseholdProfile: Boolean get() = session.household?.isMaster == false
 
     /** Whether a new Lock After lets more past the lock than the one set (never, or a longer wait): that asks for the password first. */
     fun loosens(lockAfter: Int?): Boolean {
@@ -83,6 +88,7 @@ class SessionStore(private val context: Context) {
     private val nameKey = stringPreferencesKey("server_name")
     private val serversKey = stringPreferencesKey("servers")
     private val plexKey = stringPreferencesKey("plex_link")
+    private val householdKey = stringPreferencesKey("household")
     private val leftAtKey = androidx.datastore.preferences.core.longPreferencesKey("left_at")
 
     suspend fun load(): Session? {
@@ -91,7 +97,7 @@ class SessionStore(private val context: Context) {
         val token = prefs[tokenKey]?.let(SecretBox::open) ?: return null
         val userId = prefs[userIdKey] ?: return null
         val plex = prefs[plexKey]?.let(SecretBox::open)?.let { runCatching { com.astermediaplayer.astermediaplayer.data.plex.PlexLink.fromJson(JSONObject(it)) }.getOrNull() }
-        return Session(server, token, userId, prefs[userNameKey].orEmpty(), ServerKind.of(prefs[kindKey]), prefs[nameKey], plex)
+        return Session(server, token, userId, prefs[userNameKey].orEmpty(), ServerKind.of(prefs[kindKey]), prefs[nameKey], plex, household(prefs[householdKey]))
     }
 
     suspend fun lastServer(): String? = context.dataStore.data.map { it[serverKey] }.first()
@@ -105,6 +111,7 @@ class SessionStore(private val context: Context) {
             it[kindKey] = session.kind.raw
             session.serverName?.let { name -> it[nameKey] = name } ?: it.remove(nameKey)
             session.plex?.let { link -> it[plexKey] = SecretBox.seal(link.toJson().toString()) } ?: it.remove(plexKey)
+            session.household?.let { h -> it[householdKey] = h.toJson().toString() } ?: it.remove(householdKey)
         }
     }
 
@@ -130,6 +137,7 @@ class SessionStore(private val context: Context) {
                         o.getString("server"), token, o.getString("userId"), o.optString("userName"), ServerKind.of(o.optString("kind")),
                         o.optString("name").ifEmpty { null },
                         o.optString("plex").ifEmpty { null }?.let(SecretBox::open)?.let { runCatching { com.astermediaplayer.astermediaplayer.data.plex.PlexLink.fromJson(JSONObject(it)) }.getOrNull() },
+                        household(o.optString("household").ifEmpty { null }),
                     ),
                     asksPasswordToSwitch = o.optBoolean("asks"),
                     lockAfterMinutes = if (o.has("lock")) o.getInt("lock") else null,
@@ -144,11 +152,14 @@ class SessionStore(private val context: Context) {
             array.put(
                 JSONObject().put("server", s.session.serverUrl).put("token", SecretBox.seal(s.session.accessToken)).put("userId", s.session.userId)
                     .put("userName", s.session.userName).put("kind", s.session.kind.raw).put("name", s.session.serverName.orEmpty())
-                    .put("asks", s.asksPasswordToSwitch).apply { s.lockAfterMinutes?.let { put("lock", it) }; s.session.plex?.let { put("plex", SecretBox.seal(it.toJson().toString())) } },
+                    .put("asks", s.asksPasswordToSwitch).apply { s.lockAfterMinutes?.let { put("lock", it) }; s.session.plex?.let { put("plex", SecretBox.seal(it.toJson().toString())) }; s.session.household?.let { put("household", it.toJson().toString()) } },
             )
         }
         context.dataStore.edit { it[serversKey] = array.toString() }
     }
+
+    private fun household(text: String?) =
+        text?.let { runCatching { com.astermediaplayer.astermediaplayer.data.profiles.StoredHousehold.fromJson(JSONObject(it)) }.getOrNull() }
 
     /** When the app was left, for the lock; read again when it comes back. */
     suspend fun noteLeft(at: Long) { context.dataStore.edit { it[leftAtKey] = at } }

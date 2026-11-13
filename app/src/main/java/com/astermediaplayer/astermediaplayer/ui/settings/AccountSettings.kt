@@ -9,6 +9,7 @@ import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.astermediaplayer.astermediaplayer.data.SavedServer
 import com.astermediaplayer.astermediaplayer.data.Session
 import kotlinx.coroutines.launch
@@ -25,7 +26,24 @@ internal fun AccountPage(session: Session?, servers: ServerActions, onSignOut: (
     if (version != null) SRow("${session?.kind?.displayName ?: "Server"} version", version)
     SGroup("User")
     SRow("User", session?.userName.orEmpty())
+    // The household (Bonfire profiles, a Plex Home): someone else to switch to, and whether Aster asks who's watching as it opens.
+    val app = androidx.compose.ui.platform.LocalContext.current.applicationContext as com.astermediaplayer.astermediaplayer.AsterApp
+    val household by app.households.state.collectAsStateWithLifecycle()
+    if (household.isAvailable) SRow("Switch Profile", chevron = true, onClick = app.households::presentPicker)
     SRow("Switch User", destructive = true, onClick = onSignOut)
+    household.provider?.let { provider ->
+        val settings by app.settings.settings.collectAsStateWithLifecycle(initialValue = com.astermediaplayer.astermediaplayer.data.AppSettings())
+        val scope = rememberCoroutineScope()
+        val bonfire = provider.kind == com.astermediaplayer.astermediaplayer.data.profiles.ProfileProviderKind.Bonfire
+        // A Plex Home has no setting of its own to follow.
+        val modes = com.astermediaplayer.astermediaplayer.data.profiles.ProfileGateMode.entries.filter { bonfire || it != com.astermediaplayer.astermediaplayer.data.profiles.ProfileGateMode.Server }
+        SGroup("Who's Watching")
+        SChoice("Ask on Opening", modes.map { it.title }, modes.indexOf(settings.profileGate).coerceAtLeast(0)) { scope.launch { app.settings.setProfileGate(modes[it]) } }
+        SNote(
+            if (bonfire) "Whether Aster asks who's watching as it opens. As the Server Is Set follows the household's Ask on startup setting in Bonfire, as Jellyfin's own apps do."
+            else "Whether Aster asks who's watching as it opens, like Plex's own apps.",
+        )
+    }
     SGroup("Servers")
     saved.forEach { server ->
         val current = server.id == repo.currentServerId
@@ -56,7 +74,7 @@ internal fun ServerPage(id: String, servers: ServerActions, open: (SettingsPage)
     // A password to switch or unlock is the server's own, checked by the server; on Plex it's the Home profile's PIN, checked by plex.tv.
     val plex = server.session.kind == com.astermediaplayer.astermediaplayer.data.emby.ServerKind.Plex
     if (server.canBeLocked) {
-        val who = if (plex) "${server.session.userName}'s Plex Home PIN" else "${server.session.userName}'s password"
+        val who = "${server.session.userName}'s " + when { plex -> "Plex Home PIN"; server.isHouseholdProfile -> "PIN"; else -> "password" }
         SSwitch("Ask for ${server.credential.replaceFirstChar { it.uppercase() }} to Switch", server.asksPasswordToSwitch) { asks ->
             // Turning it off asks for the password (or PIN), so nobody else can.
             if (server.loosens(asksToSwitch = asks)) loosening = LockChange("stop asking for it to switch", "Turn Off") { repo.setAsksPasswordToSwitch(id, false) }

@@ -86,7 +86,8 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
             }
         })
         setContent {
-            val signedIn by produceState<Boolean?>(null) { value = repo.restore() }
+            // Who's watching is decided before the main screen composes, from what's kept here, so nobody's rows load under the picker.
+            val signedIn by produceState<Boolean?>(null) { value = repo.restore().also { if (it) (application as AsterApp).households.decideAtLaunch() } }
             val tv = isTelevision(this)
             CompositionLocalProvider(
                 LocalIsTv provides tv, com.astermediaplayer.astermediaplayer.ui.theme.LocalTouchTv provides com.astermediaplayer.astermediaplayer.ui.theme.usesTouchLayer(this),

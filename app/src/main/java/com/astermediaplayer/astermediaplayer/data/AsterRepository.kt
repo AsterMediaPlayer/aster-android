@@ -362,7 +362,7 @@ class AsterRepository(val context: Context, private val store: SessionStore) {
         val result = connect(s.serverUrl, null, s.kind).authenticationApi.authenticateUserByName(AuthenticateUserByName(s.userName, password)).content
         val token = checkNotNull(result.accessToken) { "The server didn't return an access token" }
         val user = checkNotNull(result.user) { "The server didn't return a user" }
-        return Session(s.serverUrl, token, user.id.toString(), user.name.orEmpty(), s.kind, s.serverName)
+        return Session(s.serverUrl, token, user.id.toString(), user.name.orEmpty(), s.kind, s.serverName, household = s.household)
     }
 
     /** The password was right: carry on with the fresh sign-in. */
@@ -385,6 +385,58 @@ class AsterRepository(val context: Context, private val store: SessionStore) {
             session = fresh
         }
         remember(fresh)
+    }
+
+    // MARK: Household profiles (Bonfire on Jellyfin, a Plex Home)
+
+    /** The Bonfire plugin's requests, with the sign-in in use; a server that can't be reached throws, a refusal comes back as an answer. */
+    private suspend fun bonfireSend(method: String, path: String, body: String?): com.astermediaplayer.astermediaplayer.data.profiles.BonfireAnswer = withContext(Dispatchers.IO) {
+        val builder = Request.Builder().url(serverUrl.trimEnd('/') + com.astermediaplayer.astermediaplayer.data.profiles.Bonfire.BASE_PATH + path).header("Authorization", authorizationHeader())
+        if (method == "GET") builder.get() else builder.method(method, (body ?: "{}").toRequestBody("application/json".toMediaType()))
+        http.newCall(builder.build()).execute().use { r ->
+            com.astermediaplayer.astermediaplayer.data.profiles.BonfireAnswer(r.code, r.body.string(), r.header(com.astermediaplayer.astermediaplayer.data.profiles.Bonfire.ERROR_HEADER))
+        }
+    }
+
+    private val plexHomeAccess by lazy {
+        com.astermediaplayer.astermediaplayer.data.profiles.PlexHomeAccess(
+            homeUsers = { plexAccount.homeUsers(it) },
+            switchUser = { uuid, pin, home -> plexAccount.switchUser(uuid, pin, home) },
+            servers = { plexAccount.servers(it) },
+            accountName = { plexAccount.accountName(it) },
+        )
+    }
+
+    /** The household service for the server in use, if it could have one: Bonfire on Jellyfin, the Plex Home signed in through. */
+    fun profileProvider(): com.astermediaplayer.astermediaplayer.data.profiles.ProfileProvider? {
+        val s = session ?: return null
+        return when (s.kind) {
+            ServerKind.Jellyfin -> com.astermediaplayer.astermediaplayer.data.profiles.BonfireProfiles(::bonfireSend, s.serverUrl, s.serverName)
+            ServerKind.Plex -> com.astermediaplayer.astermediaplayer.data.profiles.PlexHomeProfiles.of(plexHomeAccess, s)
+            else -> null
+        }
+    }
+
+    /**
+     * A sign-in already saved for [profile] on the server in use, to switch to without asking the server. It never stands in for a
+     * PIN: the picker only reuses it where none is asked.
+     */
+    fun reusableSession(profile: com.astermediaplayer.astermediaplayer.data.profiles.HouseholdProfile): Session? {
+        val s = session ?: return null
+        return _servers.value.map { it.session }.firstOrNull { saved ->
+            if (s.kind == ServerKind.Plex) saved.plex?.machineId == s.plex?.machineId && saved.plex?.homeUserUuid == profile.rawId
+            else saved.serverUrl == s.serverUrl && com.astermediaplayer.astermediaplayer.data.profiles.HouseholdProfile.plainId(saved.userId) == profile.id
+        }
+    }
+
+    /** The sign-in in use learned which household it belongs to (it was made before this was kept, or through the sign-in screen). */
+    suspend fun noteHousehold(household: com.astermediaplayer.astermediaplayer.data.profiles.StoredHousehold) {
+        val s = session ?: return
+        if (s.household == household) return
+        val updated = s.copy(household = household)
+        session = updated
+        store.save(updated)
+        remember(updated)
     }
 
     suspend fun setAsksPasswordToSwitch(id: String, asks: Boolean) =

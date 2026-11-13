@@ -73,7 +73,8 @@ fun ServerPasswordDialog(
         title = { Text(title) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("Enter ${server.session.userName}'s ${if (plex) "Plex Home PIN" else "password"} to $purpose.")
+                val what = when { server.session.kind == com.astermediaplayer.astermediaplayer.data.emby.ServerKind.Plex -> "Plex Home PIN"; plex -> "PIN"; else -> "password" }
+                Text("Enter ${server.session.userName}'s $what to $purpose.")
                 OutlinedTextField(
                     value = password, onValueChange = { password = it; error = null }, label = { Text(if (plex) "PIN" else "Password") }, singleLine = true,
                     modifier = Modifier.fillMaxWidth(), visualTransformation = PasswordVisualTransformation(),
@@ -118,7 +119,8 @@ fun ServerLockScreen(server: SavedServer, title: String = server.title, onUnlock
             Icon(Icons.Default.Lock, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(44.dp))
             Text(title, style = MaterialTheme.typography.titleLarge, maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
             val plex = server.credential == "PIN"
-            Text("Enter ${server.session.userName}'s ${if (plex) "Plex Home PIN" else "password"} to carry on.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            val what = when { server.session.kind == com.astermediaplayer.astermediaplayer.data.emby.ServerKind.Plex -> "Plex Home PIN"; plex -> "PIN"; else -> "password" }
+            Text("Enter ${server.session.userName}'s $what to carry on.", color = MaterialTheme.colorScheme.onSurfaceVariant)
             OutlinedTextField(
                 value = password, onValueChange = { password = it; error = null }, label = { Text(if (plex) "PIN" else "Password") }, singleLine = true,
                 modifier = Modifier.fillMaxWidth().focusRequester(field), visualTransformation = PasswordVisualTransformation(),

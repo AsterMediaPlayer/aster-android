@@ -32,6 +32,8 @@ class AsterApp : Application(), SingletonImageLoader.Factory {
     @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
     val downloads: DownloadStore by lazy { DownloadStore(this, repository, settings) }
     val channels: ChannelsModel by lazy { ChannelsModel(repository) }
+    /** The household of the server in use (Bonfire profiles, a Plex Home), and the "Who's watching?" picker. */
+    val households: com.astermediaplayer.astermediaplayer.data.profiles.HouseholdProfiles by lazy { com.astermediaplayer.astermediaplayer.data.profiles.HouseholdProfiles(repository, settings) }
     /** The Live TV channel playing, full screen or in the Live TV header's mini player. */
     val liveMini: com.astermediaplayer.astermediaplayer.ui.livetv.LiveMini by lazy { com.astermediaplayer.astermediaplayer.ui.livetv.LiveMini(this) }
     /** The video playing, for [com.astermediaplayer.astermediaplayer.ui.player.PlaybackService] to publish as a media session; null with none open. */
@@ -72,6 +74,7 @@ class AsterApp : Application(), SingletonImageLoader.Factory {
         channels.reset()
         liveMini.stop()
         audiobookLibrary.reset()
+        households.clear()
     }
 
     override fun onCreate() {

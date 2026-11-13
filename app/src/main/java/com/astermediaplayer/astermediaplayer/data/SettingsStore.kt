@@ -46,6 +46,8 @@ data class AppSettings(
     val themeCards: Boolean = true,
     /** Name an opening or ending's song from AnimeThemes when the server can't; off, Aster doesn't contact it. Kept on the device. */
     val songLookups: Boolean = true,
+    /** When Aster asks who's watching as it opens, for a household (Settings › Account › Ask on Opening). Kept on the device. */
+    val profileGate: com.astermediaplayer.astermediaplayer.data.profiles.ProfileGateMode = com.astermediaplayer.astermediaplayer.data.profiles.ProfileGateMode.Server,
 )
 
 private val Context.settingsDataStore by preferencesDataStore("aster_settings")
@@ -72,6 +74,9 @@ class SettingsStore(private val context: Context) {
     private val themeCardsKey = booleanPreferencesKey("theme_cards")
     private val songLookupsKey = booleanPreferencesKey("song_lookups")
     private val welcomeSeenKey = stringSetPreferencesKey("welcome_seen")
+    private val profileGateKey = stringPreferencesKey("profile_gate")
+    /** Each household's "ask on startup" as last read (see [askOnStartup]), as a JSON object by household key. */
+    private val askOnStartupKey = stringPreferencesKey("profile_ask_on_startup")
 
     val settings: Flow<AppSettings> = context.settingsDataStore.data.map {
         AppSettings(
@@ -96,6 +101,7 @@ class SettingsStore(private val context: Context) {
             listenAheadMinutes = it[listenAheadKey] ?: 30,
             themeCards = it[themeCardsKey] ?: true,
             songLookups = it[songLookupsKey] ?: true,
+            profileGate = com.astermediaplayer.astermediaplayer.data.profiles.ProfileGateMode.of(it[profileGateKey]),
         )
     }
 
@@ -133,6 +139,18 @@ class SettingsStore(private val context: Context) {
     val welcomeSeen: Flow<Set<String>> = context.settingsDataStore.data.map { it[welcomeSeenKey] ?: emptySet() }
     suspend fun markWelcomeSeen(serverId: String) = context.settingsDataStore.edit { it[welcomeSeenKey] = (it[welcomeSeenKey] ?: emptySet()) + serverId }
     suspend fun showWelcomeAgain(serverId: String) = context.settingsDataStore.edit { it[welcomeSeenKey] = (it[welcomeSeenKey] ?: emptySet()) - serverId }
+
+    suspend fun setProfileGate(mode: com.astermediaplayer.astermediaplayer.data.profiles.ProfileGateMode) = context.settingsDataStore.edit { it[profileGateKey] = mode.raw }
+
+    /** A household's "ask on startup" as the server last said, so the decision on a cold launch needs no network. */
+    suspend fun askOnStartup(householdKey: String): Boolean? =
+        context.settingsDataStore.data.first()[askOnStartupKey]?.let { runCatching { org.json.JSONObject(it) }.getOrNull() }
+            ?.takeIf { it.has(householdKey) }?.optBoolean(householdKey)
+
+    suspend fun setAskOnStartup(householdKey: String, ask: Boolean) = context.settingsDataStore.edit {
+        val all = it[askOnStartupKey]?.let { text -> runCatching { org.json.JSONObject(text) }.getOrNull() } ?: org.json.JSONObject()
+        it[askOnStartupKey] = all.put(householdKey, ask).toString()
+    }
 
     suspend fun setQualityIndex(index: Int) = context.settingsDataStore.edit { it[qualityKey] = index }
     suspend fun setAutoSkipSegments(on: Boolean) = context.settingsDataStore.edit { it[autoSkipKey] = on }

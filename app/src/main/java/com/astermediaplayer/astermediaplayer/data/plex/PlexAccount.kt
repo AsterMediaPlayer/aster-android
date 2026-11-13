@@ -65,7 +65,7 @@ data class PlexLink(
 }
 
 /** A profile of the account's Plex Home, which a PIN may guard. */
-data class PlexHomeUser(val uuid: String, val title: String, val hasPin: Boolean, val admin: Boolean)
+data class PlexHomeUser(val uuid: String, val title: String, val hasPin: Boolean, val admin: Boolean, val thumb: String? = null)
 
 /** The Home profile signed in as, and the Home's own token (the one that listed the profiles), kept with the sign-in. */
 data class PlexHomeChoice(val user: PlexHomeUser, val homeToken: String)
@@ -166,7 +166,7 @@ class PlexAccount(private val device: PlexDevice, private val http: OkHttpClient
             val array = JSONObject(json).optJSONArray("users") ?: return emptyList()
             return List(array.length()) { array.getJSONObject(it) }.mapNotNull { o ->
                 val uuid = o.str("uuid") ?: return@mapNotNull null
-                PlexHomeUser(uuid, o.str("title") ?: o.str("username") ?: "Plex", o.optBoolean("protected"), o.optBoolean("admin"))
+                PlexHomeUser(uuid, o.str("title") ?: o.str("username") ?: "Plex", o.optBoolean("protected"), o.optBoolean("admin"), o.str("thumb"))
             }
         }
 
