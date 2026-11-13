@@ -16,6 +16,14 @@ internal fun PlaybackPage(settings: AppSettings, store: SettingsStore, scope: ko
     SSwitch("Play the next episode automatically", settings.autoPlayNext) { scope.launch { store.setAutoPlayNext(it) } }
     SSwitch("Song card at openings and endings", settings.themeCards) { scope.launch { store.setThemeCards(it) } }
     SNote("While an opening or ending plays, a card shows the song, its artists and the show; a music video gets one at its start and end.")
+    SGroup("Music")
+    SSwitch("Save upcoming songs", settings.musicAhead) { scope.launch { store.setMusicAhead(it) } }
+    if (LocalIsTv.current) {
+        SNote("The next five songs in the queue are saved as they come up, once the song playing is under way, so they start at once and play on if the connection drops. They're kept in the cache, and let go once heard.")
+    } else {
+        if (settings.musicAhead) SSwitch("Save on cellular data too", settings.musicAheadCellular) { scope.launch { store.setMusicAheadCellular(it) } }
+        SNote("The next five songs in the queue are saved as they come up, once the song playing is under way, so they start at once and play on if the connection drops. They're saved only on Wi-Fi or a wired connection unless cellular is chosen too, and never with Data Saver on. They're kept in the cache, and let go once heard.")
+    }
     // A phone can lose its signal mid-book; a TV doesn't.
     if (!LocalIsTv.current) {
         SGroup("Audiobooks")

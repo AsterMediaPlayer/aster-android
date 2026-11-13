@@ -42,6 +42,10 @@ data class AppSettings(
     val discMenuSounds: Boolean = true,
     /** Minutes of an audiobook saved ahead of the listener on a phone, so a spot with no signal doesn't stop it; 0 for off. */
     val listenAheadMinutes: Int = 30,
+    /** Music: the next five songs in the queue are saved as they come up, so they start at once and play on with no signal. */
+    val musicAhead: Boolean = true,
+    /** Music: songs are saved ahead on cellular data too, not only on Wi-Fi or a wired connection. Off by default. */
+    val musicAheadCellular: Boolean = false,
     /** The song card over an opening or ending, and at the start and end of a music video. */
     val themeCards: Boolean = true,
     /** Name an opening or ending's song from AnimeThemes when the server can't; off, Aster doesn't contact it. Kept on the device. */
@@ -71,6 +75,8 @@ class SettingsStore(private val context: Context) {
     private val preferDiscMenuKey = booleanPreferencesKey("prefer_disc_menu")
     private val discMenuSoundsKey = booleanPreferencesKey("disc_menu_sounds")
     private val listenAheadKey = intPreferencesKey("listen_ahead_minutes")
+    private val musicAheadKey = booleanPreferencesKey("music_ahead")
+    private val musicAheadCellularKey = booleanPreferencesKey("music_ahead_cellular")
     private val themeCardsKey = booleanPreferencesKey("theme_cards")
     private val songLookupsKey = booleanPreferencesKey("song_lookups")
     private val welcomeSeenKey = stringSetPreferencesKey("welcome_seen")
@@ -99,6 +105,8 @@ class SettingsStore(private val context: Context) {
             preferDiscMenu = it[preferDiscMenuKey] ?: false,
             discMenuSounds = it[discMenuSoundsKey] ?: true,
             listenAheadMinutes = it[listenAheadKey] ?: 30,
+            musicAhead = it[musicAheadKey] ?: true,
+            musicAheadCellular = it[musicAheadCellularKey] ?: false,
             themeCards = it[themeCardsKey] ?: true,
             songLookups = it[songLookupsKey] ?: true,
             profileGate = com.astermediaplayer.astermediaplayer.data.profiles.ProfileGateMode.of(it[profileGateKey]),
@@ -172,4 +180,6 @@ class SettingsStore(private val context: Context) {
     suspend fun setPreferDiscMenu(on: Boolean) = context.settingsDataStore.edit { it[preferDiscMenuKey] = on }
     suspend fun setDiscMenuSounds(on: Boolean) = context.settingsDataStore.edit { it[discMenuSoundsKey] = on }
     suspend fun setListenAheadMinutes(minutes: Int) = context.settingsDataStore.edit { it[listenAheadKey] = minutes }
+    suspend fun setMusicAhead(on: Boolean) = context.settingsDataStore.edit { it[musicAheadKey] = on }
+    suspend fun setMusicAheadCellular(on: Boolean) = context.settingsDataStore.edit { it[musicAheadCellularKey] = on }
 }
