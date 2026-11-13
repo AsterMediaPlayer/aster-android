@@ -12,6 +12,7 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import com.astermediaplayer.astermediaplayer.data.AsterRepository
+import com.astermediaplayer.astermediaplayer.data.diagnostics.DebugLog
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -20,6 +21,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import org.jellyfin.sdk.model.api.BaseItemDto
@@ -87,13 +90,78 @@ class MusicPlayer(private val context: Context, private val repo: AsterRepositor
     private var reportedId: UUID? = null
     private var lastReport = 0L
 
+    // MARK: Saving ahead
+
+    @Volatile private var aheadOn = true
+    @Volatile private var aheadCellular = false
+    /** The song playing is well loaded: the ones coming up may be saved now without taking its connection. */
+    private var mayFetchAhead = false
+
+    private val ahead: MusicAhead by lazy {
+        MusicAhead(
+            java.io.File(context.cacheDir, "music-ahead"),
+            mayFetch = { aheadOn && MusicAhead.connectionAllows(context, aheadCellular) },
+            fetch = { id, into, stillAllowed ->
+                val url = repo.audioStreamUrl(UUID.fromString(dashed(id)))
+                MusicAhead.download(com.astermediaplayer.astermediaplayer.data.signedInMedia(repo.session?.accessToken).createDataSource(), url, into, stillAllowed)
+            },
+        )
+    }
+
+    init {
+        scope.launch {
+            (context.applicationContext as com.astermediaplayer.astermediaplayer.AsterApp).settings.settings
+                .map { it.musicAhead to it.musicAheadCellular }.distinctUntilChanged()
+                .collect { (on, cellular) ->
+                    aheadOn = on
+                    aheadCellular = cellular
+                    if (!on) ahead.clear() else saveAhead()
+                }
+        }
+    }
+
+    private fun plain(song: BaseItemDto): String = song.id.toString().replace("-", "").lowercase()
+
+    private fun dashed(plain: String): String =
+        if (plain.length != 32) plain else "${plain.substring(0, 8)}-${plain.substring(8, 12)}-${plain.substring(12, 16)}-${plain.substring(16, 20)}-${plain.substring(20)}"
+
+    /** Saves the songs coming up, once the one playing is well under way. */
+    private fun saveAhead() {
+        if (!mayFetchAhead || !aheadOn) return
+        val s = _state.value
+        val current = s.current ?: return
+        ahead.prepare(s.queue.drop(s.index + 1).take(MusicAhead.SONGS_AHEAD).map(::plain), plain(current))
+    }
+
+    /** Called each tick: once the song playing is a saved file or loaded a minute ahead (or to its end), saving may start. */
+    private fun checkMayFetchAhead() {
+        if (mayFetchAhead || !aheadOn) return
+        val exo = player ?: return
+        val current = _state.value.current ?: return
+        if (exo.playbackState != Player.STATE_READY) return
+        val duration = exo.duration.takeIf { it != C.TIME_UNSET && it > 0 } ?: return
+        val enough = minOf(exo.currentPosition + 60_000L, (duration - 1_000L).coerceAtLeast(0))
+        if (ahead.savedFile(plain(current)) != null || exo.bufferedPosition >= enough) {
+            mayFetchAhead = true
+            saveAhead()
+        }
+    }
+
     /** The player for the media session to show, made now if need be; null before there's a sign-in to stream with. */
     fun sessionPlayer(): ExoPlayer? = player ?: if (repo.session != null) ensurePlayer() else null
 
     private fun ensurePlayer(): ExoPlayer = player ?: ExoPlayer.Builder(context)
         .setMediaSourceFactory(
+            // A song saved ahead plays from its file; any other from the server.
             DefaultMediaSourceFactory(
-                com.astermediaplayer.astermediaplayer.data.signedInMedia(checkNotNull(repo.session).accessToken),
+                androidx.media3.datasource.ResolvingDataSource.Factory(
+                    androidx.media3.datasource.DefaultDataSource.Factory(
+                        context, com.astermediaplayer.astermediaplayer.data.signedInMedia(checkNotNull(repo.session).accessToken),
+                    ),
+                ) { spec ->
+                    val file = MusicAhead.songId(spec.uri)?.let { ahead.savedFile(it) }
+                    if (file != null) spec.withUri(Uri.fromFile(file)) else spec
+                },
             ),
         )
         .setAudioAttributes(AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MUSIC).build(), true)
@@ -116,6 +184,9 @@ class MusicPlayer(private val context: Context, private val repo: AsterRepositor
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
             val exo = player ?: return
             reportStopped(played = reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO)
+            // Saving waits until the new song is well loaded.
+            mayFetchAhead = false
+            ahead.hold()
             _state.update { it.copy(index = exo.currentMediaItemIndex, position = 0.0, duration = exo.durationSeconds(it), lyrics = null) }
             playSessionId = UUID.randomUUID().toString()
             reportedId = null
@@ -125,6 +196,15 @@ class MusicPlayer(private val context: Context, private val repo: AsterRepositor
 
         override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
             android.util.Log.e("Aster", "Music failed", error)
+            // A saved file that won't play is let go, and the song streams from where it was.
+            val exo = player
+            val song = _state.value.current
+            if (exo != null && song != null && ahead.savedFile(plain(song)) != null) {
+                DebugLog.note("music", "A saved song didn't play; it streams instead")
+                ahead.forget(plain(song))
+                exo.prepare()
+                return
+            }
             _state.update { it.copy(error = "This song can't be played.", isPlaying = false) }
         }
     }
@@ -236,12 +316,14 @@ class MusicPlayer(private val context: Context, private val repo: AsterRepositor
             exo.addMediaItems(rest.map(::mediaItem))
             _state.update { it.copy(queue = listOf(now) + rest, index = 0, shuffled = true) }
         }
+        saveAhead()
     }
 
     fun cycleRepeat() {
         val next = when (_state.value.repeat) { RepeatKind.Off -> RepeatKind.All; RepeatKind.All -> RepeatKind.One; RepeatKind.One -> RepeatKind.Off }
         player?.repeatMode = next.toExo()
         _state.update { it.copy(repeat = next) }
+        saveAhead()
     }
 
     private fun RepeatKind.toExo() = when (this) { RepeatKind.Off -> Player.REPEAT_MODE_OFF; RepeatKind.All -> Player.REPEAT_MODE_ALL; RepeatKind.One -> Player.REPEAT_MODE_ONE }
@@ -264,6 +346,8 @@ class MusicPlayer(private val context: Context, private val repo: AsterRepositor
         tick?.cancel()
         lyricsJob?.cancel()
         player?.let { it.stop(); it.clearMediaItems() }
+        mayFetchAhead = false
+        ahead.clear()
         context.stopService(Intent(context, PlaybackService::class.java))
         _state.value = MusicState()
         originalOrder = emptyList()
@@ -286,6 +370,7 @@ class MusicPlayer(private val context: Context, private val repo: AsterRepositor
             while (true) {
                 delay(500)
                 refreshPosition()
+                checkMayFetchAhead()
                 if (player?.isPlaying == true && System.currentTimeMillis() - lastReport >= 10_000L) report(paused = false)
             }
         }

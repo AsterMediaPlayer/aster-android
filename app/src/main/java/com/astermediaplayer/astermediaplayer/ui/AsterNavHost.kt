@@ -305,7 +305,26 @@ fun AsterNavHost(signedIn: Boolean) {
     // A video, a disc menu or a theme taking over the screen ends the songs playing under the page.
     LaunchedEffect(route) { if (route.startsWith("player") || route.startsWith("disc") || route.startsWith("theme") || route.startsWith("channel/") || route == Routes.AUTH) deck.stop() }
     // Reaching the main tabs (opening signed in, signing in, switching servers): the settings that follow the user are fetched.
-    LaunchedEffect(route.startsWith("main")) { if (route.startsWith("main") && repo.session != null) app.settingsSync.pull() }
+    // Keyed on the sign-in too: switching profile (or server) lands on the main tabs again without the route changing.
+    LaunchedEffect(route.startsWith("main"), repo.currentServerId) {
+        if (route.startsWith("main") && repo.session != null) {
+            launch { app.settingsSync.pull() }
+            // The household: who else there is to switch to, and whether it asks on opening.
+            app.households.restoreCached()
+            app.households.refresh()
+        }
+    }
+    val picker by app.households.picker.collectAsStateWithLifecycle()
+    // A profile switched to: another saved sign-in on the same server, with its own token. The main screen starts afresh as it does
+    // for another server; the welcome was seen by whoever signed in, so a profile isn't shown it again.
+    val switchProfile: suspend (com.astermediaplayer.astermediaplayer.data.Session) -> Unit = { fresh ->
+        com.astermediaplayer.astermediaplayer.data.diagnostics.DebugLog.note("profiles", "Switching profile")
+        val saved = com.astermediaplayer.astermediaplayer.data.SavedServer(fresh)
+        repo.switchTo(saved, fresh)
+        app.settings.markWelcomeSeen(saved.id)
+        app.households.dismissPicker()
+        servers.onSwitched()
+    }
     val miniFocus = remember { androidx.compose.ui.focus.FocusRequester() }
     val firstRequest = remember { deck.focusRequest }
     LaunchedEffect(deck.focusRequest) { if (deck.focusRequest != firstRequest) runCatching { miniFocus.requestFocus() } }
@@ -354,7 +373,10 @@ fun AsterNavHost(signedIn: Boolean) {
                 val seen by app.settings.welcomeSeen.collectAsStateWithLifecycle(initialValue = null)
                 val serverId = repo.currentServerId
                 val welcomeDue = seen != null && serverId != null && repo.serverKind == com.astermediaplayer.astermediaplayer.data.emby.ServerKind.Jellyfin && serverId !in seen.orEmpty()
-                if (seen == null) Box(Modifier.fillMaxSize()) else if (welcomeDue) {
+                // The household asks who's watching as the app opens, before anything of anyone's loads.
+                if (picker == com.astermediaplayer.astermediaplayer.data.profiles.ProfilePickerReason.Launch) {
+                    com.astermediaplayer.astermediaplayer.ui.profiles.ProfilePicker(picker!!, app.households, repo, switchProfile)
+                } else if (seen == null) Box(Modifier.fillMaxSize()) else if (welcomeDue) {
                     com.astermediaplayer.astermediaplayer.ui.welcome.WelcomeScreen(repo, repo.session?.serverName, onDone = { scope.launch { app.settings.markWelcomeSeen(serverId!!) } })
                 } else MainTabs(
                     onItem = ::open,
@@ -678,6 +700,13 @@ fun AsterNavHost(signedIn: Boolean) {
         // The last run ended in a crash: offered once, as the app opens again.
         var crashOffer by remember { mutableStateOf(com.astermediaplayer.astermediaplayer.data.diagnostics.DebugLog.lastCrash() != null) }
         if (crashOffer && !locked) com.astermediaplayer.astermediaplayer.ui.settings.DebugReportDialog(afterCrash = true) { crashOffer = false }
+        // Someone asked to switch: the picker over the main screen, which can't take focus or touches meanwhile.
+        if (picker == com.astermediaplayer.astermediaplayer.data.profiles.ProfilePickerReason.Switcher && !locked) {
+            @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
+            Box(Modifier.fillMaxSize().focusProperties { exit = { androidx.compose.ui.focus.FocusRequester.Cancel } }.focusGroup()) {
+                com.astermediaplayer.astermediaplayer.ui.profiles.ProfilePicker(picker!!, app.households, repo, switchProfile)
+            }
+        }
         if (locked) {
             val server = repo.currentServer
             if (server != null) {
@@ -693,7 +722,11 @@ fun AsterNavHost(signedIn: Boolean) {
                                 nav.navigate(Routes.AUTH) { popUpTo(nav.graph.id) { inclusive = true } }
                             }
                         },
+                        onSwitchProfile = if (server.session.household != null) app.households::presentPickerFromLock else null,
                     )
+                    // Someone else picking their own profile, over the lock; Back, or the locked profile, returns to it.
+                    if (picker == com.astermediaplayer.astermediaplayer.data.profiles.ProfilePickerReason.Locked)
+                        com.astermediaplayer.astermediaplayer.ui.profiles.ProfilePicker(picker!!, app.households, repo, switchProfile)
                 }
             }
         }
@@ -904,7 +937,15 @@ private fun MainTabs(
     androidx.activity.compose.BackHandler(enabled = isTv && menuOpen && current != Tab.Home) { menuOpen = false }
     val content: @Composable (Modifier) -> Unit = { modifier ->
         when (current) {
-            Tab.Home -> HomeScreen(home, onItem = onItem, onPlay = onPlay, modifier = modifier)
+            Tab.Home -> Box(modifier) {
+                HomeScreen(home, onItem = onItem, onPlay = onPlay, modifier = Modifier.fillMaxSize())
+                // Who's watching, in Home's corner; pressing it asks. On a TV it heads the menu instead.
+                val household by app.households.state.collectAsStateWithLifecycle()
+                val me = household.current
+                if (!isTv && household.isAvailable && me != null) com.astermediaplayer.astermediaplayer.ui.profiles.ProfileAvatarButton(
+                    me, Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(top = 8.dp, end = 16.dp), onClick = app.households::presentPicker,
+                )
+            }
             Tab.Movies -> if (detectedAnime != null) TypeTab(BaseItemKind.MOVIE, animeLibraries, onItem, onPlay, modifier)
             Tab.Shows -> if (detectedAnime != null) TypeTab(BaseItemKind.SERIES, animeLibraries, onItem, onPlay, modifier)
             Tab.Anime -> AnimeScreen(anime, onItem = onItem, onPlay = onPlay, modifier = modifier)
@@ -1000,6 +1041,31 @@ private fun MainTabs(
     }
 }
 
+/** Who's watching, at the top of the TV menu, as tvOS 27's sidebar header: pressing it asks. Nothing without a household. */
+@Composable
+private fun TvMenuProfile(onClose: () -> Unit) {
+    val app = LocalContext.current.applicationContext as AsterApp
+    val household by app.households.state.collectAsStateWithLifecycle()
+    val me = household.current
+    if (!household.isAvailable || me == null) return
+    val u = Lockup.tvUnit
+    fun pt(points: Float) = (points * u).dp
+    var focused by remember { mutableStateOf(false) }
+    Row(
+        Modifier.fillMaxWidth().height(pt(86f)).padding(bottom = pt(10f)).onFocusChanged { focused = it.isFocused }
+            .clip(CircleShape).background(if (focused) Color.White else Color.Transparent)
+            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onClose(); app.households.presentPicker() }
+            .padding(start = pt(14f)),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        com.astermediaplayer.astermediaplayer.ui.profiles.ProfileAvatarButton(me, size = pt(52f), onClick = null)
+        Column(Modifier.padding(start = pt(16f))) {
+            Text(me.name, style = Type.callout.copy(fontSize = (23.5f * u).sp, lineHeight = (30f * u).sp), color = if (focused) Color.Black else Color.White, maxLines = 1)
+            Text("Switch Profile", style = Type.caption, color = if (focused) Color.Black.copy(alpha = 0.6f) else Color.White.copy(alpha = 0.6f), maxLines = 1)
+        }
+    }
+}
+
 /** Google TV's "‹ Home" chip over the top left of a page: where you are, and a way into the menu. */
 @Composable
 private fun TvMenuChip(here: BarItem, modifier: Modifier = Modifier) {
@@ -1065,6 +1131,7 @@ internal fun TvMenu(items: List<BarItem>, isSelected: (BarItem) -> Boolean, onPi
                 },
             verticalArrangement = Arrangement.spacedBy(pt(1f)),
         ) {
+            TvMenuProfile(onClose)
             items.forEach { item ->
                 var focused by remember { mutableStateOf(false) }
                 val tint = if (focused) Color.Black else Color.White

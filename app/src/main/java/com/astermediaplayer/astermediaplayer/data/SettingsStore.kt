@@ -42,10 +42,18 @@ data class AppSettings(
     val discMenuSounds: Boolean = true,
     /** Minutes of an audiobook saved ahead of the listener on a phone, so a spot with no signal doesn't stop it; 0 for off. */
     val listenAheadMinutes: Int = 30,
+    /** Music: the next five songs in the queue are saved as they come up, so they start at once and play on with no signal. */
+    val musicAhead: Boolean = true,
+    /** Music: songs are saved ahead on cellular data too, not only on Wi-Fi or a wired connection. Off by default. */
+    val musicAheadCellular: Boolean = false,
+    /** A game controller's A and B, and X and Y, trade places (Nintendo's layout: the right button opens). Kept on the device. */
+    val swapControllerButtons: Boolean = false,
     /** The song card over an opening or ending, and at the start and end of a music video. */
     val themeCards: Boolean = true,
     /** Name an opening or ending's song from AnimeThemes when the server can't; off, Aster doesn't contact it. Kept on the device. */
     val songLookups: Boolean = true,
+    /** When Aster asks who's watching as it opens, for a household (Settings › Account › Ask on Opening). Kept on the device. */
+    val profileGate: com.astermediaplayer.astermediaplayer.data.profiles.ProfileGateMode = com.astermediaplayer.astermediaplayer.data.profiles.ProfileGateMode.Server,
 )
 
 private val Context.settingsDataStore by preferencesDataStore("aster_settings")
@@ -69,9 +77,15 @@ class SettingsStore(private val context: Context) {
     private val preferDiscMenuKey = booleanPreferencesKey("prefer_disc_menu")
     private val discMenuSoundsKey = booleanPreferencesKey("disc_menu_sounds")
     private val listenAheadKey = intPreferencesKey("listen_ahead_minutes")
+    private val musicAheadKey = booleanPreferencesKey("music_ahead")
+    private val musicAheadCellularKey = booleanPreferencesKey("music_ahead_cellular")
+    private val swapControllerButtonsKey = booleanPreferencesKey("swap_controller_buttons")
     private val themeCardsKey = booleanPreferencesKey("theme_cards")
     private val songLookupsKey = booleanPreferencesKey("song_lookups")
     private val welcomeSeenKey = stringSetPreferencesKey("welcome_seen")
+    private val profileGateKey = stringPreferencesKey("profile_gate")
+    /** Each household's "ask on startup" as last read (see [askOnStartup]), as a JSON object by household key. */
+    private val askOnStartupKey = stringPreferencesKey("profile_ask_on_startup")
 
     val settings: Flow<AppSettings> = context.settingsDataStore.data.map {
         AppSettings(
@@ -94,8 +108,12 @@ class SettingsStore(private val context: Context) {
             preferDiscMenu = it[preferDiscMenuKey] ?: false,
             discMenuSounds = it[discMenuSoundsKey] ?: true,
             listenAheadMinutes = it[listenAheadKey] ?: 30,
+            musicAhead = it[musicAheadKey] ?: true,
+            musicAheadCellular = it[musicAheadCellularKey] ?: false,
+            swapControllerButtons = it[swapControllerButtonsKey] ?: false,
             themeCards = it[themeCardsKey] ?: true,
             songLookups = it[songLookupsKey] ?: true,
+            profileGate = com.astermediaplayer.astermediaplayer.data.profiles.ProfileGateMode.of(it[profileGateKey]),
         )
     }
 
@@ -134,6 +152,18 @@ class SettingsStore(private val context: Context) {
     suspend fun markWelcomeSeen(serverId: String) = context.settingsDataStore.edit { it[welcomeSeenKey] = (it[welcomeSeenKey] ?: emptySet()) + serverId }
     suspend fun showWelcomeAgain(serverId: String) = context.settingsDataStore.edit { it[welcomeSeenKey] = (it[welcomeSeenKey] ?: emptySet()) - serverId }
 
+    suspend fun setProfileGate(mode: com.astermediaplayer.astermediaplayer.data.profiles.ProfileGateMode) = context.settingsDataStore.edit { it[profileGateKey] = mode.raw }
+
+    /** A household's "ask on startup" as the server last said, so the decision on a cold launch needs no network. */
+    suspend fun askOnStartup(householdKey: String): Boolean? =
+        context.settingsDataStore.data.first()[askOnStartupKey]?.let { runCatching { org.json.JSONObject(it) }.getOrNull() }
+            ?.takeIf { it.has(householdKey) }?.optBoolean(householdKey)
+
+    suspend fun setAskOnStartup(householdKey: String, ask: Boolean) = context.settingsDataStore.edit {
+        val all = it[askOnStartupKey]?.let { text -> runCatching { org.json.JSONObject(text) }.getOrNull() } ?: org.json.JSONObject()
+        it[askOnStartupKey] = all.put(householdKey, ask).toString()
+    }
+
     suspend fun setQualityIndex(index: Int) = context.settingsDataStore.edit { it[qualityKey] = index }
     suspend fun setAutoSkipSegments(on: Boolean) = context.settingsDataStore.edit { it[autoSkipKey] = on }
     suspend fun setAutoPlayNext(on: Boolean) = context.settingsDataStore.edit { it[autoPlayNextKey] = on }
@@ -154,4 +184,7 @@ class SettingsStore(private val context: Context) {
     suspend fun setPreferDiscMenu(on: Boolean) = context.settingsDataStore.edit { it[preferDiscMenuKey] = on }
     suspend fun setDiscMenuSounds(on: Boolean) = context.settingsDataStore.edit { it[discMenuSoundsKey] = on }
     suspend fun setListenAheadMinutes(minutes: Int) = context.settingsDataStore.edit { it[listenAheadKey] = minutes }
+    suspend fun setMusicAhead(on: Boolean) = context.settingsDataStore.edit { it[musicAheadKey] = on }
+    suspend fun setMusicAheadCellular(on: Boolean) = context.settingsDataStore.edit { it[musicAheadCellularKey] = on }
+    suspend fun setSwapControllerButtons(on: Boolean) = context.settingsDataStore.edit { it[swapControllerButtonsKey] = on }
 }
