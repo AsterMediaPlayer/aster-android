@@ -1,73 +1,38 @@
 package com.astermediaplayer.astermediaplayer.ui.settings
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusGroup
-import androidx.compose.foundation.focusable
-import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.foundation.layout.height
-import androidx.compose.material.icons.filled.PanTool
-import androidx.compose.material.icons.automirrored.filled.HelpOutline
 import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.Album
-import androidx.compose.material.icons.filled.ExpandLess
-import androidx.compose.material.icons.filled.ExpandMore
-import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.Checklist
 import androidx.compose.material.icons.filled.ClosedCaption
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Extension
-import androidx.compose.material.icons.filled.Tv
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.PlayCircle
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Checklist
-import androidx.compose.material.icons.filled.Description
-import androidx.compose.material.icons.filled.BugReport
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.Icon
+import androidx.compose.material.icons.filled.Tv
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.focus.FocusDirection
-import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalFocusManager
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -75,27 +40,17 @@ import com.astermediaplayer.astermediaplayer.data.AppSettings
 import com.astermediaplayer.astermediaplayer.data.SavedServer
 import com.astermediaplayer.astermediaplayer.data.Session
 import com.astermediaplayer.astermediaplayer.data.SettingsStore
-import com.astermediaplayer.astermediaplayer.data.ThemeCut
-import com.astermediaplayer.astermediaplayer.ui.detail.MenuHost
-import com.astermediaplayer.astermediaplayer.ui.detail.MenuItem
-import com.astermediaplayer.astermediaplayer.ui.downloads.DownloadOptions
 import com.astermediaplayer.astermediaplayer.ui.home.TabBarClearance
-import com.astermediaplayer.astermediaplayer.ui.player.Qualities
-import com.astermediaplayer.astermediaplayer.ui.theme.Lockup
 import com.astermediaplayer.astermediaplayer.ui.theme.LocalIsTv
-import com.astermediaplayer.astermediaplayer.data.OpenSourceComponent
-import com.astermediaplayer.astermediaplayer.ui.theme.SecondaryText
+import com.astermediaplayer.astermediaplayer.ui.theme.Lockup
 import com.astermediaplayer.astermediaplayer.ui.theme.Type
-import com.astermediaplayer.astermediaplayer.ui.theme.tvFocus
-import androidx.compose.ui.focus.focusRequester
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 
 /** What the servers list in Settings does beyond showing them: the screen's way back to sign-in, and to a server switched to. */
 class ServerActions(val repo: com.astermediaplayer.astermediaplayer.data.AsterRepository, val onSwitched: () -> Unit, val onAddServer: () -> Unit, val onOpenChannels: () -> Unit = {})
 
 /** The pages Settings opens (the Apple apps' `SettingsDestination`): a root of categories, each its own page. */
-private sealed interface SettingsPage {
+internal sealed interface SettingsPage {
     data object Root : SettingsPage
     data object Playback : SettingsPage
     data object Subtitles : SettingsPage
@@ -149,7 +104,7 @@ fun SettingsScreen(session: Session?, store: SettingsStore, servers: ServerActio
     }
 }
 
-private fun SettingsPage.title(servers: List<SavedServer>) = when (this) {
+internal fun SettingsPage.title(servers: List<SavedServer>) = when (this) {
     SettingsPage.Root -> "Settings"
     SettingsPage.Playback -> "Playback"
     SettingsPage.Subtitles -> "Audio & Subtitles"
@@ -166,25 +121,10 @@ private fun SettingsPage.title(servers: List<SavedServer>) = when (this) {
     is SettingsPage.LockAfter -> "Lock After"
 }
 
-/** The first row of a page that can be pressed takes the remote as the page opens. */
-private class FirstFocus {
-    val requester = androidx.compose.ui.focus.FocusRequester()
-    private var taken = false
-    fun claim(): Boolean { if (taken) return false; taken = true; return true }
-}
-private val LocalFirstFocus = androidx.compose.runtime.compositionLocalOf<FirstFocus?> { null }
-
-/** A row's modifier: the page's first pressable one asks for focus when the page opens. */
-@Composable
-private fun firstFocusModifier(pressable: Boolean): Modifier {
-    val first = LocalFirstFocus.current
-    // Decided again when a row becomes pressable (a page still loading has its rows disabled).
-    return remember(pressable) { if (pressable && first?.claim() == true) Modifier.focusRequester(first.requester) else Modifier }
-}
 
 /** The page's title and scrolling column, in the TV's list style or a phone's; focus goes into the first row as a page opens. */
 @Composable
-private fun SettingsFrame(page: SettingsPage, modifier: Modifier, content: @Composable ColumnScope.() -> Unit) {
+internal fun SettingsFrame(page: SettingsPage, modifier: Modifier, content: @Composable ColumnScope.() -> Unit) {
     val tv = LocalIsTv.current
     val u = Lockup.tvUnit
     val first = remember(page) { FirstFocus() }
@@ -220,72 +160,10 @@ private fun titleOf(page: SettingsPage): String {
     return page.title(servers)
 }
 
-// --- The kit: a group heading, a row, a switch, a choice, a note; each drawn the TV way or the phone's. ---
-
-@Composable
-internal fun SGroup(title: String? = null) {
-    if (title == null) return
-    if (LocalIsTv.current) TvGroup(title)
-    else Text(title.uppercase(), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 14.dp, start = 4.dp))
-}
-
-@Composable
-internal fun SNote(text: String) {
-    if (LocalIsTv.current) TvNote(text)
-    else Text(text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 4.dp))
-}
-
-@Composable
-internal fun SRow(
-    title: String, value: String? = null, icon: ImageVector? = null, chevron: Boolean = false, enabled: Boolean = true,
-    destructive: Boolean = false, subtitle: String? = null, onClick: (() -> Unit)? = null,
-) {
-    if (LocalIsTv.current) { TvRow(title, value, enabled = enabled, destructive = destructive, modifier = firstFocusModifier(onClick != null && enabled), icon = icon, chevron = chevron, subtitle = subtitle, onClick = onClick); return }
-    val tint = if (destructive) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
-    Row(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f))
-            .then(if (onClick != null && enabled) Modifier.clickable(onClick = onClick) else Modifier).padding(horizontal = 16.dp, vertical = 14.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        if (icon != null) Icon(icon, null, tint = tint, modifier = Modifier.padding(end = 14.dp).size(24.dp))
-        val titleColor = if (enabled) tint else MaterialTheme.colorScheme.onSurfaceVariant
-        if (subtitle != null) Column(Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.bodyLarge, color = titleColor)
-            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        } else Text(title, Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge, color = titleColor)
-        if (value != null) Text(value, Modifier.padding(start = 12.dp).widthIn(max = 220.dp), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        if (chevron) Icon(Icons.Default.ChevronRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 4.dp))
-    }
-}
-
-@Composable
-internal fun SSwitch(title: String, checked: Boolean, enabled: Boolean = true, onChange: (Boolean) -> Unit) {
-    if (LocalIsTv.current) { TvSwitchRow(title, checked, enabled = enabled, modifier = firstFocusModifier(enabled), onChange = onChange); return }
-    Row(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)).padding(start = 16.dp, end = 12.dp, top = 6.dp, bottom = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(title, Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge, color = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant)
-        Switch(checked = checked, onCheckedChange = onChange, enabled = enabled)
-    }
-}
-
-@Composable
-internal fun SChoice(title: String, options: List<String>, selected: Int, onPick: (Int) -> Unit) {
-    if (LocalIsTv.current) { TvChoiceRow(title, options, selected, modifier = firstFocusModifier(true), onPick = onPick); return }
-    var open by remember { mutableStateOf(false) }
-    Box {
-        SRow(title, options.getOrNull(selected).orEmpty(), onClick = { open = true })
-        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-            options.forEachIndexed { i, name -> DropdownMenuItem(text = { Text(name) }, onClick = { open = false; onPick(i) }, trailingIcon = if (i == selected) ({ Icon(Icons.Default.Check, null) }) else null) }
-        }
-    }
-}
-
 // --- The pages ---
 
 @Composable
-private fun RootPage(session: Session?, repo: com.astermediaplayer.astermediaplayer.data.AsterRepository, openChannels: () -> Unit, open: (SettingsPage) -> Unit) {
+internal fun RootPage(session: Session?, repo: com.astermediaplayer.astermediaplayer.data.AsterRepository, openChannels: () -> Unit, open: (SettingsPage) -> Unit) {
     val tv = LocalIsTv.current
     // Tracking accounts are linked on the server, through its plugin: shown where it offers any.
     val tracks by produceState(false, session?.serverUrl, session?.userId) {
@@ -306,447 +184,4 @@ private fun RootPage(session: Session?, repo: com.astermediaplayer.astermediapla
     SGroup(" ")
     SRow("Account", session?.userName.orEmpty(), icon = Icons.Default.AccountCircle, chevron = true) { open(SettingsPage.Account) }
     SRow("About", icon = Icons.Default.Info, chevron = true) { open(SettingsPage.About) }
-}
-
-@Composable
-private fun PlaybackPage(settings: AppSettings, store: SettingsStore, scope: kotlinx.coroutines.CoroutineScope) {
-    SChoice("Default quality", Qualities.map { it.label }, settings.qualityIndex) { scope.launch { store.setQualityIndex(it) } }
-    SChoice("Opening and ending version", ThemeCut.entries.map { it.settingTitle }, ThemeCut.entries.indexOf(settings.themeCut)) { scope.launch { store.setThemeCut(ThemeCut.entries[it]) } }
-    SSwitch("Skip intros automatically", settings.autoSkipSegments) { scope.launch { store.setAutoSkipSegments(it) } }
-    SSwitch("Play the next episode automatically", settings.autoPlayNext) { scope.launch { store.setAutoPlayNext(it) } }
-    SSwitch("Song card at openings and endings", settings.themeCards) { scope.launch { store.setThemeCards(it) } }
-    SNote("While an opening or ending plays, a card shows the song, its artists and the show; a music video gets one at its start and end.")
-    // A phone can lose its signal mid-book; a TV doesn't.
-    if (!LocalIsTv.current) {
-        SGroup("Audiobooks")
-        val choices = listOf(0 to "Off", 15 to "15 minutes", 30 to "30 minutes", 60 to "1 hour", 120 to "2 hours")
-        SChoice("Listen Ahead", choices.map { it.second }, choices.indexOfFirst { it.first == settings.listenAheadMinutes }.coerceAtLeast(0)) { scope.launch { store.setListenAheadMinutes(choices[it].first) } }
-        SNote("Saves what's coming up in an audiobook as it plays, so it carries on through a spot with no signal. It's kept in the cache, and let go once heard. Downloaded books don't need it.")
-    }
-}
-
-/** ISO 639-2 codes as Jellyfin stores them, with an "Any" entry: the Apple apps' list. */
-private val Languages = listOf(
-    "" to "Any", "eng" to "English", "spa" to "Spanish", "fre" to "French", "ger" to "German",
-    "ita" to "Italian", "por" to "Portuguese", "jpn" to "Japanese", "kor" to "Korean", "chi" to "Chinese",
-    "rus" to "Russian", "ara" to "Arabic", "hin" to "Hindi", "dut" to "Dutch", "swe" to "Swedish",
-    "nor" to "Norwegian", "dan" to "Danish", "fin" to "Finnish", "pol" to "Polish", "tur" to "Turkish",
-    "heb" to "Hebrew", "tha" to "Thai", "vie" to "Vietnamese", "gre" to "Greek", "cze" to "Czech", "hun" to "Hungarian",
-)
-
-/** Jellyfin's subtitle modes, as the server names them and as the Apple apps title them. */
-private val SubtitleModes = listOf("Default" to "Default", "Always" to "Always on", "OnlyForced" to "Only forced", "None" to "Off", "Smart" to "Smart")
-
-@Composable
-private fun SubtitlesPage(settings: AppSettings, store: SettingsStore, scope: kotlinx.coroutines.CoroutineScope, repo: com.astermediaplayer.astermediaplayer.data.AsterRepository) {
-    // The languages and subtitle mode are the user's own settings on the server, which picks the tracks a title starts with,
-    // so the web app and every device make the same choices. Plex has none.
-    var config by remember { mutableStateOf<org.json.JSONObject?>(null) }
-    LaunchedEffect(repo.currentServerId) { config = runCatching { repo.userConfiguration() }.getOrNull() }
-    config?.let { current ->
-        fun value(key: String) = if (current.isNull(key)) "" else current.optString(key)
-        // Shown at once; put back if the server refuses it.
-        fun change(key: String, value: String) {
-            val changed = org.json.JSONObject(current.toString()).put(key, value)
-            config = changed
-            scope.launch { runCatching { repo.updateUserConfiguration(changed) }.onFailure { config = current } }
-        }
-        // The list, plus the current value when the server has a code that isn't in it, so the choice never shows nothing.
-        fun languages(code: String) = if (code.isEmpty() || Languages.any { it.first == code }) Languages else Languages + (code to code.uppercase())
-        SGroup("Audio")
-        val audio = value("AudioLanguagePreference")
-        val audioChoices = languages(audio)
-        SChoice("Preferred audio language", audioChoices.map { it.second }, audioChoices.indexOfFirst { it.first == audio }) { change("AudioLanguagePreference", audioChoices[it].first) }
-        SGroup("Subtitles")
-        val subtitles = value("SubtitleLanguagePreference")
-        val subtitleChoices = languages(subtitles)
-        SChoice("Preferred subtitle language", subtitleChoices.map { it.second }, subtitleChoices.indexOfFirst { it.first == subtitles }) { change("SubtitleLanguagePreference", subtitleChoices[it].first) }
-        val mode = value("SubtitleMode")
-        SChoice("Subtitles", SubtitleModes.map { it.second }, SubtitleModes.indexOfFirst { it.first == mode }.coerceAtLeast(0)) { change("SubtitleMode", SubtitleModes[it].first) }
-        SNote("Synced with your ${repo.serverKind.displayName} profile, so the web app and this device make the same choices. Choosing subtitles while a title plays overrides them for that title.")
-    }
-    SGroup("Styled Subtitles")
-    SSwitch("Draw ASS and SSA subtitles as styled", settings.styledSubtitles) { scope.launch { store.setStyledSubtitles(it) } }
-    SNote("Draws anime subtitles as the release intended: signs where they belong on screen, their drawings, and the fonts inside the file. Turn off for plain text at the bottom, in your caption style.")
-}
-
-@Composable
-private fun DiscMenusPage(settings: AppSettings, store: SettingsStore, scope: kotlinx.coroutines.CoroutineScope) {
-    SSwitch("Open disc menu when pressing Play", settings.preferDiscMenu) { scope.launch { store.setPreferDiscMenu(it) } }
-    SSwitch("Menu music and sounds", settings.discMenuSounds) { scope.launch { store.setDiscMenuSounds(it) } }
-    SNote("Titles with a JellyDisc menu on the server show a Disc Menu button on their page. Turn on the first option to start those titles at their menu, like putting in the disc.")
-}
-
-@Composable
-private fun TitlePagesPage(settings: AppSettings, store: SettingsStore, scope: kotlinx.coroutines.CoroutineScope, repo: com.astermediaplayer.astermediaplayer.data.AsterRepository) {
-    SSwitch("Theme music", settings.themeMusic) { scope.launch { store.setThemeMusic(it) } }
-    SSwitch("Theme videos", settings.themeVideos) { scope.launch { store.setThemeVideos(it) } }
-    SNote("Plays a title's theme song quietly, or loops its theme video behind the page, when your library has them.")
-    SGroup("Anime")
-    SSwitch("Opening plays with sound", settings.openingSound, enabled = settings.themeVideos) { scope.launch { store.setOpeningSound(it) } }
-    SNote("Anime with no theme video of its own loops its first opening behind the series page, when Theme videos is on. With sound, it plays quietly, like theme music.")
-    SGroup("Song names")
-    SSwitch("Look up song names", settings.songLookups) { scope.launch { store.setSongLookups(it) } }
-    var refreshing by remember { mutableStateOf<String?>(null) }
-    SRow("Refresh songs", value = refreshing, enabled = settings.songLookups && refreshing != "Refreshing…") {
-        refreshing = "Refreshing…"
-        scope.launch { refreshing = if (runCatching { repo.refreshSongs() }.getOrDefault(false)) "Done" else "Couldn't reach AnimeThemes" }
-    }
-    SNote("Names the song of an opening or ending from AnimeThemes (animethemes.moe) when your server doesn't. Where it does (Plex, Emby, and Jellyfin without the OP/ED plugin) the names for every anime show are fetched in the background and kept on this device; Refresh songs asks again for all of them. Turn off and Aster doesn't contact AnimeThemes.")
-}
-
-/** Aster's companion plugins on the server: a switch each for an administrator, else whether they're there. */
-@Composable
-private fun ServerPluginsPage(repo: com.astermediaplayer.astermediaplayer.data.AsterRepository, store: SettingsStore) {
-    val model = remember { com.astermediaplayer.astermediaplayer.data.ServerPluginsModel(repo) }
-    val scope = rememberCoroutineScope()
-    var confirming by remember { mutableStateOf(false) }
-    LaunchedEffect(model) { model.load() }
-    val admin = model.isAdministrator
-    if (admin == null) { SNote("Looking at your server…"); return }
-    for (plugin in com.astermediaplayer.astermediaplayer.data.AsterPlugin.entries) {
-        val state = model.state(plugin)
-        val title = "${plugin.headline} · ${plugin.packageName}"
-        if (admin) SSwitch(title, state.isOn, enabled = state.canSwitch && model.restart != com.astermediaplayer.astermediaplayer.data.ServerPluginsModel.Restart.Restarting) { scope.launch { model.set(plugin, it) } }
-        else SRow(title)
-        // An administrator's switch already says On or Off.
-        val caption = state.caption("Jellyfin").takeIf { it.isNotEmpty() && !(admin && (state == com.astermediaplayer.astermediaplayer.data.PluginState.Active || state == com.astermediaplayer.astermediaplayer.data.PluginState.Disabled)) }
-        SNote(plugin.summary + caption?.let { "\n$it" }.orEmpty())
-    }
-    if (admin) SNote("Free plugins for Jellyfin that add more to Aster. Switching one on installs it on your server; off turns it off and keeps its settings. Either takes a server restart.")
-    if (admin && (model.needsRestart || model.restart != com.astermediaplayer.astermediaplayer.data.ServerPluginsModel.Restart.Idle || model.errorMessage != null)) {
-        SGroup("Restart")
-        when (val restart = model.restart) {
-            com.astermediaplayer.astermediaplayer.data.ServerPluginsModel.Restart.Restarting -> SNote("Restarting your server. This usually takes about a minute…")
-            is com.astermediaplayer.astermediaplayer.data.ServerPluginsModel.Restart.Failed -> SNote(restart.message)
-            com.astermediaplayer.astermediaplayer.data.ServerPluginsModel.Restart.Idle -> if (model.needsRestart) {
-                if (model.canRestart) {
-                    SNote("Almost there. Your server needs a quick restart to finish.")
-                    SRow("Restart Server", destructive = true) { confirming = true }
-                } else SNote("Almost there. Restart Jellyfin to finish (it can't restart itself where it's running).")
-            }
-        }
-        model.errorMessage?.let { SNote(it) }
-    }
-    SGroup(" ")
-    SNote("Aster Aurora, for the web: brings as much of Aster as it can to Jellyfin in your browser, with big hero banners, trailers playing behind titles, and more. Once Aster's repository is on your server, you'll find it in the plugin catalogue in Jellyfin's dashboard.")
-    if (!admin) SNote("Want these? Ask whoever runs your server. They can switch them on from Aster in a few seconds, or add this repository under Plugins ▸ Repositories in Jellyfin's dashboard: ${com.astermediaplayer.astermediaplayer.data.AsterPlugin.REPOSITORY_URL}")
-    // Brings the welcome screen back for this server, in place of the tabs.
-    repo.currentServerId?.let { id ->
-        SGroup(" ")
-        SRow("Show Welcome Screen") { scope.launch { store.showWelcomeAgain(id) } }
-        SNote("What Aster does, and what these plugins add, as it first appeared when you signed in.")
-    }
-    if (confirming) androidx.compose.material3.AlertDialog(
-        onDismissRequest = { confirming = false },
-        title = { Text("Restart your server now?") }, text = { Text("Anyone watching will be paused for about a minute.") },
-        confirmButton = { androidx.compose.material3.TextButton({ confirming = false; scope.launch { model.restartServer() } }) { Text("Restart") } },
-        dismissButton = { androidx.compose.material3.TextButton({ confirming = false }) { Text("Cancel") } },
-    )
-}
-
-@Composable
-private fun DownloadsPage(settings: AppSettings, store: SettingsStore, scope: kotlinx.coroutines.CoroutineScope) {
-    SSwitch("Allow downloads", settings.downloadsEnabled) { scope.launch { store.setDownloadsEnabled(it) } }
-    if (settings.downloadsEnabled) DownloadOptions()
-}
-
-@Composable
-private fun AboutPage(open: (SettingsPage) -> Unit) {
-    val context = LocalContext.current
-    val version = remember { runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull().orEmpty() }
-    SRow("Aster Media Player", version)
-    SNote("A Jellyfin, Emby and Plex client for Android TV, phones and tablets, with DVD and Blu-ray style menus on Jellyfin from the Aster Disc plugin.")
-    androidx.compose.foundation.layout.Spacer(Modifier.height(12.dp))
-    AboutLink("Help & Support", Icons.AutoMirrored.Filled.HelpOutline, "https://astermediaplayer.com/support.html")
-    AboutLink("Privacy Policy", Icons.Default.PanTool, "https://astermediaplayer.com/privacy.html")
-    SRow("Open Source & Licenses", icon = Icons.Default.Description, chevron = true) { open(SettingsPage.OpenSource) }
-    var reporting by remember { mutableStateOf(false) }
-    SRow("Send Debug Report", icon = Icons.Default.BugReport, chevron = true) { reporting = true }
-    SNote("When something goes wrong, send a report and quote its code in a bug report.")
-    if (reporting) DebugReportDialog { reporting = false }
-}
-
-/** One of Aster's web pages, as on the Apple apps: opened in the browser, or on a TV, which has none, the address to type in elsewhere. */
-@Composable
-private fun AboutLink(title: String, icon: ImageVector, address: String) {
-    val context = LocalContext.current
-    if (LocalIsTv.current) SRow(title, address.removePrefix("https://"), icon = icon)
-    else SRow(title, icon = icon, chevron = true) {
-        runCatching { context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(address))) }
-    }
-}
-
-
-/** Open Source & Licenses on its own, for the welcome screen, as on the Apple apps; Back steps out of a license, then closes it. */
-@Composable
-fun OpenSourceLicenses(onClose: () -> Unit) {
-    val stack = remember { mutableStateListOf<SettingsPage>(SettingsPage.OpenSource) }
-    val page = stack.last()
-    BackHandler { if (stack.size > 1) stack.removeAt(stack.lastIndex) else onClose() }
-    SettingsFrame(page, Modifier.background(MaterialTheme.colorScheme.background).statusBarsPadding()) {
-        when (page) {
-            is SettingsPage.License -> LicensePage(page.name)
-            else -> OpenSourcePage { stack.add(it) }
-        }
-    }
-}
-
-/**
- * Open Source & Licenses, as on the Apple apps: Aster's own license, then every open-source component built into the app, what it
- * does here and its license, each opening its license in full.
- */
-@Composable
-private fun OpenSourcePage(open: (SettingsPage) -> Unit) {
-    val aster = OpenSourceComponent.aster
-    SGroup("Aster")
-    ComponentRow(aster) { open(SettingsPage.License(aster.name)) }
-    SNote("Aster is open source, under the Mozilla Public License 2.0. You're free to use, change and share it; changed files of Aster you share must stay under the same license. Its source is at ${aster.url}.")
-    SNote("The Aster name and icon aren't part of the license. Aster isn't affiliated with or endorsed by Jellyfin, Emby or Plex.")
-    OpenSourceComponent.groups.forEach { (title, components) ->
-        SGroup(title)
-        components.forEach { component -> ComponentRow(component) { open(SettingsPage.License(component.name)) } }
-    }
-    SGroup(" ")
-    SNote("Each component keeps its own license; select one to read it in full. Where a license is the LGPL, you may replace that component with your own build of it: the source of each, and of Aster, is at the address shown.")
-    SNote("Casting to a Chromecast uses Google's Cast SDK, which comes under Google's own terms rather than an open-source license.")
-}
-
-/** A component's name, what it does, and its license; grey, and white with black text when focused on a TV. */
-@Composable
-private fun ComponentRow(component: OpenSourceComponent, onClick: () -> Unit) {
-    val tv = LocalIsTv.current
-    if (tv) {
-        val u = Lockup.tvUnit
-        var focused by remember { mutableStateOf(false) }
-        val secondary = if (focused) Color.Black.copy(alpha = 0.6f) else SecondaryText
-        Row(
-            firstFocusModifier(true).fillMaxWidth().tvFocus((14f * u).dp, lift = 1.02f, ring = false).onFocusChanged { focused = it.isFocused }
-                .clip(RoundedCornerShape((14f * u).dp)).background(if (focused) Color.White else Color.White.copy(alpha = 0.1f))
-                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onClick)
-                .padding(horizontal = (28f * u).dp, vertical = (16f * u).dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy((4f * u).dp)) {
-                Text(component.name, style = Type.callout, color = if (focused) Color.Black else Color.White)
-                Text(component.role, style = Type.caption, color = secondary)
-                Text(component.license, style = Type.caption, color = secondary)
-            }
-            Icon(Icons.Default.ChevronRight, null, tint = secondary, modifier = Modifier.padding(start = (12f * u).dp).size((34f * u).dp))
-        }
-    } else {
-        Row(
-            Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f))
-                .clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(component.name, style = MaterialTheme.typography.titleSmall)
-                Text(component.role, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text(component.license, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            Icon(Icons.Default.ChevronRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 4.dp))
-        }
-    }
-}
-
-/** A component's license in full: its license's name, its address, any notice, then each text, a paragraph at a time. */
-@Composable
-private fun LicensePage(name: String) {
-    val context = LocalContext.current
-    val component = remember(name) { OpenSourceComponent.all.firstOrNull { it.name == name } } ?: return
-    // In paragraphs, so a TV remote can scroll through them one at a time.
-    val paragraphs = remember(component) {
-        component.files.flatMap { file ->
-            val text = OpenSourceComponent.text(context, file) ?: "This license text is missing from the app; it's at ${component.url}."
-            text.replace("\r\n", "\n").split("\n\n").map { it.trim('\n') }.filter { it.isNotBlank() }
-        }
-    }
-    SRow("License", component.license)
-    SRow("Source", component.url.removePrefix("https://"))
-    component.note?.let { SNote(it) }
-    SGroup(" ")
-    val tv = LocalIsTv.current
-    paragraphs.forEach { paragraph ->
-        if (tv) {
-            val u = Lockup.tvUnit
-            var focused by remember { mutableStateOf(false) }
-            Text(
-                paragraph, style = Type.caption.copy(fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace), color = if (focused) Color.White else SecondaryText,
-                modifier = firstFocusModifier(true).fillMaxWidth().clip(RoundedCornerShape((10f * u).dp))
-                    .background(if (focused) Color.White.copy(alpha = 0.1f) else Color.Transparent)
-                    .onFocusChanged { focused = it.isFocused }.focusable().padding(horizontal = (8f * u).dp, vertical = (4f * u).dp),
-            )
-        } else {
-            androidx.compose.foundation.text.selection.SelectionContainer {
-                Text(paragraph, style = MaterialTheme.typography.bodySmall.copy(fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace, fontSize = 10.sp, lineHeight = 14.sp), modifier = Modifier.padding(horizontal = 4.dp))
-            }
-        }
-    }
-}
-/** Account: the server in use, the user, and the servers signed in to, to switch between. */
-@Composable
-private fun AccountPage(session: Session?, servers: ServerActions, onSignOut: () -> Unit, open: (SettingsPage) -> Unit) {
-    val repo = servers.repo
-    val saved by repo.savedServers.collectAsState()
-    val version by produceState<String?>(null, session?.serverUrl) { value = repo.serverVersion() }
-    SGroup("Server")
-    SRow("Server", session?.serverName ?: session?.serverUrl.orEmpty())
-    SRow("Address", session?.serverUrl.orEmpty())
-    if (version != null) SRow("${session?.kind?.displayName ?: "Server"} version", version)
-    SGroup("User")
-    SRow("User", session?.userName.orEmpty())
-    SRow("Switch User", destructive = true, onClick = onSignOut)
-    SGroup("Servers")
-    saved.forEach { server ->
-        val current = server.id == repo.currentServerId
-        SRow(server.titleAmong(saved), "${server.session.kind.displayName} · ${server.session.userName}" + if (current) " · In Use" else "", chevron = true) { open(SettingsPage.Server(server.id)) }
-    }
-    SRow("Add Server", onClick = servers.onAddServer)
-    SNote("Servers you've signed in to stay signed in, to switch between. Add one to sign in to another Jellyfin or Emby server.")
-}
-
-/** One saved server: switch to it, ask for its password (a Plex profile's PIN) first, lock it after a while, or forget it. */
-@Composable
-private fun ServerPage(id: String, servers: ServerActions, open: (SettingsPage) -> Unit, back: () -> Unit) {
-    val repo = servers.repo
-    val saved by repo.savedServers.collectAsState()
-    val server = saved.firstOrNull { it.id == id } ?: return
-    val scope = rememberCoroutineScope()
-    var asking by remember { mutableStateOf(false) }
-    var loosening by remember { mutableStateOf<LockChange?>(null) }
-    val inUse = id == repo.currentServerId
-    SRow("Server", server.session.kind.displayName)
-    SRow("Address", server.session.serverUrl)
-    SRow("User", server.session.userName)
-    SGroup(" ")
-    if (inUse) SNote("This is the server in use.")
-    else SRow("Switch to This Server") {
-        if (server.asksPasswordToSwitch) asking = true else scope.launch { repo.switchTo(server); servers.onSwitched() }
-    }
-    // A password to switch or unlock is the server's own, checked by the server; on Plex it's the Home profile's PIN, checked by plex.tv.
-    val plex = server.session.kind == com.astermediaplayer.astermediaplayer.data.emby.ServerKind.Plex
-    if (server.canBeLocked) {
-        val who = if (plex) "${server.session.userName}'s Plex Home PIN" else "${server.session.userName}'s password"
-        SSwitch("Ask for ${server.credential.replaceFirstChar { it.uppercase() }} to Switch", server.asksPasswordToSwitch) { asks ->
-            // Turning it off asks for the password (or PIN), so nobody else can.
-            if (server.loosens(asksToSwitch = asks)) loosening = LockChange("stop asking for it to switch", "Turn Off") { repo.setAsksPasswordToSwitch(id, false) }
-            else scope.launch { repo.setAsksPasswordToSwitch(id, asks) }
-        }
-        SNote("Switching to this server asks for $who first, checked by ${if (plex) "plex.tv" else "the server"}, so others on this device can't switch to it.")
-        SGroup(" ")
-        SRow("Lock After", SavedServer.lockTitle(server.lockAfterMinutes), chevron = true) { open(SettingsPage.LockAfter(id)) }
-        SNote("After this long away from Aster, coming back to this server asks for $who.")
-    } else if (plex) {
-        // A profile with no PIN, or a sign-in from before the Home was kept: signing in again can pick a profile that has one.
-        SRow("Sign In with Plex Again") { servers.onAddServer() }
-        SNote("Asking for a PIN to switch, and Lock After, need a Plex Home profile with a PIN. If ${server.session.userName} has one now (set at plex.tv), sign in with Plex again to use it.")
-    }
-    if (!inUse) {
-        SGroup(" ")
-        SRow("Remove Server", destructive = true) { scope.launch { repo.removeServer(id); back() } }
-    }
-    if (asking) com.astermediaplayer.astermediaplayer.ui.auth.ServerPasswordDialog(
-        server, "Switch", title = server.titleAmong(saved),
-        onCheck = { password -> val fresh = repo.signInAgain(server, password); repo.switchTo(server, fresh); servers.onSwitched() },
-        onDismiss = { asking = false },
-    )
-    loosening?.let { change -> LockChangeDialog(server, saved, repo, change) { loosening = null } }
-}
-
-/** A change that lets more past a server's lock, held until its password is given, as on the Apple apps. */
-private class LockChange(val purpose: String, val button: String, val apply: suspend () -> Unit)
-
-@Composable
-private fun LockChangeDialog(server: SavedServer, saved: List<SavedServer>, repo: com.astermediaplayer.astermediaplayer.data.AsterRepository, change: LockChange, onDismiss: () -> Unit) {
-    com.astermediaplayer.astermediaplayer.ui.auth.ServerPasswordDialog(
-        server, change.button, title = server.titleAmong(saved), purpose = change.purpose,
-        // The check is a fresh sign-in, which ends the one saved: it's kept in its place.
-        onCheck = { password -> repo.keepSignIn(repo.signInAgain(server, password)); change.apply() },
-        onDismiss = onDismiss,
-    )
-}
-
-/** A saved server's Lock After choices: picking one saves it and goes back. */
-@Composable
-private fun LockAfterPage(id: String, servers: ServerActions, back: () -> Unit) {
-    val repo = servers.repo
-    val saved by repo.savedServers.collectAsState()
-    val server = saved.firstOrNull { it.id == id }
-    val chosen = server?.lockAfterMinutes
-    val scope = rememberCoroutineScope()
-    var loosening by remember { mutableStateOf<LockChange?>(null) }
-    (listOf<Int?>(null) + SavedServer.LOCK_CHOICES).forEach { minutes ->
-        SRow(SavedServer.lockTitle(minutes), if (minutes == chosen) "✓" else null) {
-            // Never, or a longer wait, asks for the password first.
-            if (server != null && server.loosens(lockAfter = minutes)) loosening = LockChange("change when it locks", "Change") { repo.setLockAfter(id, minutes); back() }
-            else scope.launch { repo.setLockAfter(id, minutes); back() }
-        }
-    }
-    if (server != null) loosening?.let { change -> LockChangeDialog(server, saved, repo, change) { loosening = null } }
-}
-
-@Composable
-internal fun TvGroup(title: String) {
-    val u = Lockup.tvUnit
-    Text(title.uppercase(), style = Type.caption.copy(fontWeight = FontWeight.SemiBold, letterSpacing = 1.sp), color = SecondaryText, modifier = Modifier.padding(top = (26f * u).dp, bottom = (6f * u).dp, start = (8f * u).dp))
-}
-
-@Composable
-internal fun TvNote(text: String) {
-    val u = Lockup.tvUnit
-    Text(text, style = Type.caption, color = SecondaryText, modifier = Modifier.padding(horizontal = (8f * u).dp, vertical = (4f * u).dp).widthIn(max = (1200f * u).dp))
-}
-
-/** One row of the list: its title on the left and a value on the right, grey, and white with black text when focused. */
-@Composable
-internal fun TvRow(
-    title: String, value: String?, enabled: Boolean = true, destructive: Boolean = false, modifier: Modifier = Modifier,
-    icon: ImageVector? = null, chevron: Boolean = false, subtitle: String? = null, fold: Boolean? = null, onClick: (() -> Unit)?,
-) {
-    val u = Lockup.tvUnit
-    var focused by remember { mutableStateOf(false) }
-    val tint = when {
-        focused -> if (destructive) Color(0xFFD70015) else Color.Black
-        !enabled -> Color.White.copy(alpha = 0.4f)
-        destructive -> Color(0xFFFF453A)
-        else -> Color.White
-    }
-    Row(
-        modifier.fillMaxWidth().heightIn(min = (82f * u).dp).then(if (onClick != null) Modifier.tvFocus((14f * u).dp, lift = 1.02f, ring = false).onFocusChanged { focused = it.isFocused } else Modifier)
-            .clip(RoundedCornerShape((14f * u).dp)).background(if (focused) Color.White else Color.White.copy(alpha = 0.1f))
-            .then(if (onClick != null && enabled) Modifier.clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onClick) else if (onClick != null) Modifier.focusable() else Modifier)
-            .padding(horizontal = (28f * u).dp, vertical = (14f * u).dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        if (icon != null) Icon(icon, null, tint = tint, modifier = Modifier.padding(end = (20f * u).dp).size((38f * u).dp))
-        // A long title wraps in what the value leaves; a long value gives way with an ellipsis, never out of the row.
-        if (subtitle != null) Column(Modifier.weight(1f)) {
-            Text(title, style = Type.callout, color = tint)
-            Text(subtitle, style = Type.caption, color = if (focused) Color.Black.copy(alpha = 0.6f) else SecondaryText)
-        } else Text(title, style = Type.callout, color = tint, modifier = Modifier.weight(1f))
-        if (value != null) Text(
-            value, style = Type.callout, color = if (focused) Color.Black.copy(alpha = 0.6f) else SecondaryText, maxLines = 1,
-            overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(start = (16f * u).dp).widthIn(max = (900f * u).dp),
-        )
-        // A row that opens or closes more beneath it, as the Apple apps' folds do.
-        if (fold != null) Icon(if (fold) Icons.Default.ExpandLess else Icons.Default.ExpandMore, null, tint = if (focused) Color.Black.copy(alpha = 0.5f) else SecondaryText, modifier = Modifier.padding(start = (12f * u).dp).size((34f * u).dp))
-        if (chevron) Icon(Icons.Default.ChevronRight, null, tint = if (focused) Color.Black.copy(alpha = 0.5f) else SecondaryText, modifier = Modifier.padding(start = (12f * u).dp).size((34f * u).dp))
-    }
-}
-
-@Composable
-internal fun TvSwitchRow(title: String, checked: Boolean, enabled: Boolean = true, modifier: Modifier = Modifier, subtitle: String? = null, onChange: (Boolean) -> Unit) =
-    TvRow(title, if (checked) "On" else "Off", enabled = enabled, modifier = modifier, subtitle = subtitle, onClick = { onChange(!checked) })
-
-/** A row showing the current choice; OK opens the glass menu of them below it. */
-@Composable
-internal fun TvChoiceRow(title: String, options: List<String>, selected: Int, modifier: Modifier = Modifier, onPick: (Int) -> Unit) {
-    var open by remember { mutableStateOf(false) }
-    Box {
-        TvRow(title, options.getOrNull(selected).orEmpty(), modifier = modifier, onClick = { open = true })
-        MenuHost(expanded = open, onDismiss = { open = false }, below = true) {
-            options.forEachIndexed { i, name -> MenuItem(name, null, first = i == selected, checked = i == selected) { open = false; onPick(i) } }
-        }
-    }
 }
