@@ -23,17 +23,16 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -54,9 +53,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -101,6 +97,10 @@ fun ProfilePicker(reason: ProfilePickerReason, households: HouseholdProfiles, re
     var error by remember { mutableStateOf<String?>(null) }
     // Counts the tries that failed, so each message shows afresh and the PIN clears.
     var attempt by remember { mutableIntStateOf(0) }
+    // The main account adding someone, or changing them (a form over the picker); managing, tiles open the profile to change.
+    var adding by remember { mutableStateOf(false) }
+    var editing by remember { mutableStateOf<HouseholdProfile?>(null) }
+    var managing by remember { mutableStateOf(false) }
 
     // The tiles as last seen, at once; then the server's fresh list (a PIN can stop being asked on the home network, say).
     LaunchedEffect(Unit) {
@@ -134,6 +134,14 @@ fun ProfilePicker(reason: ProfilePickerReason, households: HouseholdProfiles, re
         }
     }
 
+    /** Back from a form: the household as it is now. */
+    fun reload() {
+        scope.launch {
+            households.refresh(force = true)
+            households.state.value.takeIf { it.provider != null }?.let { profiles = it.profiles }
+        }
+    }
+
     fun pick(profile: HouseholdProfile) {
         if (switching != null) return
         error = null
@@ -149,10 +157,19 @@ fun ProfilePicker(reason: ProfilePickerReason, households: HouseholdProfiles, re
         }
     }
 
-    // Back leaves the PIN first, then the picker; as the app opens, it carries on as the one signed in.
-    BackHandler {
+    /** A tile pressed: the profile to switch to, or (managing) to change. */
+    fun press(profile: HouseholdProfile) {
+        if (managing) { if (household.canEdit(profile)) editing = profile } else pick(profile)
+    }
+
+    // Back leaves the PIN first, then managing, then the picker; as the app opens, it carries on as the one signed in.
+    BackHandler(enabled = !adding && editing == null) {
         if (switching != null) return@BackHandler
-        if (pinFor != null) { pinFor = null; error = null } else households.dismissPicker()
+        when {
+            pinFor != null -> { pinFor = null; error = null }
+            managing -> managing = false
+            else -> households.dismissPicker()
+        }
     }
 
     Box(
@@ -165,11 +182,15 @@ fun ProfilePicker(reason: ProfilePickerReason, households: HouseholdProfiles, re
             verticalArrangement = Arrangement.spacedBy(sized(24.dp, 48f)),
         ) {
             Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(sized(6.dp, 10f))) {
-                Text("Who's watching?", color = Color.White, fontWeight = FontWeight.Bold, fontSize = if (tv) (64f * u).sp else 30.sp, textAlign = TextAlign.Center)
+                Text(if (managing) "Manage Profiles" else "Who's watching?", color = Color.White, fontWeight = FontWeight.Bold, fontSize = if (tv) (64f * u).sp else 30.sp, textAlign = TextAlign.Center)
                 repo.session?.serverName?.let { Text(it, color = Color.White.copy(alpha = 0.6f), fontSize = if (tv) (30f * u).sp else 16.sp) }
             }
 
-            if (profiles.isEmpty()) {
+            // While a PIN is typed the row steps aside for the one profile (its picture heads the pad): on a TV the keypad, boxes and
+            // tiles don't all fit.
+            if (pinFor != null) {
+                // Nothing here; the PIN's own heading has the profile.
+            } else if (profiles.isEmpty()) {
                 if (loading) CircularProgressIndicator()
                 else loadError?.let { Text(it, color = Color.White.copy(alpha = 0.7f), textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 24.dp)) }
             } else {
@@ -184,10 +205,11 @@ fun ProfilePicker(reason: ProfilePickerReason, households: HouseholdProfiles, re
                     profiles.forEach { profile ->
                         ProfileTile(
                             profile, switching = switching?.id == profile.id, dimmed = switching != null && switching?.id != profile.id,
-                            enabled = switching == null && pinFor == null,
+                            enabled = switching == null && pinFor == null, editable = managing && household.canEdit(profile),
                             modifier = if (profile.id == focusTarget.id) Modifier.focusRequester(firstTile) else Modifier,
-                        ) { pick(profile) }
+                        ) { press(profile) }
                     }
+                    if (household.canCreateProfiles) AddProfileTile(dimmed = switching != null, enabled = switching == null) { adding = true }
                 }
             }
 
@@ -196,21 +218,53 @@ fun ProfilePicker(reason: ProfilePickerReason, households: HouseholdProfiles, re
                 else Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     error?.let { Text(it, color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 24.dp)) }
                     val ring = if (tv) Modifier.tvFocus((24f * u).dp, lift = 1.04f) else Modifier
-                    when (reason) {
-                        ProfilePickerReason.Launch -> repo.session?.userName?.let { name ->
-                            OutlinedButton(onClick = households::dismissPicker, enabled = switching == null, modifier = ring) { Text("Continue as $name") }
+                    Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                        when (reason) {
+                            ProfilePickerReason.Launch -> repo.session?.userName?.let { name ->
+                                OutlinedButton(onClick = households::dismissPicker, enabled = switching == null, modifier = ring) { Text("Continue as $name") }
+                            }
+                            ProfilePickerReason.Switcher -> OutlinedButton(onClick = households::dismissPicker, enabled = switching == null, modifier = ring) { Text("Cancel") }
                         }
-                        ProfilePickerReason.Switcher -> OutlinedButton(onClick = households::dismissPicker, enabled = switching == null, modifier = ring) { Text("Cancel") }
+                        if (household.canCreateProfiles) OutlinedButton(onClick = { managing = !managing }, enabled = switching == null, modifier = ring) {
+                            Text(if (managing) "Done" else "Manage Profiles")
+                        }
                     }
                 }
             }
         }
     }
+
+    // Adding someone, or changing them: the form over the picker; the row then shows the household as it is.
+    if (adding || editing != null) ProfileForm(households, editing) { adding = false; editing = null; reload() }
+}
+
+/** The end of the row, for the main account: a plus in a ring, to add someone to the household. */
+@Composable
+private fun AddProfileTile(dimmed: Boolean, enabled: Boolean, onClick: () -> Unit) {
+    val tv = LocalIsTv.current
+    val u = Lockup.tvUnit
+    val size = if (tv) (200f * u).dp else 96.dp
+    var focused by remember { mutableStateOf(false) }
+    Column(
+        Modifier.width(size + if (tv) (24f * u).dp else 12.dp).alpha(if (dimmed) 0.4f else 1f)
+            .then(if (tv) Modifier.tvFocus(size / 2, lift = 1.08f, ring = false) else Modifier)
+            .onFocusChanged { focused = it.isFocused }
+            .clickable(enabled = enabled, interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onClick),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(if (tv) (16f * u).dp else 8.dp),
+    ) {
+        Box(
+            Modifier.size(size).clip(CircleShape).background(Color.White.copy(alpha = if (focused) 0.2f else 0.08f))
+                .border(if (tv) (4f * u).dp else 2.dp, Color.White.copy(alpha = if (focused) 1f else 0.35f), CircleShape),
+            contentAlignment = Alignment.Center,
+        ) { Icon(Icons.Default.Add, null, tint = Color.White, modifier = Modifier.size(size * 0.4f)) }
+        Text("Add Profile", color = if (focused) Color.White else Color.White.copy(alpha = 0.85f), maxLines = 1, fontSize = if (tv) (28f * u).sp else 15.sp)
+    }
 }
 
 /** A profile's tile: its picture (or initial on its colour) in a circle, its name, and a lock when it asks for a PIN. */
 @Composable
-private fun ProfileTile(profile: HouseholdProfile, switching: Boolean, dimmed: Boolean, enabled: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
+private fun ProfileTile(profile: HouseholdProfile, switching: Boolean, dimmed: Boolean, enabled: Boolean, editable: Boolean = false, modifier: Modifier = Modifier, onClick: () -> Unit) {
     val tv = LocalIsTv.current
     val u = Lockup.tvUnit
     val size = if (tv) (200f * u).dp else 96.dp
@@ -231,6 +285,10 @@ private fun ProfileTile(profile: HouseholdProfile, switching: Boolean, dimmed: B
             Text(profile.initial, color = Color.White, fontWeight = FontWeight.Bold, fontSize = if (tv) (84f * u).sp else 40.sp)
             if (profile.imageUrl != null) AsyncImage(model = profile.imageUrl, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
             if (switching) Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.45f)), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Color.White) }
+            // Managing: a pencil over the ones that can be changed.
+            if (editable) Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.4f)), contentAlignment = Alignment.Center) {
+                Icon(Icons.Default.Edit, "Edit ${profile.name}", tint = Color.White, modifier = Modifier.size(size * 0.32f))
+            }
         }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(
@@ -250,24 +308,19 @@ private fun PinEntry(profile: HouseholdProfile, error: String?, attempt: Int, ch
     val u = Lockup.tvUnit
     var pin by remember(profile.id) { mutableStateOf("") }
     LaunchedEffect(attempt) { pin = "" }
-    val field = remember { FocusRequester() }
-    // To the field once it's on screen.
-    LaunchedEffect(profile.id, attempt) { delay(300); runCatching { field.requestFocus() } }
-    fun submit() { if (pin.isNotEmpty() && !checking) onSubmit(pin) }
+    // Which length a PIN is isn't known until the server checks it, so nothing is sent until Continue.
+    fun submit() { if (PinCode.isComplete(pin) && !checking) onSubmit(pin) }
     val ring = if (tv) Modifier.tvFocus((24f * u).dp, lift = 1.04f) else Modifier
     Column(
         Modifier.widthIn(max = if (tv) (720f * u).dp else 360.dp).fillMaxWidth().padding(horizontal = 24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp),
+        horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(if (tv) (20f * u).dp else 14.dp),
     ) {
+        ProfileAvatar(profile.initial, profile.colorHex, profile.imageUrl, if (tv) (120f * u).dp else 80.dp)
         Text("Enter ${profile.name}'s PIN", color = Color.White.copy(alpha = 0.7f), fontSize = if (tv) (30f * u).sp else 17.sp)
-        OutlinedTextField(
-            value = pin, onValueChange = { pin = it.filter(Char::isDigit).take(8) }, label = { Text("PIN") }, singleLine = true,
-            modifier = Modifier.fillMaxWidth().focusRequester(field), visualTransformation = PasswordVisualTransformation(),
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword, imeAction = ImeAction.Go), keyboardActions = KeyboardActions(onGo = { submit() }),
-        )
+        PinCodeEntry(pin, { pin = it }, attempt, enabled = !checking, onSubmit = ::submit)
         error?.let { Text(it, color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center) }
         Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            Button(onClick = ::submit, enabled = !checking && pin.isNotEmpty(), modifier = ring) {
+            Button(onClick = ::submit, enabled = !checking && PinCode.isComplete(pin), modifier = ring) {
                 if (checking) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp) else Text("Continue")
             }
             OutlinedButton(onClick = onCancel, enabled = !checking, modifier = ring) { Text("Cancel") }

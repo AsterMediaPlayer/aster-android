@@ -33,11 +33,25 @@ data class HouseholdProfile(
     val masterUserId: String?,
     /** What the sign-in remembers about the household once switched to. */
     val storedHousehold: StoredHousehold,
+    /** On the main account: how many profiles it may have. */
+    val maxProfiles: Int? = null,
+    /** On a profile of this household: every library the account has (now and later), or the ones it was given (plain ids). */
+    val allLibraries: Boolean? = null,
+    val enabledFolders: List<String>? = null,
+    /** Its PIN isn't asked on the home network. */
+    val bypassPinOnLocalNetwork: Boolean? = null,
 ) {
     fun toJson(): JSONObject = JSONObject().put("id", id).put("rawId", rawId).put("name", name).put("initial", initial).put("color", colorHex)
         .put("current", isCurrent).put("master", isMaster).put("requiresPin", requiresPin).put("hasPin", hasPin).put("other", isOtherHousehold)
         .put("household", storedHousehold.toJson())
-        .apply { imageUrl?.let { put("image", it) }; masterUserId?.let { put("masterUserId", it) } }
+        .apply {
+            imageUrl?.let { put("image", it) }
+            masterUserId?.let { put("masterUserId", it) }
+            maxProfiles?.let { put("maxProfiles", it) }
+            allLibraries?.let { put("allLibraries", it) }
+            enabledFolders?.let { put("enabledFolders", org.json.JSONArray(it)) }
+            bypassPinOnLocalNetwork?.let { put("bypassPin", it) }
+        }
 
     companion object {
         /** An id as Jellyfin writes it either way: lowercase, without dashes. */
@@ -55,6 +69,10 @@ data class HouseholdProfile(
             o.optString("color").ifEmpty { "#00A4DC" }, o.optBoolean("current"), o.optBoolean("master"), o.optBoolean("requiresPin"),
             o.optBoolean("hasPin"), o.optBoolean("other"), o.optString("masterUserId").ifEmpty { null },
             StoredHousehold.fromJson(o.getJSONObject("household")),
+            maxProfiles = if (o.has("maxProfiles")) o.getInt("maxProfiles") else null,
+            allLibraries = if (o.has("allLibraries")) o.getBoolean("allLibraries") else null,
+            enabledFolders = o.optJSONArray("enabledFolders")?.let { a -> List(a.length()) { a.getString(it) } },
+            bypassPinOnLocalNetwork = if (o.has("bypassPin")) o.getBoolean("bypassPin") else null,
         )
     }
 }
@@ -107,6 +125,87 @@ interface ProfileProvider {
 
     /** A fresh sign-in as [profile], ready to switch to. */
     suspend fun switchSession(profile: HouseholdProfile, pin: String?): Session
+
+    /** Makes, changes and removes profiles, where the service can (Bonfire); null where it can't (a Plex Home). */
+    val creation: ProfileCreation? get() = null
+}
+
+// MARK: Making and changing a profile
+
+/** A picture a profile may have. */
+data class ProfileAvatarChoice(val id: String, val name: String, val url: String)
+
+/** A library a profile may be given; its plain id. */
+data class ProfileLibraryChoice(val id: String, val name: String, val collectionType: String?)
+
+/** A rating limit: everything up to this age. */
+data class ProfileRatingChoice(val score: Int, val label: String)
+
+/** What the form offers: the pictures, libraries and ratings the server has, and what the household's rules add. */
+data class ProfileCreationOptions(
+    val avatars: List<ProfileAvatarChoice> = emptyList(),
+    val libraries: List<ProfileLibraryChoice> = emptyList(),
+    val ratings: List<ProfileRatingChoice> = emptyList(),
+    val ratingCountry: String? = null,
+    /** The main account's own PIN is asked for before making or changing a profile (the account has one; the server insists on it). */
+    val asksMasterPin: Boolean = false,
+    /** How many more profiles the account may make; null when not known. */
+    val remaining: Int? = null,
+)
+
+/** A profile as it's filled in: a new one, or (with [profileId]) one being changed. */
+data class ProfileDraft(
+    /** The profile being changed, as the server knows it; null for a new one. */
+    val profileId: String? = null,
+    val name: String = "",
+    /** A new PIN; empty keeps the one there is (or sets none). */
+    val pin: String = "",
+    /** Changing: take the PIN away. */
+    val removePin: Boolean = false,
+    /** One of the offered pictures; null for the initial on the colour (a new profile) or the picture it has (changing). */
+    val avatarId: String? = null,
+    val colorHex: String = Bonfire.DEFAULT_AVATAR_COLOR,
+    /** Everything up to this rating; null for no limit beyond the account's. */
+    val ratingScore: Int? = null,
+    /** The libraries it may see (plain ids); null for all the account has, now and later. */
+    val libraryIds: Set<String>? = null,
+    val masterPin: String = "",
+    /** A PIN that isn't asked on the home network. */
+    val bypassPinOnLocalNetwork: Boolean = false,
+) {
+    val isEditing: Boolean get() = profileId != null
+    val trimmedName: String get() = name.trim()
+    val initial: String get() = trimmedName.take(1).uppercase()
+
+    /** What the server would turn down, said before it's asked (its rules: the name's length and letters, the PIN's digits); null when fine. */
+    fun validationMessage(confirmPin: String): String? {
+        val name = trimmedName
+        if (name.isEmpty()) return "Enter a name for the profile."
+        if (name.length > Bonfire.MAX_PROFILE_NAME_LENGTH) return "A profile name can be at most ${Bonfire.MAX_PROFILE_NAME_LENGTH} characters."
+        if (name.any { !(it.isLetterOrDigit() || it in "-'._@+ ") }) return "A profile name can use letters, numbers, spaces and - ' . _ @ +."
+        if (pin.isNotEmpty() && !removePin) {
+            if (pin.length !in Bonfire.PIN_LENGTHS || !pin.all { it in '0'..'9' }) return "A PIN is 4 to 8 digits."
+            if (confirmPin != pin) return "The PINs don't match."
+        }
+        return null
+    }
+
+    companion object {
+        /** The colours offered for the initial's tile. */
+        val COLORS = listOf("#00A4DC", "#1F77B4", "#30A46C", "#FFB224", "#F76B15", "#E5484D", "#E93D82", "#8E4EC6")
+    }
+}
+
+/** Makes, changes and removes profiles in the household. */
+interface ProfileCreation {
+    /** The pictures, libraries and ratings to offer. Each list is empty when the server can't say. */
+    suspend fun creationChoices(): ProfileCreationOptions
+    /** Makes the profile: its plain id. */
+    suspend fun createProfile(draft: ProfileDraft): String
+    /** A profile as it is now, filled in to change. */
+    suspend fun draft(editing: HouseholdProfile): ProfileDraft
+    suspend fun updateProfile(draft: ProfileDraft)
+    suspend fun deleteProfile(profile: HouseholdProfile, masterPin: String?)
 }
 
 sealed class ProfileSwitchException(message: String) : Exception(message) {

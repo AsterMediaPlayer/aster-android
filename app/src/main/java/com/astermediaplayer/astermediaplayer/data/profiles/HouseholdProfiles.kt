@@ -26,9 +26,17 @@ class HouseholdProfiles(private val repo: AsterRepository, private val settings:
         val checked: Boolean = false,
         val lastError: String? = null,
     ) {
-        /** Someone else to switch to. */
-        val isAvailable: Boolean get() = provider != null && profiles.size > 1
+        /** Something to open the picker for: someone else to switch to, or room to add someone. */
+        val isAvailable: Boolean get() = provider != null && (profiles.size > 1 || canCreateProfiles)
         val current: HouseholdProfile? get() = profiles.firstOrNull { it.isCurrent }
+        /** This household's main account. */
+        val master: HouseholdProfile? get() = profiles.firstOrNull { it.isMaster && !it.isOtherHousehold }
+
+        /** The main account, signed in, on a service that makes profiles. */
+        val canCreateProfiles: Boolean get() = provider?.creation != null && current?.let { it.isMaster && !it.isOtherHousehold } == true
+
+        /** Whether [profile] can be changed from here: this household's own, by its main account. */
+        fun canEdit(profile: HouseholdProfile): Boolean = canCreateProfiles && !profile.isOtherHousehold
     }
 
     private val _state = MutableStateFlow(State())
@@ -64,7 +72,7 @@ class HouseholdProfiles(private val repo: AsterRepository, private val settings:
         val owner = "${s.serverUrl}|${s.userId}"
         if (owner != this.owner) { clear(); this.owner = owner }
         if (!force && _state.value.checked && System.currentTimeMillis() - checkedAt < 30 * 60_000L) return
-        val provider = repo.profileProvider()
+        val provider = _state.value.provider ?: repo.profileProvider()
         if (provider == null) { _state.value = State(checked = true); return }
         try {
             val list = provider.profiles(s)
@@ -110,6 +118,35 @@ class HouseholdProfiles(private val repo: AsterRepository, private val settings:
         if (_state.value.profiles.isNotEmpty() || repo.session?.userId != s.userId) return
         if (owner == null) owner = "${s.serverUrl}|${s.userId}"
         _state.value = _state.value.copy(provider = provider, profiles = kept)
+    }
+
+    // MARK: Making and changing a profile
+
+    private fun creation(): ProfileCreation = _state.value.provider?.creation ?: throw ProfileSwitchException.Unavailable()
+
+    /** What the form offers, with the household's own rules: the main account's PIN is asked when it has one, and how many more it may make. */
+    suspend fun creationOptions(): ProfileCreationOptions {
+        val creation = _state.value.provider?.creation ?: return ProfileCreationOptions()
+        val options = creation.creationChoices()
+        val now = _state.value
+        val master = now.master
+        val remaining = master?.maxProfiles?.let { limit -> (limit - now.profiles.count { !it.isMaster && !it.isOtherHousehold }).coerceAtLeast(0) }
+        return options.copy(asksMasterPin = master?.hasPin ?: false, remaining = remaining)
+    }
+
+    /** Makes the profile and reads the household again, so it's there to pick: its plain id. */
+    suspend fun create(draft: ProfileDraft): String = creation().createProfile(draft).also { refresh(force = true) }
+
+    /** A profile as it is now, filled in to change. */
+    suspend fun draft(editing: HouseholdProfile): ProfileDraft = _state.value.provider?.creation?.draft(editing) ?: ProfileDraft()
+
+    suspend fun update(draft: ProfileDraft) { creation().updateProfile(draft); refresh(force = true) }
+
+    /** Removes the profile on the server, and its saved sign-in here (the server ended it), then reads the household again. */
+    suspend fun delete(profile: HouseholdProfile, masterPin: String?) {
+        creation().deleteProfile(profile, masterPin)
+        repo.reusableSession(profile)?.let { repo.removeServer(com.astermediaplayer.astermediaplayer.data.SavedServer.id(it.serverUrl, it.userId)) }
+        refresh(force = true)
     }
 
     /** Signed out, or on another server: nothing known, and no picker. */

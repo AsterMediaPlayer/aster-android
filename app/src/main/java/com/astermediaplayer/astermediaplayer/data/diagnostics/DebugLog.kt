@@ -34,7 +34,8 @@ object DebugLog {
 
     /** A moment worth a report's notice. */
     fun note(tag: String, message: String) {
-        Log.i("Aster", "[$tag] $message")
+        // Android's log isn't there in a JVM unit test; the report's own list is.
+        runCatching { Log.i("Aster", "[$tag] $message") }
         synchronized(events) {
             events.addLast("${stamp.format(Date())} [$tag] $message")
             while (events.size > KEEP) events.removeFirst()

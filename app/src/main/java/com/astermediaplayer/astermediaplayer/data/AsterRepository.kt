@@ -411,7 +411,9 @@ class AsterRepository(val context: Context, private val store: SessionStore) {
     fun profileProvider(): com.astermediaplayer.astermediaplayer.data.profiles.ProfileProvider? {
         val s = session ?: return null
         return when (s.kind) {
-            ServerKind.Jellyfin -> com.astermediaplayer.astermediaplayer.data.profiles.BonfireProfiles(::bonfireSend, s.serverUrl, s.serverName)
+            ServerKind.Jellyfin -> com.astermediaplayer.astermediaplayer.data.profiles.BonfireProfiles(::bonfireSend, s.serverUrl, s.serverName) { id ->
+                org.json.JSONObject(serverRequest("GET", "/Users/$id"))
+            }
             ServerKind.Plex -> com.astermediaplayer.astermediaplayer.data.profiles.PlexHomeProfiles.of(plexHomeAccess, s)
             else -> null
         }
