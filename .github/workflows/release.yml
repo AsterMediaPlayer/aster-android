@@ -30,10 +30,13 @@ jobs:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-        run: ./gradlew assembleRelease
-
-      - name: Rename APK
-        run: mv app/build/outputs/apk/release/app-release.apk "aster-${GITHUB_REF_NAME}.apk"
+        # Two APKs: the Play Store's package name for GitHub, and the Amazon Appstore's older one, which its listing
+        # can't change (see appId in app/build.gradle.kts).
+        run: |
+          ./gradlew assembleRelease
+          mv app/build/outputs/apk/release/app-release.apk "aster-${GITHUB_REF_NAME}.apk"
+          ./gradlew assembleRelease -PappId=com.astermediaplayer.astermediaplayer
+          mv app/build/outputs/apk/release/app-release.apk "aster-${GITHUB_REF_NAME}-amazon.apk"
 
       - uses: softprops/action-gh-release@v2
         with:

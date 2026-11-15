@@ -12,8 +12,12 @@ android {
     }
 
     defaultConfig {
+        // com.astermediaplayer.app is the Play Store's name for the app (and the GitHub APK's). The Amazon Appstore's
+        // listing was made earlier as com.astermediaplayer.astermediaplayer, and a listing's name can't change, so its
+        // APK is built with -PappId=com.astermediaplayer.astermediaplayer.
         // -PappIdSuffix=.test installs a copy beside the real app, with its own sign-ins, for trying things on a device.
-        applicationId = "com.astermediaplayer.app" + ((findProperty("appIdSuffix") as String?) ?: "")
+        applicationId = ((findProperty("appId") as String?) ?: "com.astermediaplayer.app") +
+            ((findProperty("appIdSuffix") as String?) ?: "")
         minSdk = 26
         targetSdk = 37
         versionCode = 16
