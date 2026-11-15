@@ -189,7 +189,15 @@ class PlayerViewModel(
     )
         .setMediaSourceFactory(mediaSourceFactory)
         // Playing once a second and a half is in, not two and a half: the picture comes sooner, and a stall still refills to five.
-        .setLoadControl(DefaultLoadControl.Builder().setBufferDurationsMs(30_000, 90_000, 1_500, 5_000).build())
+        // The buffer lives in the app's own memory, and media3's default ceiling (about 144 MB for video and audio) is
+        // more than a small device gives the whole app: an Echo Show allows 128 MB, and a high-bitrate episode filled
+        // it until the app ran out of memory. A quarter of what this device allows leaves the rest of the app room.
+        .setLoadControl(
+            DefaultLoadControl.Builder()
+                .setBufferDurationsMs(30_000, 90_000, 1_500, 5_000)
+                .setTargetBufferBytes(bufferBytesFor(Runtime.getRuntime().maxMemory()))
+                .build(),
+        )
         .setAudioAttributes(
             androidx.media3.common.AudioAttributes.Builder()
                 .setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(),
@@ -1187,4 +1195,13 @@ class PlayerViewModel(
         const val UP_NEXT_SECONDS = 10
         const val HTTP_TIMEOUT_MS = 30_000
     }
+}
+
+/**
+ * How many bytes the player may buffer, given the most memory this app may use: a quarter of it, never more than
+ * media3's own default for video and audio, and never less than its minimum.
+ */
+internal fun bufferBytesFor(maxHeapBytes: Long): Int {
+    val ceiling = DefaultLoadControl.DEFAULT_VIDEO_BUFFER_SIZE + DefaultLoadControl.DEFAULT_AUDIO_BUFFER_SIZE
+    return (maxHeapBytes / 4).coerceIn(DefaultLoadControl.DEFAULT_MIN_BUFFER_SIZE.toLong(), ceiling.toLong()).toInt()
 }
