@@ -20,8 +20,8 @@ android {
             ((findProperty("appIdSuffix") as String?) ?: "")
         minSdk = 26
         targetSdk = 37
-        versionCode = 16
-        versionName = "0.11.1"
+        versionCode = 17
+        versionName = "0.11.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
