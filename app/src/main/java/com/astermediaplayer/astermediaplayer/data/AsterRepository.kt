@@ -82,6 +82,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.UUID
+import com.astermediaplayer.astermediaplayer.data.diagnostics.noteServerErrors
 
 /**
  * The one HTTP client for the server's API, the SDK and pictures, as the official Android TV app and Wholphin share theirs: one
@@ -89,6 +90,7 @@ import java.util.UUID
  */
 val sharedHttp: OkHttpClient by lazy {
     OkHttpClient.Builder().credentialSafeRedirects()
+        .noteServerErrors()
         .dispatcher(okhttp3.Dispatcher().apply { maxRequests = 32; maxRequestsPerHost = 12 })
         .build()
 }
@@ -641,11 +643,21 @@ class AsterRepository(val context: Context, private val store: SessionStore) {
 
     /**
      * Sets an item's tags, as the Apple apps do: its own record read back with the tags replaced and posted, so everything
-     * else on it stays as it was. The server refuses anyone but an administrator.
+     * else on it stays as it was. The server refuses anyone but an administrator. On Jellyfin the record goes back as the
+     * server's own JSON, untouched by the SDK's model (see [withTags]); Emby and Plex take the SDK's way, which turns the
+     * tags into what they keep.
      */
-    suspend fun setTags(itemId: UUID, tags: List<String>) = io {
-        val record = api.libraryApi.getItem(itemId = itemId, userId = userId).content
-        api.itemUpdateApi.updateItem(itemId, record.copy(tags = tags))
+    suspend fun setTags(itemId: UUID, tags: List<String>) {
+        if (serverKind == ServerKind.Jellyfin) {
+            val id = itemId.toString().replace("-", "")
+            val item = serverRequest("GET", "/Items/$id?userId=$userIdForServer")
+            serverRequest("POST", "/Items/$id", withTags(item, tags))
+            return
+        }
+        io {
+            val record = api.libraryApi.getItem(itemId = itemId, userId = userId).content
+            api.itemUpdateApi.updateItem(itemId, forSaving(record, tags))
+        }
     }
 
     /**
@@ -868,7 +880,10 @@ class AsterRepository(val context: Context, private val store: SessionStore) {
 
     suspend fun seriesTimer(id: String): org.jellyfin.sdk.model.api.SeriesTimerInfoDto = io { api.liveTvApi.getSeriesTimer(id).content }
 
-    suspend fun updateSeriesTimer(timer: org.jellyfin.sdk.model.api.SeriesTimerInfoDto) = io { api.liveTvApi.updateSeriesTimer(timer.id!!, timer) }
+    /** Saves a series recording's settings; its dates go back only when the server can read them (see [readableDate]). */
+    suspend fun updateSeriesTimer(timer: org.jellyfin.sdk.model.api.SeriesTimerInfoDto) = io {
+        api.liveTvApi.updateSeriesTimer(timer.id!!, timer.copy(startDate = readableDate(timer.startDate), endDate = readableDate(timer.endDate)))
+    }
 
     suspend fun cancelTimer(id: String) = io { api.liveTvApi.cancelTimer(id) }
 
